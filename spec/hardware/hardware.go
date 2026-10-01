@@ -1,0 +1,163 @@
+// Package hardware defines the three catalog entities that describe physical
+// resources: a chip, an inter-node fabric, and a storage device class.
+//
+// They are three schemas rather than one because they have different owners and
+// different lifetimes. A chip's peak rates are a datasheet fact about a die. A
+// fabric is a property of the cluster a deployment runs on — blis-catalog states
+// this directly, "a fabric is a property of the cluster/pool, not of the GPU die" —
+// so the same chip appears behind InfiniBand in one cluster and RoCE in another.
+// Storage tiers are a third thing again, owned by whoever provisioned the node.
+//
+// The separation matters to the cost model. Cross-node collective cost
+// turns on the ratio of intra-node to inter-node bandwidth, and that ratio is a
+// property of a (chip, fabric) pairing rather than of either alone. A schema that
+// put both numbers on the chip would make the ratio look like a die fact and would
+// force a new hardware file for every fabric a chip is ever paired with.
+package hardware
+
+import (
+	"strings"
+
+	"gopkg.in/yaml.v3"
+
+	"github.com/inference-sim/blis-schemas/internal/validate"
+	"github.com/inference-sim/blis-schemas/vocab"
+)
+
+// The catalog's files carry free-text keys prefixed with an underscore — _comment,
+// _comment_interconnect — holding the provenance narrative for each number. They are
+// deliberate content rather than stray fields, so a strict decoder must accept them
+// while still rejecting a misspelled real field.
+//
+// The files also carry no name: identity is the filename. A loader sets Name from the
+// path, and validation requires it, so a chip that reaches a cost model without one is
+// an error rather than an anonymous descriptor.
+func stripCatalogComments(node *yaml.Node) {
+	if node.Kind != yaml.MappingNode {
+		return
+	}
+	kept := make([]*yaml.Node, 0, len(node.Content))
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if strings.HasPrefix(node.Content[i].Value, "_") {
+			continue
+		}
+		kept = append(kept, node.Content[i], node.Content[i+1])
+	}
+	node.Content = kept
+}
+
+// Chip is what a GPU die can do. Every field is a vendor figure; nothing here is
+// fitted. A fitted quantity belongs in blis-registry, where it can carry a method
+// and a scope.
+type Chip struct {
+	Name       string           `yaml:"name"`
+	Provenance vocab.Provenance `yaml:"Provenance"`
+
+	// Peak dense rates, in TFLOP/s. FP8Peak is zero on parts without native FP8.
+	BF16Peak float64 `yaml:"TFlopsPeak"`
+	FP8Peak  float64 `yaml:"TFlopsFP8"`
+	// NVFP4Peak is zero where the format is emulated rather than native, which is
+	// the honest encoding: a model must not read a peak that the hardware reaches
+	// only through a dequantize path.
+	NVFP4Peak float64 `yaml:"TFlopsNVFP4,omitempty"`
+
+	// MemoryBandwidthTBs is the HBM peak, nominal. The empirical derate that turns
+	// it into an achievable rate is a coefficient, not a chip fact.
+	MemoryBandwidthTBs float64 `yaml:"BwPeakTBs"`
+	MemoryGiB          float64 `yaml:"MemoryGiB"`
+
+	// IntraNodeBwGBps is per-GPU unidirectional on-node bandwidth: NVLink where
+	// present. It stays on the chip because it is a die-and-package property.
+	IntraNodeBwGBps float64 `yaml:"IntraNodeBwGBps"`
+
+	// SMCount is the streaming-multiprocessor count. A model needs it to size a
+	// withheld-SM derate as a fraction rather than an absolute, and an engine reads
+	// it from the driver rather than hardcoding it per part.
+	SMCount int `yaml:"SMCount,omitempty"`
+
+	// GPUsPerNode and GPUsPerRack describe packaging. GPUsPerRack is non-zero only
+	// where a rack boundary is a distinct link from a node boundary, which is the
+	// third topology tier a two-tier model cannot express.
+	GPUsPerNode int `yaml:"GPUsPerNode,omitempty"`
+	GPUsPerRack int `yaml:"GPUsPerRack,omitempty"`
+
+	// IntraRackBwGBps applies between nodes inside one rack, where that differs
+	// from the inter-rack fabric. Zero means no such tier exists on this part.
+	IntraRackBwGBps float64 `yaml:"IntraRackBwGBps,omitempty"`
+}
+
+// Fabric is an inter-node network class, reusable across chips.
+type Fabric struct {
+	Name       string           `yaml:"name"`
+	Provenance vocab.Provenance `yaml:"Provenance"`
+
+	// InterNodeBwGBps is per-GPU unidirectional, and NOMINAL: a line rate divided
+	// by eight bits, not a measurement. The measured fraction of it is a
+	// per-deployment coefficient in blis-registry. Treating this figure as achieved
+	// overstates transfer bandwidth, which is why the field name says nothing about
+	// effectiveness and this comment says it plainly.
+	InterNodeBwGBps float64 `yaml:"InterNodeBwGBps"`
+
+	// RDMA distinguishes a fabric that keeps the CPU out of the data path from one
+	// that does not. It changes how far below nominal a transfer lands, and a name
+	// like "ethernet-100gbe" does not say which side of the line the fabric is on.
+	RDMA bool `yaml:"RDMA,omitempty"`
+}
+
+// StorageDevice is one offload tier class: CPU memory, an NVMe class, an object
+// store. Read and write bandwidths are separate because they differ materially on
+// flash, and pricing an eviction at read bandwidth understates it.
+type StorageDevice struct {
+	Name              string  `yaml:"name"`
+	ReadBandwidthMBs  float64 `yaml:"read_bandwidth"`
+	WriteBandwidthMBs float64 `yaml:"write_bandwidth"`
+	// BaseLatencyUs is the fixed per-transfer cost, which dominates small
+	// transfers and is three orders of magnitude apart across the tiers.
+	BaseLatencyUs float64 `yaml:"base_latency"`
+}
+
+// UnmarshalYAML accepts the catalog's underscore-prefixed comment keys while leaving
+// every other unknown field an error.
+func (c *Chip) UnmarshalYAML(node *yaml.Node) error {
+	if err := validate.RejectUnknownKeys(node, Chip{}, validate.IgnoreUnderscored); err != nil {
+		return err
+	}
+	stripCatalogComments(node)
+	type shape Chip
+	var raw shape
+	if err := node.Decode(&raw); err != nil {
+		return err
+	}
+	*c = Chip(raw)
+	return nil
+}
+
+// UnmarshalYAML accepts the catalog's comment keys, as Chip does.
+func (f *Fabric) UnmarshalYAML(node *yaml.Node) error {
+	if err := validate.RejectUnknownKeys(node, Fabric{}, validate.IgnoreUnderscored); err != nil {
+		return err
+	}
+	stripCatalogComments(node)
+	type shape Fabric
+	var raw shape
+	if err := node.Decode(&raw); err != nil {
+		return err
+	}
+	*f = Fabric(raw)
+	return nil
+}
+
+// UnmarshalYAML accepts the catalog's comment keys, as Chip does.
+func (d *StorageDevice) UnmarshalYAML(node *yaml.Node) error {
+	if err := validate.RejectUnknownKeys(node, StorageDevice{}, validate.IgnoreUnderscored); err != nil {
+		return err
+	}
+	stripCatalogComments(node)
+	type shape StorageDevice
+	var raw shape
+	if err := node.Decode(&raw); err != nil {
+		return err
+	}
+	*d = StorageDevice(raw)
+	return nil
+}

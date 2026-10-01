@@ -1,0 +1,83 @@
+name: ci
+on: [push, pull_request]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      # Formatting first: a diff here is mechanical and would otherwise obscure a
+      # real failure below.
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "these files are not gofmt-clean:"
+            echo "$unformatted"
+            exit 1
+          fi
+      - name: go vet
+        run: go vet ./...
+      - name: go build
+        run: go build ./...
+      - name: go test
+        run: go test -race ./...
+
+  # The yaml tags are a contract with the files in blis-catalog and blis-registry.
+  # Until something parses those files the tags are untested: a misspelled tag
+  # compiles, validates, and silently drops the field it was meant to read. Every
+  # committed file in both repositories failed to parse when this job was first added.
+  parse-committed-data:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      - uses: actions/checkout@v4
+        with:
+          repository: inference-sim/blis-catalog
+          path: blis-catalog
+          fetch-depth: 1
+      - uses: actions/checkout@v4
+        with:
+          repository: inference-sim/blis-registry
+          path: blis-registry
+          fetch-depth: 1
+      - name: parse every committed catalog and registry file
+        env:
+          BLIS_CATALOG: ${{ github.workspace }}/blis-catalog
+          BLIS_REGISTRY: ${{ github.workspace }}/blis-registry
+        run: go test -v -run 'LoadCatalog|LoadRegistry' .
+
+  # The rules packs transcribe one engine release's configuration surface by hand.
+  # These tests re-derive those constants from a checkout and fail on any divergence:
+  # a value the pack accepts that the engine does not would validate a scenario that
+  # cannot launch, and the reverse would reject a valid one.
+  #
+  # Separate job because it needs the engine tree. The job above passes without it,
+  # and the tests there SKIP with a message naming what went unchecked, so a missing
+  # checkout is visible rather than silent.
+  constants-against-engine:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      - name: check out the engine at the pinned release
+        uses: actions/checkout@v4
+        with:
+          repository: vllm-project/vllm
+          # The tag must match the version the pack under rules/ declares. A pack for
+          # a new release arrives with its own job rather than by moving this ref.
+          ref: v0.29.0
+          path: vllm-source
+          fetch-depth: 1
+      - name: verify pack constants
+        env:
+          VLLM_SOURCE: ${{ github.workspace }}/vllm-source
+        run: go test -v -run MatchSource ./rules/...

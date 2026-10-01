@@ -1,0 +1,7 @@
+# Go test and coverage output
+*.test
+*.out
+
+# Compiled command binaries, if a `go build` is run in the tree
+/cmd/*/[a-z]*
+!/cmd/*/*.go
