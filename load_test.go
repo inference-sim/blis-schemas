@@ -143,9 +143,11 @@ cluster:
 
 // TestLoadScenarioRejectsUnknownTraceField pins strict decoding through EVERY nesting
 // level the trace reference introduces: a misspelled sub-key must fail loudly rather than
-// leave a zero value, the same guarantee the top-level loaders give. yaml.v3 KnownFields
-// recurses, so no custom unmarshaller is needed — but the recursion is exactly the kind
-// of property that is assumed and then quietly lost, so each new level is pinned: at the
+// leave a zero value, the same guarantee the top-level loaders give. The trace types are
+// plain structs — none implements a custom UnmarshalYAML, which is what would silently
+// drop the decoder's KnownFields setting (see internal/validate/strict.go) — so strict
+// decoding recurses through all of them for free. That is exactly the kind of property
+// that is assumed and then quietly lost, so each new level is pinned: at the
 // `workload` binding itself, directly under `trace`, under its `header`, under the
 // `header.server` sub-block, and inside a `header.slo_targets.<class>` map VALUE (the one
 // struct the feature reaches only through a map, where it is least obvious the strict
