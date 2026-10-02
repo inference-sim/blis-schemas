@@ -36,6 +36,14 @@ func (d *Deployment) Validate() *validate.Problems {
 // available-hardware inventory it is placed on: that its pools' node counts sum to the
 // nodes the cluster declares, that each data-parallel-local width divides a node's GPU
 // count, and that every offload tier names a storage class the cluster actually lists.
+//
+// Pools fill the cluster exactly rather than take a subset of it: a deployment lays out
+// the whole cluster it is handed, so the inventory is that cluster's full extent and not
+// a pool to sub-select nodes from. This exact-fill rule is the placement contract the
+// pre-split Scenario enforced, carried here unchanged — relaxing it to allow partial use
+// of the declared hardware would be a behavior change, not part of this value-preserving
+// split.
+//
 // They are separate from Validate because they need the cluster, which is a Scenario
 // property; the composition layer (blisschemas.Validate) supplies it when both documents
 // are present. The cluster is passed as primitives (counts and the storage name list)
