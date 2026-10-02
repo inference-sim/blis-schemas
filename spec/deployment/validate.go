@@ -283,18 +283,22 @@ func validateAdmission(p *validate.Problems, a *Admission) {
 			p.Field("admission.gaie_kv_threshold", "must lie in (0, 1], got %v", v)
 		}
 	}
+	if a.LatencyUs < 0 {
+		p.Field("admission.admission_latency_us", "must not be negative, got %d", a.LatencyUs)
+	}
 	for class, target := range a.SLOTargets {
+		at := fmt.Sprintf("admission.slo_targets[%q]", class)
 		if class == "" {
-			p.Field("admission.slo_targets", "an SLO class key must not be empty")
+			p.Field(at, "an SLO class key must not be empty")
 		}
 		if target <= 0 {
-			p.Field("admission.slo_targets",
-				"target for %q must be positive microseconds, got %d", class, target)
+			p.Field(at, "target must be positive microseconds, got %d", target)
 		}
 	}
 	for class := range a.SLOPriorities {
 		if class == "" {
-			p.Field("admission.slo_priorities", "an SLO class key must not be empty")
+			p.Field(fmt.Sprintf("admission.slo_priorities[%q]", class),
+				"an SLO class key must not be empty")
 		}
 	}
 }
@@ -324,11 +328,20 @@ func validateRouting(p *validate.Problems, r *Routing) {
 			p.Field(at+".weight", "must be a finite positive number, got %v", sw.Weight)
 		}
 	}
-	// Scorers compose only within the weighted policy; naming them under another policy
-	// has no effect, so a stated non-weighted policy with scorers is a warning rather
-	// than an error.
-	if len(r.Scorers) > 0 && r.Policy != "" && r.Policy != RoutingWeighted {
-		p.Warnf("routing: scorers are declared but policy %q ignores them; only the weighted policy consults scorers", r.Policy)
+	if r.LatencyUs < 0 {
+		p.Field("routing.routing_latency_us", "must not be negative, got %d", r.LatencyUs)
+	}
+	// Scorers compose only within the weighted policy; naming them under any other policy
+	// has no effect, so scorers with a non-weighted policy are a warning rather than an
+	// error. An empty policy takes the simulator default (round-robin), which also
+	// ignores scorers, so the warning fires for the omitted case too — naming it as
+	// round-robin so the author sees why the scorers are inert.
+	if len(r.Scorers) > 0 && r.Policy != RoutingWeighted {
+		shown := r.Policy
+		if shown == "" {
+			shown = RoutingRoundRobin
+		}
+		p.Warnf("routing: scorers are declared but policy %q ignores them; only the weighted policy consults scorers", shown)
 	}
 }
 

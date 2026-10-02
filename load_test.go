@@ -143,10 +143,12 @@ admission:
   policy: token-bucket
   token_bucket_capacity: 10000.0
   token_bucket_refill_rate: 1000.0
+  admission_latency_us: 250
   slo_priorities:
     batch: 0
 routing:
   policy: weighted
+  routing_latency_us: 100
   scorers:
     - name: precise-prefix-cache
       weight: 2.0

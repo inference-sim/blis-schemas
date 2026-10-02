@@ -27,6 +27,7 @@ func policyDeployment() *Deployment {
 		GAIEKVThreshold:       f64(0.8),
 		SLOPriorities:         map[string]int{"batch": 0},
 		SLOTargets:            map[string]int64{"critical": 100000},
+		LatencyUs:             250,
 	}
 	d.Routing = &Routing{
 		Policy: RoutingWeighted,
@@ -35,6 +36,7 @@ func policyDeployment() *Deployment {
 			{Name: ScorerQueueDepth, Weight: 1},
 			{Name: ScorerKVUtilization, Weight: 1},
 		},
+		LatencyUs: 100,
 	}
 	d.Scheduler = SchedulerPriorityFCFS
 	d.Preemption = &Preemption{Policy: PreemptionPriority}
@@ -80,8 +82,10 @@ func TestPolicyRejects(t *testing.T) {
 		{"gaie qd threshold non-positive", func(d *Deployment) { d.Admission.GAIEQDThreshold = f64(0) }},
 		{"slo target non-positive", func(d *Deployment) { d.Admission.SLOTargets = map[string]int64{"critical": 0} }},
 		{"empty slo priority class", func(d *Deployment) { d.Admission.SLOPriorities = map[string]int{"": 1} }},
+		{"admission latency negative", func(d *Deployment) { d.Admission.LatencyUs = -1 }},
 
 		{"unknown routing policy", func(d *Deployment) { d.Routing.Policy = "psychic" }},
+		{"routing latency negative", func(d *Deployment) { d.Routing.LatencyUs = -1 }},
 		{"unknown scorer", func(d *Deployment) { d.Routing.Scorers[0].Name = "vibes" }},
 		{"empty scorer name", func(d *Deployment) { d.Routing.Scorers[0].Name = "" }},
 		{"duplicate scorer", func(d *Deployment) { d.Routing.Scorers[1].Name = ScorerPrecisePrefixCache }},
@@ -139,17 +143,26 @@ func TestPolicyRejects(t *testing.T) {
 }
 
 // TestScorersUnderNonWeightedPolicyWarns: scorers compose only within the weighted
-// policy, so declaring them under another policy is a no-op the author should see — a
-// warning, not a rejection.
+// policy, so declaring them under another policy — including the omitted case, which
+// defaults to round-robin — is a no-op the author should see as a warning, not a
+// rejection.
 func TestScorersUnderNonWeightedPolicyWarns(t *testing.T) {
-	d := policyDeployment()
-	d.Routing.Policy = RoutingRoundRobin
-	p := d.Validate()
-	if !p.OK() {
-		t.Fatalf("scorers under a non-weighted policy should warn, not fail:\n%s", p.Error())
-	}
-	if len(p.All()) == 0 {
-		t.Error("expected a warning that the scorers are ignored")
+	for _, policy := range []RoutingPolicy{RoutingRoundRobin, ""} {
+		name := string(policy)
+		if name == "" {
+			name = "omitted (defaults round-robin)"
+		}
+		t.Run(name, func(t *testing.T) {
+			d := policyDeployment()
+			d.Routing.Policy = policy
+			p := d.Validate()
+			if !p.OK() {
+				t.Fatalf("scorers under a non-weighted policy should warn, not fail:\n%s", p.Error())
+			}
+			if len(p.All()) == 0 {
+				t.Error("expected a warning that the scorers are ignored")
+			}
+		})
 	}
 }
 
@@ -183,8 +196,8 @@ func TestPolicyFieldNames(t *testing.T) {
 		{"Admission", reflect.TypeOf(Admission{}), []string{
 			"policy", "token_bucket_capacity", "token_bucket_refill_rate",
 			"tier_shed_threshold", "tier_shed_min_priority", "gaie_qd_threshold",
-			"gaie_kv_threshold", "slo_priorities", "slo_targets"}},
-		{"Routing", reflect.TypeOf(Routing{}), []string{"policy", "scorers"}},
+			"gaie_kv_threshold", "slo_priorities", "slo_targets", "admission_latency_us"}},
+		{"Routing", reflect.TypeOf(Routing{}), []string{"policy", "scorers", "routing_latency_us"}},
 		{"ScorerWeight", reflect.TypeOf(ScorerWeight{}), []string{"name", "weight"}},
 		{"Preemption", reflect.TypeOf(Preemption{}), []string{"policy"}},
 		{"Saturation", reflect.TypeOf(Saturation{}), []string{
@@ -254,6 +267,37 @@ func TestPolicyPointersRoundTrip(t *testing.T) {
 	}
 	if back.Composite == nil || back.Composite.Sensitivity != nil {
 		t.Errorf("unstated sensitivity should stay nil, got %+v", back.Composite)
+	}
+}
+
+// TestAdmissionAndLoRAPointersRoundTrip covers the same "unset stays unset" property
+// for the pointer-to-scalar knobs on Admission and LoRA: a stated capacity survives, an
+// omitted refill rate stays nil (take the simulator default), distinguishing the two.
+func TestAdmissionAndLoRAPointersRoundTrip(t *testing.T) {
+	in := &Deployment{
+		Admission: &Admission{TokenBucketCapacity: f64(10000)}, // refill rate unstated
+		LoRA:      &LoRA{AdapterCapacity: ival(4)},             // cost coeffs unstated
+	}
+	out, err := yaml.Marshal(in)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var back Deployment
+	if err := yaml.Unmarshal(out, &back); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if back.Admission == nil || back.Admission.TokenBucketCapacity == nil ||
+		*back.Admission.TokenBucketCapacity != 10000 {
+		t.Errorf("stated token_bucket_capacity was lost: %+v", back.Admission)
+	}
+	if back.Admission != nil && back.Admission.TokenBucketRefillRate != nil {
+		t.Errorf("unstated token_bucket_refill_rate should stay nil, got %v", *back.Admission.TokenBucketRefillRate)
+	}
+	if back.LoRA == nil || back.LoRA.AdapterCapacity == nil || *back.LoRA.AdapterCapacity != 4 {
+		t.Errorf("stated adapter_capacity was lost: %+v", back.LoRA)
+	}
+	if back.LoRA != nil && back.LoRA.LoadBaseLatencyUs != nil {
+		t.Errorf("unstated load_base_latency_us should stay nil, got %v", *back.LoRA.LoadBaseLatencyUs)
 	}
 }
 

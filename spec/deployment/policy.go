@@ -21,6 +21,13 @@ package deployment
 // `--detectors` selection; LoRA from `--lora-config`. The enumerated values and
 // defaults are owned by the simulator (inference-sim) and transcribed here.
 //
+// These enums are BLIS-native and version-independent: the simulator's accepted sets
+// (its validAdmissionPolicies, validRoutingPolicies, validSchedulers,
+// validPreemptionPolicies, validScorerNames and the detector roster) are plain
+// registries, not keyed by an engine release. So the policy surface is field-validated
+// here rather than in the engine-version rules pack, which gates only the per-pool vLLM
+// Engine knobs (backends, cache dtypes, scheduling_policy) that move between releases.
+//
 // The BLIS-native scheduler here is DISTINCT from Engine.SchedulingPolicy in
 // deployment.go. Engine.SchedulingPolicy mirrors vLLM's own --scheduling-policy
 // (fcfs/priority) and exists to reproduce a trace faithfully; the Scheduler field
@@ -70,6 +77,10 @@ type Admission struct {
 	// SLOTargets sets per-SLO-class TTFT targets in microseconds, read by SLO-deadline
 	// dispatch ordering.
 	SLOTargets map[string]int64 `yaml:"slo_targets,omitempty"`
+
+	// LatencyUs is the fixed latency in microseconds the admission stage adds to each
+	// request, mirroring --admission-latency. Zero (the default) adds none.
+	LatencyUs int64 `yaml:"admission_latency_us,omitempty"`
 }
 
 // AdmissionPolicy is the admission behaviour. The set is the simulator's
@@ -105,6 +116,10 @@ type Routing struct {
 	// Scorers is the weighted-pipeline scorer-weight list, mirroring the bundle's list
 	// form. It is consulted only by the weighted policy.
 	Scorers []ScorerWeight `yaml:"scorers,omitempty"`
+
+	// LatencyUs is the fixed latency in microseconds the routing stage adds to each
+	// request, mirroring --routing-latency. Zero (the default) adds none.
+	LatencyUs int64 `yaml:"routing_latency_us,omitempty"`
 }
 
 // ScorerWeight is one entry in the weighted routing pipeline: a scorer name and its

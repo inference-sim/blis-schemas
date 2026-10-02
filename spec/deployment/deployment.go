@@ -1,8 +1,11 @@
 // Package deployment describes the mutable configuration a user — or an optimizer
 // sweeping a configuration space — chooses against a fixed Scenario: how a model is
 // laid out across the available hardware (pools, each a role at a parallelism layout
-// with its own engine settings), the KV offload hierarchy below HBM, and
-// prefill-to-decode KV transfer.
+// with its own engine settings), the KV offload hierarchy below HBM, prefill-to-decode
+// KV transfer, and the control-plane policy surface that decides how requests are
+// admitted, routed, scheduled, preempted, watched for saturation, and served against
+// LoRA adapters (admission, routing, scheduler, preemption, saturation, LoRA — defined
+// in policy.go).
 //
 // It is the tunable half of what a single `blis run` consumes. The immutable problem
 // — the model, the workload shape, the available-hardware inventory, and the
@@ -31,7 +34,9 @@
 package deployment
 
 // Deployment is the tunable configuration applied to a Scenario: the pools that lay
-// the model out, the offload hierarchy, and prefill-to-decode transfer.
+// the model out, the offload hierarchy, prefill-to-decode transfer, and the
+// control-plane policy surface (admission, routing, scheduler, preemption, saturation,
+// LoRA — see policy.go).
 type Deployment struct {
 	Kind string `yaml:"kind"` // "Deployment"
 	Name string `yaml:"name"`
