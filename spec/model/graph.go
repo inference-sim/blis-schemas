@@ -113,12 +113,19 @@ const (
 	// and a checkpoint in one cannot be priced as the other.
 	DTypeMXFP4 DType = "mxfp4"
 	DTypeINT8  DType = "int8"
-	DTypeFP32  DType = "fp32"
+	// DTypeINT4 is 4-bit integer weights with a per-group scale, the W4A16 form
+	// compressed-tensors emits as num_bits 4 with type "int" (Kimi-K2.5 ships this way at
+	// group_size 32). It is a distinct format from NVFP4 and MXFP4, not a spelling of
+	// either: an integer grid dequantizes through a different path than a float one, so
+	// the three reach different rates on the same part even where the payload width
+	// matches. Storage is four bits of payload, as for the 4-bit floats.
+	DTypeINT4 DType = "int4"
+	DTypeFP32 DType = "fp32"
 )
 
 var dtypes = map[DType]bool{
 	DTypeBF16: true, DTypeFP16: true, DTypeFP8: true, DTypeNVFP4: true,
-	DTypeMXFP4: true, DTypeINT8: true, DTypeFP32: true,
+	DTypeMXFP4: true, DTypeINT8: true, DTypeINT4: true, DTypeFP32: true,
 }
 
 // Valid reports whether d is a recognized dtype.
@@ -135,9 +142,10 @@ func (d DType) Bytes() float64 {
 		return 2
 	case DTypeFP8, DTypeINT8:
 		return 1
-	case DTypeNVFP4, DTypeMXFP4:
-		// Four bits of payload. Each format adds a per-block scale — one FP8 byte per
-		// sixteen elements for NVFP4, one E8M0 byte per thirty-two for MXFP4 — which a
+	case DTypeNVFP4, DTypeMXFP4, DTypeINT4:
+		// Four bits of payload. Each format adds a per-group scale — one FP8 byte per
+		// sixteen elements for NVFP4, one E8M0 byte per thirty-two for MXFP4, and for INT4
+		// one scale per group at whatever group_size the checkpoint declares — which a
 		// caller needing exact stored bytes must add; this returns the payload width.
 		return 0.5
 	}
