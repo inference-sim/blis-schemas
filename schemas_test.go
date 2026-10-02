@@ -7,9 +7,11 @@ import (
 	"github.com/inference-sim/blis-schemas/rules"
 	"github.com/inference-sim/blis-schemas/spec/coefficient"
 	"github.com/inference-sim/blis-schemas/spec/deployment"
+	"github.com/inference-sim/blis-schemas/spec/evaluation"
 	"github.com/inference-sim/blis-schemas/spec/hardware"
 	"github.com/inference-sim/blis-schemas/spec/model"
 	"github.com/inference-sim/blis-schemas/spec/scenario"
+	"github.com/inference-sim/blis-schemas/spec/simresult"
 	"github.com/inference-sim/blis-schemas/vocab"
 )
 
@@ -199,6 +201,64 @@ func TestOffloadTierMustBeInClusterStorage(t *testing.T) {
 		Tiers: []deployment.Tier{{Device: "optane", Bytes: 1}}}
 	if rep := Validate(b); rep.Field.OK() {
 		t.Fatal("an offload tier outside the cluster storage inventory should be a field problem")
+	}
+}
+
+// simResult builds a minimal valid prediction for the composition-layer tests: it reuses
+// the bundle's scenario and deployment as the embedded, fully-resolved input.
+func simResult() *simresult.SimResult {
+	b := bundle()
+	rate := 10.0
+	return &simresult.SimResult{
+		Kind: "SimResult", Name: "granite-230b-h200-tp8@10rps", EngineVersion: "0.29.0",
+		Point:        simresult.OperatingPoint{Rate: &rate},
+		Summary:      &simresult.Summary{OutputTokensPerSec: 287.5},
+		Conservation: simresult.Conservation{Injected: 100, Completed: 100},
+		Scenario:     *b.Scenario,
+		Deployment:   *b.Deployment,
+	}
+}
+
+// TestSimResultValidatesInABundle: the composition layer validates a sim-result the same
+// way it does any other document, and the embedded input's problems surface under the
+// result's own path — so a reader can tell a malformed prediction from a malformed
+// top-level scenario.
+func TestSimResultValidatesInABundle(t *testing.T) {
+	if rep := Validate(Bundle{SimResult: simResult()}); !rep.OK() {
+		t.Fatalf("a valid sim-result bundle was rejected:\n%s", renderAll(rep))
+	}
+
+	// A problem in the embedded scenario surfaces under "sim_result.scenario", not at the
+	// top level: the result embeds its own copy, distinct from a top-level Scenario.
+	bad := simResult()
+	bad.Scenario.Model = ""
+	rep := Validate(Bundle{SimResult: bad})
+	if rep.Field.OK() {
+		t.Fatal("an invalid embedded scenario should be a field problem")
+	}
+	found := false
+	for _, pr := range rep.Field.All() {
+		if strings.HasPrefix(pr.Path, "sim_result.scenario") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a finding under sim_result.scenario; got:\n%s", rep.Field.Error())
+	}
+}
+
+// TestSimResultAndEvaluationAreDistinct guards the boundary the epic is built on: the
+// two output types occupy different Bundle members and neither standing in for the other.
+// A measurement (Evaluation) and a prediction (SimResult) can both be present — that is
+// exactly the pair a calibration report consumes.
+func TestSimResultAndEvaluationAreDistinct(t *testing.T) {
+	b := Bundle{SimResult: simResult(), Evaluation: &evaluation.Run{
+		Kind: "EvaluationRun", Name: "granite-230b-h200-tp8", Scenario: "granite-230b-h200-tp8",
+		Harness: "aiperf", EngineVersion: "0.29.0",
+		Points: []evaluation.Point{{Concurrency: 1, OutputTokensPerSec: 157, TTFTms: 168, ITLms: 6}},
+	}}
+	if rep := Validate(b); !rep.OK() {
+		t.Fatalf("a bundle carrying both a prediction and a measurement should validate:\n%s", renderAll(rep))
 	}
 }
 

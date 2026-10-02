@@ -2,7 +2,7 @@
 
 Go schemas and validators for the BLIS cost model: what a model is, what hardware
 can do, what a coefficient claims, what a deployment specifies, what a measured run
-recorded, and the interface a cost model implements.
+recorded, what a simulator run predicts, and the interface a cost model implements.
 
 This repository holds schemas and validation only. The data lives elsewhere —
 [blis-catalog](https://github.com/inference-sim/blis-catalog) owns declared facts,
@@ -60,6 +60,7 @@ spec/scenario/      the immutable problem: model, cluster inventory, workload + 
 spec/deployment/    the mutable config: pools, parallelism, engine knobs, offload, PD
 spec/workload/      traffic shape as a distribution
 spec/evaluation/    a measured run, for scoring a prediction against
+spec/simresult/     a simulator run's predicted output (distinct from a measured run)
 kernel/             the interface a cost model implements
 rules/              the version-scoped rule mechanism
 rules/v0_29/        one release's rules and constants

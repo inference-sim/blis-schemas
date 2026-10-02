@@ -21,6 +21,7 @@ import (
 	"github.com/inference-sim/blis-schemas/spec/hardware"
 	"github.com/inference-sim/blis-schemas/spec/model"
 	"github.com/inference-sim/blis-schemas/spec/scenario"
+	"github.com/inference-sim/blis-schemas/spec/simresult"
 	"github.com/inference-sim/blis-schemas/spec/workload"
 )
 
@@ -39,6 +40,10 @@ type Bundle struct {
 	Coefficients []*coefficient.Set
 	Workload     *workload.Shape
 	Evaluation   *evaluation.Run
+	// SimResult is one run's predicted output — distinct from Evaluation, which is a
+	// measured ground-truth sweep. A prediction and a measurement of the same deployment
+	// are two documents a calibration report lines up, not one.
+	SimResult *simresult.SimResult
 }
 
 // Report is the outcome of validating a bundle, with the two layers kept apart.
@@ -118,6 +123,9 @@ func Validate(b Bundle) Report {
 	}
 	if b.Evaluation != nil {
 		field.Merge("evaluation", b.Evaluation.Validate())
+	}
+	if b.SimResult != nil {
+		field.Merge("sim_result", b.SimResult.Validate())
 	}
 
 	rep := Report{Field: field, Rule: &validate.Problems{}}
