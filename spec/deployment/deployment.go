@@ -40,6 +40,18 @@ type Deployment struct {
 
 	Offload    *Offload    `yaml:"offload,omitempty"`
 	PDTransfer *PDTransfer `yaml:"pd_transfer,omitempty"`
+
+	// The control-plane policy surface: operator choices for how requests are admitted,
+	// routed, scheduled, preempted, watched for saturation, and served against LoRA
+	// adapters. Each is optional and defined in policy.go. Scheduler is the BLIS-native
+	// instance-queue ordering, a scalar as the policy bundle has it, and is distinct from
+	// the per-pool Engine.SchedulingPolicy that mirrors vLLM for trace reproduction.
+	Admission  *Admission      `yaml:"admission,omitempty"`
+	Routing    *Routing        `yaml:"routing,omitempty"`
+	Scheduler  SchedulerPolicy `yaml:"scheduler,omitempty"`
+	Preemption *Preemption     `yaml:"preemption,omitempty"`
+	Saturation *Saturation     `yaml:"saturation,omitempty"`
+	LoRA       *LoRA           `yaml:"lora,omitempty"`
 }
 
 // Role distinguishes the engines of a disaggregated deployment.

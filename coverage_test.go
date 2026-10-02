@@ -250,6 +250,31 @@ func TestCorpusDeploymentsAreExpressible(t *testing.T) {
 			}, nil),
 		},
 		{
+			what: "deployment policy surface: admission, weighted routing, BLIS scheduler, preemption, saturation, LoRA",
+			b: corpus("granite-policies", 1, 8, "", []deployment.Pool{
+				pool(deployment.RoleColocated, 1, tp8, deployment.Engine{
+					CacheDType: "fp8", BlockSize: 16, GPUMemoryUtilization: 0.9}),
+			}, func(s *scenario.Scenario, d *deployment.Deployment) {
+				cap4 := 4
+				sens := 1.5
+				d.Admission = &deployment.Admission{Policy: deployment.AdmissionTokenBucket}
+				d.Routing = &deployment.Routing{Policy: deployment.RoutingWeighted,
+					Scorers: []deployment.ScorerWeight{
+						{Name: deployment.ScorerPrecisePrefixCache, Weight: 2},
+						{Name: deployment.ScorerQueueDepth, Weight: 1},
+						{Name: deployment.ScorerKVUtilization, Weight: 1}}}
+				d.Scheduler = deployment.SchedulerPriorityFCFS
+				d.Preemption = &deployment.Preemption{Policy: deployment.PreemptionPriority}
+				d.Saturation = &deployment.Saturation{
+					Detectors: []deployment.Detector{deployment.DetectorComposite,
+						deployment.DetectorPeakRate},
+					Composite:   &deployment.CompositeDetector{Sensitivity: &sens},
+					FinalWindow: "30s"}
+				d.LoRA = &deployment.LoRA{AdapterCapacity: &cap4,
+					Adapters: []deployment.LoRAAdapter{{ID: "sql-adapter", Rank: 8}}}
+			}),
+		},
+		{
 			what: "GB200-class three-tier topology",
 			b: corpus("dsr1-gb200", 18, 4, "ib-400g", []deployment.Pool{
 				pool(deployment.RoleColocated, 18, deployment.Parallelism{TP: 1, PP: 1,
