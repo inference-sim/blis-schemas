@@ -243,7 +243,7 @@ type CoefficientOrigin struct {
 	Scope  string // the scope as recorded
 }
 
-// Resolution reports what the constructor decided where a scenario expressed a
+// Resolution reports what the constructor decided where a deployment expressed a
 // request. It exists so a prediction can be read without re-deriving the resolver's
 // logic, and so a reader is never misled by a field the layout overrode.
 type Resolution struct {

@@ -38,7 +38,7 @@ func TestPrefixCachingTriStateRoundTrips(t *testing.T) {
 			}
 			switch {
 			case c.set == nil && back.EnablePrefixCaching != nil:
-				t.Errorf("unstated became %v; a scenario that says nothing must stay "+
+				t.Errorf("unstated became %v; a deployment that says nothing must stay "+
 					"distinguishable from one that says false",
 					*back.EnablePrefixCaching)
 			case c.set != nil && back.EnablePrefixCaching == nil:

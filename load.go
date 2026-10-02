@@ -24,7 +24,7 @@ import (
 // them through one channel.
 //
 // Every loader rejects unknown fields. A misspelled key that parsed silently would
-// leave a scenario that validates while omitting the setting its author intended,
+// leave a document that validates while omitting the setting its author intended,
 // which is the failure mode hardest to notice: the document looks right and the
 // estimate is wrong for a reason nothing reports.
 

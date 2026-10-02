@@ -44,7 +44,7 @@ func TestSPMoEBackendMembership(t *testing.T) {
 
 func TestSmallVocabularies(t *testing.T) {
 	p := Pack()
-	// The engine has no allreduce-backend enum; the scenario field records whether
+	// The engine has no allreduce-backend enum; the deployment field records whether
 	// the SM-consuming kernel is requested or declined.
 	assertSet(t, "AllReduceBackends", p.AllReduceBackends,
 		[]string{"custom", "nccl"})
