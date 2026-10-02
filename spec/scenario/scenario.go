@@ -1,6 +1,7 @@
 // Package scenario describes the immutable problem a user is handed: which model, on
-// which available hardware, measured against which workload shape, and fitted against
-// which coefficient and engine-version references.
+// which available hardware, measured against which workload (a distributional shape or a
+// concrete captured trace), and fitted against which coefficient and engine-version
+// references.
 //
 // A scenario is a file rather than a flag list so that an estimate is reproducible
 // from committed artifacts. It names catalog and registry entries by identity. What it
@@ -12,9 +13,11 @@
 // sweep axis that is neither.
 package scenario
 
+import "github.com/inference-sim/blis-schemas/spec/workload"
+
 // Scenario is the immutable problem: a model, the hardware it is available on, the
-// workload shape it is measured against, and the references that identify what a
-// prediction is fitted to.
+// workload it is measured against, and the references that identify what a prediction is
+// fitted to.
 type Scenario struct {
 	Kind string `yaml:"kind"` // "Scenario"
 	Name string `yaml:"name"`
@@ -26,10 +29,12 @@ type Scenario struct {
 	// different cost model do not belong here, however similar their entry names.
 	Coefficients []string `yaml:"coefficients"`
 
-	// Workload names a catalog workload shape. A scenario without one describes a
-	// problem but no traffic, which is enough for a capacity question and not enough
-	// for a throughput one.
-	Workload string `yaml:"workload,omitempty"`
+	// Workload is the "what traffic" slot: a sum type binding either a catalog workload
+	// shape (distributional) or a reference to an external captured trace (concrete) —
+	// see workload.Binding. A scenario without one describes a problem but no traffic,
+	// which is enough for a capacity question and not enough for a throughput one, so it
+	// is a pointer and omitting it is valid. When present it must choose exactly one arm.
+	Workload *workload.Binding `yaml:"workload,omitempty"`
 
 	// EngineVersion is the engine release this scenario is fitted against. It is not
 	// cosmetic: a coefficient is valid only for the code it was fitted against, and

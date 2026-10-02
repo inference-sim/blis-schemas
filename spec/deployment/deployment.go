@@ -8,10 +8,11 @@
 // in policy.go).
 //
 // It is the tunable half of what a single `blis run` consumes. The immutable problem
-// — the model, the workload shape, the available-hardware inventory, and the
-// coefficient/engine-version references that identify what a prediction is fitted
-// against — lives in a Scenario. A Scenario and a Deployment together describe one
-// run; the operating point (load level) is a run-level sweep axis that is neither.
+// — the model, the workload (a distributional shape or a concrete trace reference), the
+// available-hardware inventory, and the coefficient/engine-version references that
+// identify what a prediction is fitted against — lives in a Scenario. A Scenario and a
+// Deployment together describe one run; the operating point (load level) is a run-level
+// sweep axis that is neither.
 //
 // Three rules shape the schema, each preventing a class of error rather than
 // catching it later:

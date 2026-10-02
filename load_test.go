@@ -8,6 +8,7 @@ import (
 
 	"github.com/inference-sim/blis-schemas/spec/deployment"
 	"github.com/inference-sim/blis-schemas/spec/model"
+	"github.com/inference-sim/blis-schemas/spec/workload"
 )
 
 // The yaml tags on every spec type are a contract with the files in blis-catalog and
@@ -30,7 +31,8 @@ name: granite-230b-h200-tp8
 model: granite-5-230b
 coefficients: [cost-model-primitives-h200]
 engine_version: "0.29.0"
-workload: chatbot
+workload:
+  shape: chatbot
 cluster:
   hardware: h200
   nodes: 1
@@ -46,8 +48,10 @@ cluster:
 	if s.Name != "granite-230b-h200-tp8" {
 		t.Errorf("name = %q", s.Name)
 	}
-	if s.Workload != "chatbot" {
-		t.Errorf("workload = %q, want chatbot", s.Workload)
+	// The workload is a sum-type binding now, not a bare name: the distributional arm
+	// names a catalog shape under `shape`.
+	if s.Workload == nil || s.Workload.Shape != "chatbot" || s.Workload.Trace != nil {
+		t.Errorf("workload binding did not parse as a shape ref: %+v", s.Workload)
 	}
 	// The hardware and fabric references and the storage inventory are folded into
 	// the cluster rather than sitting loose at the top level.
@@ -62,6 +66,181 @@ cluster:
 	}
 	if rep := Validate(Bundle{Scenario: s}); !rep.Field.OK() {
 		t.Errorf("a loaded scenario failed field validation:\n%s", rep.Field.Error())
+	}
+}
+
+// TestLoadScenarioWithTraceBinding exercises the trace arm of the workload binding end to
+// end: the data-file path, the integrity/provenance fields, and the small header metadata
+// (including the server sub-block and the per-class SLO targets) must all parse through
+// the strict loader, and the loaded scenario must validate. A tag error anywhere in the
+// nested trace reference would leave a zero value the type system cannot catch, which is
+// the one failure this package exists to rule out.
+func TestLoadScenarioWithTraceBinding(t *testing.T) {
+	path := write(t, "s.yaml", `
+kind: Scenario
+name: granite-230b-h200-replay
+model: granite-5-230b
+coefficients: [cost-model-primitives-h200]
+engine_version: "0.29.0"
+workload:
+  trace:
+    data: traces/agentic-run.csv
+    sha256: `+strings.Repeat("a", 64)+`
+    rows: 1048576
+    header:
+      trace_version: 3
+      time_unit: microseconds
+      mode: real
+      workload_seed: 0
+      server:
+        type: vllm
+        model: granite-5-230b
+        tensor_parallel: 8
+        max_num_seqs: 1024
+        block_size: 16
+        gpu_memory_utilization: 0.9
+        max_model_len: 131072
+      goodput_slo_targets:
+        critical:
+          ttft_ms: 500
+          itl_ms: 50
+          e2e_ms: 30000
+cluster:
+  hardware: h200
+  nodes: 1
+  gpus_per_node: 8
+`)
+	s, err := LoadScenario(path)
+	if err != nil {
+		t.Fatalf("LoadScenario: %v", err)
+	}
+	b := s.Workload
+	if b == nil || b.Shape != "" || b.Trace == nil {
+		t.Fatalf("workload binding did not parse as a trace ref: %+v", b)
+	}
+	tr := b.Trace
+	if tr.Data != "traces/agentic-run.csv" || tr.Rows != 1048576 || len(tr.SHA256) != 64 {
+		t.Errorf("trace reference fields did not parse: %+v", tr)
+	}
+	h := tr.Header
+	if h.Version != 3 || h.TimeUnit != "microseconds" || h.Mode != workload.ModeReal {
+		t.Errorf("trace header scalars did not parse: %+v", h)
+	}
+	// workload_seed: 0 is a recorded zero, which the pointer must preserve as distinct
+	// from absent.
+	if h.WorkloadSeed == nil || *h.WorkloadSeed != 0 {
+		t.Errorf("workload_seed did not parse as a recorded zero: %v", h.WorkloadSeed)
+	}
+	if h.Server == nil || h.Server.TensorParallel != 8 || h.Server.GPUMemoryUtilization != 0.9 {
+		t.Errorf("trace server block did not parse: %+v", h.Server)
+	}
+	crit, ok := h.GoodputSLOTargets["critical"]
+	if !ok || crit.TTFTMs != 500 || crit.ITLMs != 50 || crit.E2EMs != 30000 {
+		t.Errorf("goodput_slo_targets did not parse: %+v", h.GoodputSLOTargets)
+	}
+	if rep := Validate(Bundle{Scenario: s}); !rep.Field.OK() {
+		t.Errorf("a loaded trace-bound scenario failed field validation:\n%s", rep.Field.Error())
+	}
+}
+
+// TestLoadScenarioRejectsUnknownTraceField pins strict decoding through EVERY nesting
+// level the trace reference introduces: a misspelled sub-key must fail loudly rather than
+// leave a zero value, the same guarantee the top-level loaders give. The trace types are
+// plain structs — none implements a custom UnmarshalYAML, which is what would silently
+// drop the decoder's KnownFields setting (see internal/validate/strict.go) — so strict
+// decoding recurses through all of them for free. That is exactly the kind of property
+// that is assumed and then quietly lost, so each new level is pinned: at the
+// `workload` binding itself, directly under `trace`, under its `header`, under the
+// `header.server` sub-block, and inside a `header.goodput_slo_targets.<class>` map VALUE (the one
+// struct the feature reaches only through a map, where it is least obvious the strict
+// check still applies).
+func TestLoadScenarioRejectsUnknownTraceField(t *testing.T) {
+	// head is a valid scenario up to the workload block; each case supplies the workload
+	// subtree with an injection that must be rejected, naming the stray key.
+	cases := []struct {
+		name      string
+		traceYAML string
+		badKey    string
+	}{
+		{
+			name: "unknown key under the workload binding",
+			traceYAML: `  shape: chatbot
+  invalid_field: yes`,
+			badKey: "invalid_field",
+		},
+		{
+			name: "unknown key directly under trace",
+			traceYAML: `  trace:
+    data: traces/run.csv
+    rowz: 10
+    header:
+      trace_version: 3
+      time_unit: microseconds
+      mode: real`,
+			badKey: "rowz",
+		},
+		{
+			name: "unknown key under trace.header",
+			traceYAML: `  trace:
+    data: traces/run.csv
+    header:
+      trace_version: 3
+      time_unit: microseconds
+      mode: real
+      time_uint: microseconds`,
+			badKey: "time_uint",
+		},
+		{
+			name: "unknown key under trace.header.server",
+			traceYAML: `  trace:
+    data: traces/run.csv
+    header:
+      trace_version: 3
+      time_unit: microseconds
+      mode: real
+      server:
+        tensor_parallel: 8
+        tensor_paralel: 8`,
+			badKey: "tensor_paralel",
+		},
+		{
+			name: "unknown key inside a goodput_slo_targets map value",
+			traceYAML: `  trace:
+    data: traces/run.csv
+    header:
+      trace_version: 3
+      time_unit: microseconds
+      mode: real
+      goodput_slo_targets:
+        critical:
+          ttft_ms: 500
+          ttft_mss: 500`,
+			badKey: "ttft_mss",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := write(t, "s.yaml", `
+kind: Scenario
+name: typo
+model: granite-5-230b
+coefficients: [c]
+engine_version: "0.29.0"
+workload:
+`+tc.traceYAML+`
+cluster:
+  hardware: h200
+  nodes: 1
+  gpus_per_node: 8
+`)
+			_, err := LoadScenario(path)
+			if err == nil {
+				t.Fatalf("a misspelled %q was accepted; the trace would validate while silently dropping it", tc.badKey)
+			}
+			if !strings.Contains(err.Error(), tc.badKey) {
+				t.Errorf("the error should name the offending field %q, got: %v", tc.badKey, err)
+			}
+		})
 	}
 }
 
