@@ -91,12 +91,12 @@ workload:
       trace_version: 3
       time_unit: microseconds      # one of a closed set (us/microseconds/ms/s/ns…)
       mode: real                   # real | generated | replayed
-      seed: 0                      # workload RNG seed, when one was recorded
+      workload_seed: 0             # workload RNG seed, when one was recorded
       server:                      # provenance of the server that produced the trace
         type: vllm
         tensor_parallel: 8
         gpu_memory_utilization: 0.9
-      slo_targets:                 # per-class TTFT/ITL/E2E thresholds, in ms
+      goodput_slo_targets:         # per-class TTFT/ITL/E2E thresholds, in ms
         critical: {ttft_ms: 500, itl_ms: 50, e2e_ms: 30000}
 ```
 

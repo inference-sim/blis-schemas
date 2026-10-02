@@ -115,10 +115,12 @@ type TraceHeader struct {
 	// distinguishable from a synthetic one.
 	Mode Mode `yaml:"mode"`
 
-	// Seed is the workload RNG seed, when one was recorded. It is a pointer because a seed
-	// of 0 is a real seed distinct from "no seed recorded": a generated trace carries one,
-	// an observed trace of a real server does not.
-	Seed *int64 `yaml:"seed,omitempty"`
+	// WorkloadSeed is the workload RNG seed, when one was recorded. It is a pointer because
+	// a seed of 0 is a real seed distinct from "no seed recorded": a generated trace
+	// carries one, an observed trace of a real server does not. The yaml key is
+	// workload_seed, matching the TraceV2 header the serving pipeline writes, so an
+	// operator does not translate it.
+	WorkloadSeed *int64 `yaml:"workload_seed,omitempty"`
 
 	// Server records the configuration of the server that produced the trace, as
 	// provenance. It is distinct from the Deployment being simulated — an observed trace
@@ -126,9 +128,11 @@ type TraceHeader struct {
 	// prediction against. Absent when the producing pipeline recorded none.
 	Server *TraceServer `yaml:"server,omitempty"`
 
-	// SLOTargets are the per-class TTFT/ITL/E2E thresholds the trace was measured against,
-	// keyed by SLO class name, so that observe -> replay -> calibrate carry one SLO
-	// definition. Absent when the trace defined none.
+	// GoodputSLOTargets are the per-class TTFT/ITL/E2E thresholds the trace was measured
+	// against, keyed by SLO class name, so that observe -> replay -> calibrate carry one
+	// SLO definition. Absent when the trace defined none. The yaml key is
+	// goodput_slo_targets, matching the TraceV2 header the serving pipeline writes, so an
+	// operator does not translate it.
 	//
 	// The key space is OPEN on purpose: an SLO class is a user-defined admission class
 	// (the source system carries whatever names an operator configured — "critical",
@@ -136,7 +140,7 @@ type TraceHeader struct {
 	// checked against a closed set. Which classes are legal, and how admission treats
 	// them, is a deployment-policy concern (the S2 surface), not a property of the trace a
 	// workload references.
-	SLOTargets map[string]SLODimTargets `yaml:"slo_targets,omitempty"`
+	GoodputSLOTargets map[string]SLODimTargets `yaml:"goodput_slo_targets,omitempty"`
 }
 
 // Mode is which pipeline produced a trace. The set is closed: an unrecognized mode is an
@@ -216,7 +220,7 @@ func enumerate[T ~string](set map[T]bool) []string {
 // of 0 describes no server — so an omitted field decoding to 0 reads unambiguously as
 // "unset", and validation only rejects a negative. This is the same convention, and the
 // same zero-is-unset sentinel, that deployment.Engine uses for the same quantities; the
-// pointer treatment (see Seed) is reserved for fields where a recorded 0 differs from an
+// pointer treatment (see WorkloadSeed) is reserved for fields where a recorded 0 differs from an
 // absent one.
 type TraceServer struct {
 	Type                 string  `yaml:"type,omitempty"`

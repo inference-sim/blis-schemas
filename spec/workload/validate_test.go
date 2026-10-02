@@ -60,11 +60,11 @@ func traceRef() *TraceRef {
 		SHA256: strRepeat("a", 64),
 		Rows:   1048576,
 		Header: TraceHeader{
-			Version: 3, TimeUnit: "microseconds", Mode: ModeReal, Seed: seed(0),
+			Version: 3, TimeUnit: "microseconds", Mode: ModeReal, WorkloadSeed: seed(0),
 			Server: &TraceServer{Type: "vllm", Model: "granite-5-230b",
 				TensorParallel: 8, MaxNumSeqs: 1024, BlockSize: 16,
 				GPUMemoryUtilization: 0.9, MaxModelLen: 131072},
-			SLOTargets: map[string]SLODimTargets{
+			GoodputSLOTargets: map[string]SLODimTargets{
 				"critical": {TTFTMs: 500, ITLMs: 50, E2EMs: 30000}},
 		},
 	}
@@ -121,13 +121,13 @@ func TestTraceRefRejects(t *testing.T) {
 		{"negative tensor_parallel", func(tr *TraceRef) { tr.Header.Server.TensorParallel = -1 }},
 		{"gpu util above one", func(tr *TraceRef) { tr.Header.Server.GPUMemoryUtilization = 1.5 }},
 		{"empty slo class key", func(tr *TraceRef) {
-			tr.Header.SLOTargets = map[string]SLODimTargets{"": {TTFTMs: 1}}
+			tr.Header.GoodputSLOTargets = map[string]SLODimTargets{"": {TTFTMs: 1}}
 		}},
 		{"slo class with no target", func(tr *TraceRef) {
-			tr.Header.SLOTargets = map[string]SLODimTargets{"critical": {}}
+			tr.Header.GoodputSLOTargets = map[string]SLODimTargets{"critical": {}}
 		}},
 		{"negative slo target", func(tr *TraceRef) {
-			tr.Header.SLOTargets = map[string]SLODimTargets{"critical": {TTFTMs: -1}}
+			tr.Header.GoodputSLOTargets = map[string]SLODimTargets{"critical": {TTFTMs: -1}}
 		}},
 	}
 	for _, tc := range cases {

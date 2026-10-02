@@ -81,12 +81,12 @@ func (h *TraceHeader) Validate() *validate.Problems {
 	if h.Server != nil {
 		p.Merge("server", h.Server.Validate())
 	}
-	for class, targets := range h.SLOTargets {
+	for class, targets := range h.GoodputSLOTargets {
 		if class == "" {
-			p.Field("slo_targets", "an SLO class key must not be empty")
+			p.Field("goodput_slo_targets", "an SLO class key must not be empty")
 			continue
 		}
-		p.Merge("slo_targets."+class, targets.Validate())
+		p.Merge("goodput_slo_targets."+class, targets.Validate())
 	}
 	return p
 }

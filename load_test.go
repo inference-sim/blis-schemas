@@ -90,7 +90,7 @@ workload:
       trace_version: 3
       time_unit: microseconds
       mode: real
-      seed: 0
+      workload_seed: 0
       server:
         type: vllm
         model: granite-5-230b
@@ -99,7 +99,7 @@ workload:
         block_size: 16
         gpu_memory_utilization: 0.9
         max_model_len: 131072
-      slo_targets:
+      goodput_slo_targets:
         critical:
           ttft_ms: 500
           itl_ms: 50
@@ -125,16 +125,17 @@ cluster:
 	if h.Version != 3 || h.TimeUnit != "microseconds" || h.Mode != workload.ModeReal {
 		t.Errorf("trace header scalars did not parse: %+v", h)
 	}
-	// seed: 0 is a recorded zero, which the pointer must preserve as distinct from absent.
-	if h.Seed == nil || *h.Seed != 0 {
-		t.Errorf("seed did not parse as a recorded zero: %v", h.Seed)
+	// workload_seed: 0 is a recorded zero, which the pointer must preserve as distinct
+	// from absent.
+	if h.WorkloadSeed == nil || *h.WorkloadSeed != 0 {
+		t.Errorf("workload_seed did not parse as a recorded zero: %v", h.WorkloadSeed)
 	}
 	if h.Server == nil || h.Server.TensorParallel != 8 || h.Server.GPUMemoryUtilization != 0.9 {
 		t.Errorf("trace server block did not parse: %+v", h.Server)
 	}
-	crit, ok := h.SLOTargets["critical"]
+	crit, ok := h.GoodputSLOTargets["critical"]
 	if !ok || crit.TTFTMs != 500 || crit.ITLMs != 50 || crit.E2EMs != 30000 {
-		t.Errorf("slo targets did not parse: %+v", h.SLOTargets)
+		t.Errorf("goodput_slo_targets did not parse: %+v", h.GoodputSLOTargets)
 	}
 	if rep := Validate(Bundle{Scenario: s}); !rep.Field.OK() {
 		t.Errorf("a loaded trace-bound scenario failed field validation:\n%s", rep.Field.Error())
@@ -149,7 +150,7 @@ cluster:
 // decoding recurses through all of them for free. That is exactly the kind of property
 // that is assumed and then quietly lost, so each new level is pinned: at the
 // `workload` binding itself, directly under `trace`, under its `header`, under the
-// `header.server` sub-block, and inside a `header.slo_targets.<class>` map VALUE (the one
+// `header.server` sub-block, and inside a `header.goodput_slo_targets.<class>` map VALUE (the one
 // struct the feature reaches only through a map, where it is least obvious the strict
 // check still applies).
 func TestLoadScenarioRejectsUnknownTraceField(t *testing.T) {
@@ -202,14 +203,14 @@ func TestLoadScenarioRejectsUnknownTraceField(t *testing.T) {
 			badKey: "tensor_paralel",
 		},
 		{
-			name: "unknown key inside an slo_targets map value",
+			name: "unknown key inside a goodput_slo_targets map value",
 			traceYAML: `  trace:
     data: traces/run.csv
     header:
       trace_version: 3
       time_unit: microseconds
       mode: real
-      slo_targets:
+      goodput_slo_targets:
         critical:
           ttft_ms: 500
           ttft_mss: 500`,
