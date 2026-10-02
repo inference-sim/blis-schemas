@@ -36,6 +36,13 @@ func (s *Scenario) Validate() *validate.Problems {
 			"at least one set is required; an estimate with no coefficients is not an estimate")
 	}
 
+	// A workload binding is optional (a capacity-only scenario carries none), but a
+	// binding that is present must be well formed: exactly one of its two arms, and that
+	// arm valid. The exactly-one check lives on the binding, not here.
+	if s.Workload != nil {
+		p.Merge("workload", s.Workload.Validate())
+	}
+
 	s.validateCluster(p)
 	return p
 }

@@ -1,6 +1,10 @@
 package scenario
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/inference-sim/blis-schemas/spec/workload"
+)
 
 // multiNode is the immutable problem behind a prefill/decode cluster: a model on 60
 // H200 nodes behind a 400G fabric. The mutable layout that runs on it is a Deployment,
@@ -31,6 +35,46 @@ func TestValidScenariosPass(t *testing.T) {
 		if p := s.Validate(); !p.OK() {
 			t.Fatalf("%s rejected:\n%s", s.Name, p.Error())
 		}
+	}
+}
+
+// TestScenarioWorkloadBinding covers the "what traffic" slot the Scenario now carries: a
+// capacity-only scenario omits it, each arm is accepted, and an ill-formed binding
+// surfaces through the Scenario's own validation (the exactly-one law is the binding's,
+// and the Scenario must not swallow it).
+func TestScenarioWorkloadBinding(t *testing.T) {
+	traceArm := &workload.Binding{Trace: &workload.TraceRef{
+		Data:   "traces/run.csv",
+		Header: workload.TraceHeader{Version: 3, TimeUnit: "microseconds", Mode: workload.ModeReal},
+	}}
+	pass := map[string]*workload.Binding{
+		"no workload (capacity question)": nil,
+		"shape arm":                       {Shape: "chatbot"},
+		"trace arm":                       traceArm,
+	}
+	for name, b := range pass {
+		t.Run(name, func(t *testing.T) {
+			s := singleNode()
+			s.Workload = b
+			if p := s.Validate(); !p.OK() {
+				t.Fatalf("expected a valid scenario, got:\n%s", p.Error())
+			}
+		})
+	}
+
+	fail := map[string]*workload.Binding{
+		"both arms":     {Shape: "chatbot", Trace: traceArm.Trace},
+		"empty binding": {},
+		"invalid trace": {Trace: &workload.TraceRef{Data: "t.csv"}}, // header missing required fields
+	}
+	for name, b := range fail {
+		t.Run(name, func(t *testing.T) {
+			s := singleNode()
+			s.Workload = b
+			if p := s.Validate(); p.OK() {
+				t.Fatal("expected the scenario to reject an ill-formed workload binding")
+			}
+		})
 	}
 }
 
