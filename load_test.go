@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/inference-sim/blis-schemas/spec/deployment"
 	"github.com/inference-sim/blis-schemas/spec/model"
 	"github.com/inference-sim/blis-schemas/spec/workload"
 )
@@ -299,6 +300,120 @@ pools:
 	// scenario alongside a deployment (TestDeploymentWithoutScenarioIsRejected covers that).
 	if p := d.Validate(); !p.OK() {
 		t.Errorf("a loaded deployment failed field validation:\n%s", p.Error())
+	}
+}
+
+// TestLoadDeploymentWithPolicies loads the policy surface added in S2 — admission,
+// routing with scorers, the BLIS-native scheduler, preemption, saturation detectors,
+// and LoRA — through the strict loader, so the new YAML tags are exercised against a
+// real decode rather than only in-memory construction.
+func TestLoadDeploymentWithPolicies(t *testing.T) {
+	path := write(t, "d.yaml", `
+kind: Deployment
+name: granite-230b-h200-tp8-policies
+pools:
+  - role: colocated
+    nodes: 1
+    parallel: {tp: 8, pp: 1, dp: 1}
+    engine:
+      cache_dtype: fp8
+      scheduling_policy: priority
+admission:
+  policy: token-bucket
+  token_bucket_capacity: 10000.0
+  token_bucket_refill_rate: 1000.0
+  admission_latency_us: 250
+  slo_priorities:
+    batch: 0
+routing:
+  policy: weighted
+  routing_latency_us: 100
+  scorers:
+    - name: precise-prefix-cache
+      weight: 2.0
+    - name: queue-depth
+      weight: 1.0
+    - name: kv-utilization
+      weight: 1.0
+scheduler: priority-fcfs
+preemption:
+  policy: priority
+saturation:
+  detectors: [composite, peak-rate]
+  composite:
+    sensitivity: 1.5
+  peak_rate:
+    threshold: 0.5
+  final_window: 30s
+lora:
+  adapter_capacity: 4
+  load_base_latency_us: 1500.0
+  step_overhead_tiers:
+    8:
+      k6: 0.02
+      k7: 1.0
+  adapters:
+    - id: sql-adapter
+      rank: 8
+`)
+	d, err := LoadDeployment(path)
+	if err != nil {
+		t.Fatalf("LoadDeployment: %v", err)
+	}
+	// The engine's own vLLM-mirroring scheduling_policy and the BLIS-native scheduler are
+	// both set, and are distinct fields.
+	if got := d.Pools[0].Engine.SchedulingPolicy; got != "priority" {
+		t.Errorf("engine.scheduling_policy = %q, want priority", got)
+	}
+	if d.Scheduler != "priority-fcfs" {
+		t.Errorf("scheduler = %q, want priority-fcfs", d.Scheduler)
+	}
+	if d.Admission == nil || d.Admission.Policy != deployment.AdmissionTokenBucket ||
+		d.Admission.TokenBucketCapacity == nil || *d.Admission.TokenBucketCapacity != 10000 {
+		t.Errorf("admission did not parse: %+v", d.Admission)
+	}
+	if d.Routing == nil || len(d.Routing.Scorers) != 3 ||
+		d.Routing.Scorers[0].Name != deployment.ScorerPrecisePrefixCache {
+		t.Errorf("routing scorers did not parse: %+v", d.Routing)
+	}
+	if d.Saturation == nil || len(d.Saturation.Detectors) != 2 ||
+		d.Saturation.Composite == nil || d.Saturation.Composite.Sensitivity == nil {
+		t.Errorf("saturation did not parse: %+v", d.Saturation)
+	}
+	if d.LoRA == nil || len(d.LoRA.Adapters) != 1 || d.LoRA.Adapters[0].Rank != 8 ||
+		d.LoRA.StepOverheadTiers[8].K7 == nil {
+		t.Errorf("lora did not parse: %+v", d.LoRA)
+	}
+	if p := d.Validate(); !p.OK() {
+		t.Errorf("a loaded policy deployment failed field validation:\n%s", p.Error())
+	}
+}
+
+// TestLoadRejectsUnknownPolicyField is the strict-loader property reaching into a nested
+// policy block: a key the simulator never set, misspelled inside an otherwise valid
+// block, must fail loudly rather than leave the setting its author intended silently
+// dropped.
+func TestLoadRejectsUnknownPolicyField(t *testing.T) {
+	path := write(t, "d.yaml", `
+kind: Deployment
+name: typo
+pools:
+  - role: colocated
+    nodes: 1
+    parallel: {tp: 8, pp: 1, dp: 1}
+    engine: {cache_dtype: fp8}
+routing:
+  policy: weighted
+  scorers:
+    - name: queue-depth
+      wieght: 1.0
+`)
+	_, err := LoadDeployment(path)
+	if err == nil {
+		t.Fatal("a misspelled nested policy field was accepted; strict decoding must reach into policy blocks")
+	}
+	if !strings.Contains(err.Error(), "wieght") {
+		t.Errorf("the error should name the offending field, got: %v", err)
 	}
 }
 

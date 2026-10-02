@@ -2,6 +2,10 @@ package deployment
 
 import (
 	"fmt"
+	"math"
+	"sort"
+	"strings"
+	"time"
 
 	"github.com/inference-sim/blis-schemas/internal/validate"
 )
@@ -29,6 +33,7 @@ func (d *Deployment) Validate() *validate.Problems {
 
 	d.validatePools(p)
 	d.validateOffload(p)
+	d.validatePolicy(p)
 	return p
 }
 
@@ -230,4 +235,303 @@ func (d *Deployment) validateOffload(p *validate.Problems) {
 	if o.PrefetchDepth < 0 {
 		p.Field("offload.prefetch_depth", "must not be negative")
 	}
+}
+
+// validatePolicy field-validates the control-plane policy surface (policy.go). Each
+// block is optional; an absent one is skipped. The checks confirm that enumerated
+// values are drawn from the sets the simulator accepts and that numeric parameters lie
+// in a usable range, mirroring the simulator's own policy-bundle, saturation-config and
+// lora-config validation.
+func (d *Deployment) validatePolicy(p *validate.Problems) {
+	validateAdmission(p, d.Admission)
+	validateRouting(p, d.Routing)
+	validateScheduler(p, d.Scheduler)
+	validatePreemption(p, d.Preemption)
+	validateSaturation(p, d.Saturation)
+	validateLoRA(p, d.LoRA)
+}
+
+func validateAdmission(p *validate.Problems, a *Admission) {
+	if a == nil {
+		return
+	}
+	// An empty policy takes the simulator default (always-admit), as the simulator's own
+	// empty-string case does, so it is only checked when stated.
+	if a.Policy != "" && !a.Policy.Valid() {
+		p.Field("admission.policy", "%q is not a recognized admission policy; known: %s",
+			a.Policy, knownValues(admissionPolicies))
+	}
+	if a.TokenBucketCapacity != nil && !finitePositive(*a.TokenBucketCapacity) {
+		p.Field("admission.token_bucket_capacity",
+			"must be a finite positive number, got %v", *a.TokenBucketCapacity)
+	}
+	if a.TokenBucketRefillRate != nil && !finitePositive(*a.TokenBucketRefillRate) {
+		p.Field("admission.token_bucket_refill_rate",
+			"must be a finite positive number, got %v", *a.TokenBucketRefillRate)
+	}
+	if a.TierShedThreshold != nil && *a.TierShedThreshold < 0 {
+		p.Field("admission.tier_shed_threshold", "must not be negative, got %d", *a.TierShedThreshold)
+	}
+	// tier_shed_min_priority is a priority value, which may be negative (a sheddable
+	// tier), so it carries no sign constraint.
+	if a.GAIEQDThreshold != nil && !finitePositive(*a.GAIEQDThreshold) {
+		p.Field("admission.gaie_qd_threshold",
+			"must be a finite positive number, got %v", *a.GAIEQDThreshold)
+	}
+	if a.GAIEKVThreshold != nil {
+		if v := *a.GAIEKVThreshold; !(v > 0 && v <= 1) {
+			p.Field("admission.gaie_kv_threshold", "must lie in (0, 1], got %v", v)
+		}
+	}
+	if a.LatencyUs < 0 {
+		p.Field("admission.admission_latency_us", "must not be negative, got %d", a.LatencyUs)
+	}
+	for class, target := range a.SLOTargets {
+		at := fmt.Sprintf("admission.slo_targets[%q]", class)
+		if class == "" {
+			p.Field(at, "an SLO class key must not be empty")
+		}
+		if target <= 0 {
+			p.Field(at, "target must be positive microseconds, got %d", target)
+		}
+	}
+	for class := range a.SLOPriorities {
+		if class == "" {
+			p.Field(fmt.Sprintf("admission.slo_priorities[%q]", class),
+				"an SLO class key must not be empty")
+		}
+	}
+}
+
+func validateRouting(p *validate.Problems, r *Routing) {
+	if r == nil {
+		return
+	}
+	if r.Policy != "" && !r.Policy.Valid() {
+		p.Field("routing.policy", "%q is not a recognized routing policy; known: %s",
+			r.Policy, knownValues(routingPolicies))
+	}
+	seen := map[Scorer]bool{}
+	for i, sw := range r.Scorers {
+		at := fmt.Sprintf("routing.scorers[%d]", i)
+		switch {
+		case sw.Name == "":
+			p.Field(at+".name", "required: names a routing scorer")
+		case !sw.Name.Valid():
+			p.Field(at+".name", "%q is not a recognized scorer; known: %s",
+				sw.Name, knownValues(scorers))
+		case seen[sw.Name]:
+			p.Field(at+".name", "duplicate scorer %q; each scorer may appear at most once", sw.Name)
+		}
+		seen[sw.Name] = true
+		if !finitePositive(sw.Weight) {
+			p.Field(at+".weight", "must be a finite positive number, got %v", sw.Weight)
+		}
+	}
+	if r.LatencyUs < 0 {
+		p.Field("routing.routing_latency_us", "must not be negative, got %d", r.LatencyUs)
+	}
+	// Scorers compose only within the weighted policy; naming them under any other policy
+	// has no effect, so scorers with a non-weighted policy are a warning rather than an
+	// error. An empty policy takes the simulator default (round-robin), which also
+	// ignores scorers, so the warning fires for the omitted case too — naming it as
+	// round-robin so the author sees why the scorers are inert.
+	if len(r.Scorers) > 0 && r.Policy != RoutingWeighted {
+		shown := r.Policy
+		if shown == "" {
+			shown = RoutingRoundRobin
+		}
+		p.Warnf("routing: scorers are declared but policy %q ignores them; only the weighted policy consults scorers", shown)
+	}
+}
+
+func validateScheduler(p *validate.Problems, s SchedulerPolicy) {
+	if s != "" && !s.Valid() {
+		p.Field("scheduler", "%q is not a recognized BLIS-native scheduler; known: %s",
+			s, knownValues(schedulerPolicies))
+	}
+}
+
+func validatePreemption(p *validate.Problems, pr *Preemption) {
+	if pr == nil {
+		return
+	}
+	if pr.Policy != "" && !pr.Policy.Valid() {
+		p.Field("preemption.policy", "%q is not a recognized preemption policy; known: %s",
+			pr.Policy, knownValues(preemptionPolicies))
+	}
+}
+
+func validateSaturation(p *validate.Problems, s *Saturation) {
+	if s == nil {
+		return
+	}
+	seen := map[Detector]bool{}
+	for i, d := range s.Detectors {
+		at := fmt.Sprintf("saturation.detectors[%d]", i)
+		switch {
+		case d == "":
+			p.Field(at, "required: names a detector")
+		case !d.Valid():
+			p.Field(at, "%q is not a recognized detector; known: %s", d, knownValues(detectors))
+		case seen[d]:
+			p.Field(at, "duplicate detector %q", d)
+		}
+		seen[d] = true
+	}
+	if c := s.Composite; c != nil && c.Sensitivity != nil && !finitePositive(*c.Sensitivity) {
+		p.Field("saturation.composite.sensitivity",
+			"must be a finite positive number, got %v", *c.Sensitivity)
+	}
+	if t := s.Threshold; t != nil && t.ThresholdMs != nil && !finitePositive(*t.ThresholdMs) {
+		p.Field("saturation.threshold.threshold_ms",
+			"must be a finite positive number, got %v", *t.ThresholdMs)
+	}
+	validateBacklogDrift(p, s.BacklogDrift)
+	validatePeakRate(p, s.PeakRate)
+	if s.FinalWindow != "" {
+		if _, err := time.ParseDuration(s.FinalWindow); err != nil {
+			p.Field("saturation.final_window", "%q is not a valid Go duration: %v", s.FinalWindow, err)
+		}
+	}
+}
+
+func validateBacklogDrift(p *validate.Problems, b *BacklogDriftDetector) {
+	if b == nil {
+		return
+	}
+	atLeastOne := func(field string, v *int) {
+		if v != nil && *v < 1 {
+			p.Field("saturation.backlog_drift."+field, "must be at least 1, got %d", *v)
+		}
+	}
+	atLeastOne("window_size_sec", b.WindowSizeSec)
+	atLeastOne("min_windows", b.MinWindows)
+	atLeastOne("tail_windows", b.TailWindows)
+	if b.WarmupWindows != nil && *b.WarmupWindows < 0 {
+		p.Field("saturation.backlog_drift.warmup_windows", "must not be negative, got %d", *b.WarmupWindows)
+	}
+	posFloat := func(field string, v *float64) {
+		if v != nil && !finitePositive(*v) {
+			p.Field("saturation.backlog_drift."+field, "must be a finite positive number, got %v", *v)
+		}
+	}
+	posFloat("peak_ratio", b.PeakRatio)
+	// slope_k is the false-alarm calibration knob; a value of 1 or below is a legitimate
+	// "maximally severe" setting, so only non-positive is rejected.
+	posFloat("slope_k", b.SlopeK)
+	// peak_ratio_band is a band WIDTH around peak_ratio, so a width of zero is a
+	// legitimate "no band" setting — unlike peak_ratio and the drain ratios, which must
+	// be positive. Only a negative or non-finite width is rejected.
+	if b.PeakRatioBand != nil {
+		if v := *b.PeakRatioBand; v < 0 || math.IsNaN(v) || math.IsInf(v, 0) {
+			p.Field("saturation.backlog_drift.peak_ratio_band",
+				"must be a non-negative finite number, got %v", v)
+		}
+	}
+	fraction := func(field string, v *float64) {
+		if v != nil && !(*v > 0 && *v <= 1) {
+			p.Field("saturation.backlog_drift."+field, "must lie in (0, 1], got %v", *v)
+		}
+	}
+	fraction("confidence_ci", b.ConfidenceCI)
+	fraction("saturated_drain_ratio", b.SaturatedDrainRatio)
+	fraction("transient_drain_ratio", b.TransientDrainRatio)
+}
+
+func validatePeakRate(p *validate.Problems, pr *PeakRateDetector) {
+	if pr == nil {
+		return
+	}
+	if pr.Threshold != nil && !finitePositive(*pr.Threshold) {
+		p.Field("saturation.peak_rate.threshold", "must be a finite positive number, got %v", *pr.Threshold)
+	}
+	// overload_multiple at or below 1 collapses the detector to two levels, which the
+	// simulator accepts as a deliberate setting, so only non-positive is rejected.
+	if pr.OverloadMultiple != nil && !finitePositive(*pr.OverloadMultiple) {
+		p.Field("saturation.peak_rate.overload_multiple",
+			"must be a finite positive number, got %v", *pr.OverloadMultiple)
+	}
+	if pr.MinObservations != nil && *pr.MinObservations < 1 {
+		p.Field("saturation.peak_rate.min_observations", "must be at least 1, got %d", *pr.MinObservations)
+	}
+	if pr.ConsecutiveK != nil && *pr.ConsecutiveK < 1 {
+		p.Field("saturation.peak_rate.consecutive_k", "must be at least 1, got %d", *pr.ConsecutiveK)
+	}
+	if pr.WarmupUs != nil && *pr.WarmupUs < 0 {
+		p.Field("saturation.peak_rate.warmup_us", "must not be negative, got %d", *pr.WarmupUs)
+	}
+}
+
+func validateLoRA(p *validate.Problems, l *LoRA) {
+	if l == nil {
+		return
+	}
+	if l.AdapterCapacity != nil && *l.AdapterCapacity < 0 {
+		p.Field("lora.adapter_capacity", "must not be negative, got %d", *l.AdapterCapacity)
+	}
+	if l.LoadBaseLatencyUs != nil {
+		if v := *l.LoadBaseLatencyUs; v < 0 || math.IsNaN(v) || math.IsInf(v, 0) {
+			p.Field("lora.load_base_latency_us", "must be a non-negative finite number, got %v", v)
+		}
+	}
+	if l.LoadBandwidthBytesUs != nil && !finitePositive(*l.LoadBandwidthBytesUs) {
+		p.Field("lora.load_bandwidth_bytes_us",
+			"must be a finite positive number (it divides adapter bytes), got %v", *l.LoadBandwidthBytesUs)
+	}
+	if l.FootprintBytesPerRank != nil && !finitePositive(*l.FootprintBytesPerRank) {
+		p.Field("lora.footprint_bytes_per_rank", "must be a finite positive number, got %v", *l.FootprintBytesPerRank)
+	}
+	for rank, tier := range l.StepOverheadTiers {
+		at := fmt.Sprintf("lora.step_overhead_tiers[%d]", rank)
+		if rank < 1 {
+			p.Field(at, "rank tier must be at least 1, got %d", rank)
+		}
+		if tier.K6 != nil {
+			if v := *tier.K6; v < 0 || math.IsNaN(v) || math.IsInf(v, 0) {
+				p.Field(at+".k6", "must be a non-negative finite number, got %v", v)
+			}
+		}
+		if tier.K7 == nil {
+			p.Field(at+".k7", "required: the per-tier normalization denominator")
+		} else if !finitePositive(*tier.K7) {
+			p.Field(at+".k7", "must be a finite positive number, got %v", *tier.K7)
+		}
+	}
+	seen := map[string]bool{}
+	for i, ad := range l.Adapters {
+		at := fmt.Sprintf("lora.adapters[%d]", i)
+		switch {
+		case ad.ID == "":
+			p.Field(at+".id", "required")
+		case seen[ad.ID]:
+			p.Field(at+".id", "duplicate adapter id %q", ad.ID)
+		}
+		seen[ad.ID] = true
+		if ad.Rank < 1 {
+			p.Field(at+".rank", "must be at least 1, got %d", ad.Rank)
+		}
+	}
+	// Declaring adapters without the capacity to hold them leaves the subsystem inert
+	// while implying it is active, which the simulator rejects (a pointer-to-zero
+	// capacity alongside adapters is an error there).
+	if len(l.Adapters) > 0 && (l.AdapterCapacity == nil || *l.AdapterCapacity < 1) {
+		p.Field("lora.adapter_capacity", "at least 1 is required when adapters are declared")
+	}
+}
+
+// finitePositive reports whether f is a finite number strictly greater than zero. It is
+// the test the simulator applies to scorer weights and calibration knobs: a weight or a
+// dial that is zero, negative, NaN or infinite is not a usable value.
+func finitePositive(f float64) bool { return f > 0 && !math.IsInf(f, 0) }
+
+// knownValues renders a sorted, comma-separated list of a string-enum validity map's
+// keys, for the "known: ..." tail of an error message.
+func knownValues[T ~string](m map[T]bool) string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, string(k))
+	}
+	sort.Strings(out)
+	return strings.Join(out, ", ")
 }
