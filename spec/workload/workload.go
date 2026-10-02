@@ -129,6 +129,13 @@ type TraceHeader struct {
 	// SLOTargets are the per-class TTFT/ITL/E2E thresholds the trace was measured against,
 	// keyed by SLO class name, so that observe -> replay -> calibrate carry one SLO
 	// definition. Absent when the trace defined none.
+	//
+	// The key space is OPEN on purpose: an SLO class is a user-defined admission class
+	// (the source system carries whatever names an operator configured — "critical",
+	// "sheddable", and so on), not a vocabulary this schema owns, so the keys are not
+	// checked against a closed set. Which classes are legal, and how admission treats
+	// them, is a deployment-policy concern (the S2 surface), not a property of the trace a
+	// workload references.
 	SLOTargets map[string]SLODimTargets `yaml:"slo_targets,omitempty"`
 }
 
@@ -203,6 +210,14 @@ func enumerate[T ~string](set map[T]bool) []string {
 // follow a serving engine's own configuration surface, so an operator who launched the
 // server does not translate them. Every field is optional: a producer that did not record
 // a setting omits it rather than inventing a default.
+//
+// The integer fields are plain ints, not pointers, because zero is not a meaningful value
+// for any of them — a tensor-parallel width, block size, sequence cap or context length
+// of 0 describes no server — so an omitted field decoding to 0 reads unambiguously as
+// "unset", and validation only rejects a negative. This is the same convention, and the
+// same zero-is-unset sentinel, that deployment.Engine uses for the same quantities; the
+// pointer treatment (see Seed) is reserved for fields where a recorded 0 differs from an
+// absent one.
 type TraceServer struct {
 	Type                 string  `yaml:"type,omitempty"`
 	Model                string  `yaml:"model,omitempty"`

@@ -145,16 +145,23 @@ cluster:
 // level the trace reference introduces: a misspelled sub-key must fail loudly rather than
 // leave a zero value, the same guarantee the top-level loaders give. yaml.v3 KnownFields
 // recurses, so no custom unmarshaller is needed — but the recursion is exactly the kind
-// of property that is assumed and then quietly lost, so each new level is pinned: directly
-// under `trace`, under its `header`, and under the `header.server` sub-block.
+// of property that is assumed and then quietly lost, so each new level is pinned: at the
+// `workload` binding itself, directly under `trace`, under its `header`, and under the
+// `header.server` sub-block.
 func TestLoadScenarioRejectsUnknownTraceField(t *testing.T) {
-	// head is a valid scenario up to the trace block; each case appends an injection that
-	// must be rejected, naming the stray key.
+	// head is a valid scenario up to the workload block; each case supplies the workload
+	// subtree with an injection that must be rejected, naming the stray key.
 	cases := []struct {
 		name      string
 		traceYAML string
 		badKey    string
 	}{
+		{
+			name: "unknown key under the workload binding",
+			traceYAML: `  shape: chatbot
+  invalid_field: yes`,
+			badKey: "invalid_field",
+		},
 		{
 			name: "unknown key directly under trace",
 			traceYAML: `  trace:
