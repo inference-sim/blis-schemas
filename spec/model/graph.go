@@ -260,6 +260,18 @@ type Node struct {
 	// GEMM and GroupedGEMM.
 	N int `yaml:"n,omitempty"`
 	K int `yaml:"k,omitempty"`
+	// WeightDType overrides GlobalShape.WeightDType for this node's parameters, for a
+	// checkpoint that stores one part of itself at a different width from the rest.
+	// Empty means the global dtype governs, which is the common case.
+	//
+	// Mixed-precision MoE is why this exists. DeepSeek-V4-Pro declares expert_dtype fp4
+	// beside an fp8 quantization_config: the routed experts are 4-bit and everything else
+	// is 8-bit. Pricing the experts at the global width doubled them -- 1,441 GiB against
+	// 720 GiB for 384 experts -- which put a per-rank figure of 180 GiB on a 141 GiB part
+	// and made a deployment InferenceX actually ran look impossible. A global dtype cannot
+	// express that split, and inferring it from the quantization method would be a guess
+	// about a width the checkpoint states.
+	WeightDType DType `yaml:"weight_dtype,omitempty"`
 	// GroupedGEMM only.
 	Experts int `yaml:"experts,omitempty"`
 	TopK    int `yaml:"top_k,omitempty"`

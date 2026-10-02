@@ -183,3 +183,47 @@ func TestLatentKVAndDTypeBytes(t *testing.T) {
 		}
 	}
 }
+
+// A per-node weight dtype exists for mixed-precision MoE: DeepSeek-V4-Pro stores its routed
+// experts at fp4 beside fp8 everywhere else. These check the field is governed rather than
+// merely accepted -- an unrecognized width that fell back to the global one would reinstate
+// the bug the field was added to fix.
+func TestPerNodeWeightDType(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		set  func(*Graph)
+		ok   bool
+	}{
+		{"absent is valid: the global dtype governs", func(g *Graph) {}, true},
+		{"a recognized dtype on a GroupedGEMM is valid", func(g *Graph) {
+			for i := range g.LayerKinds[0].Nodes {
+				if g.LayerKinds[0].Nodes[i].Op == OpGroupedGEMM {
+					g.LayerKinds[0].Nodes[i].WeightDType = DTypeNVFP4
+				}
+			}
+		}, true},
+		{"an unrecognized dtype is rejected", func(g *Graph) {
+			for i := range g.LayerKinds[0].Nodes {
+				if g.LayerKinds[0].Nodes[i].Op == OpGroupedGEMM {
+					g.LayerKinds[0].Nodes[i].WeightDType = "fp6"
+				}
+			}
+		}, false},
+		{"a dtype on a node holding no parameters is rejected", func(g *Graph) {
+			for i := range g.LayerKinds[0].Nodes {
+				if g.LayerKinds[0].Nodes[i].Op == OpAttention {
+					g.LayerKinds[0].Nodes[i].WeightDType = DTypeFP8
+				}
+			}
+		}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := validGraph()
+			tc.set(g)
+			p := g.Validate()
+			if got := p.OK(); got != tc.ok {
+				t.Fatalf("OK() = %v, want %v: %v", got, tc.ok, p.Error())
+			}
+		})
+	}
+}

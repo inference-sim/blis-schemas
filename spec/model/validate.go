@@ -250,6 +250,18 @@ func (n Node) validate(p *validate.Problems, at string) {
 		p.Warnf("%s: a condition on a non-collective node encodes deployment in the model graph", at)
 	}
 
+	// A per-node weight dtype is only meaningful where the node holds parameters, and an
+	// unrecognized one must be an error rather than silently falling back to the global
+	// width: the whole point of the override is that the two differ.
+	if n.WeightDType != "" {
+		switch {
+		case !n.WeightDType.Valid():
+			p.Field(at+".weight_dtype", "%q is not a recognized dtype", n.WeightDType)
+		case n.Op != OpGEMM && n.Op != OpGroupedGEMM:
+			p.Field(at+".weight_dtype", "only a GEMM or GroupedGEMM holds parameters")
+		}
+	}
+
 	switch n.Op {
 	case OpGEMM:
 		requirePositive(p, at, "n", n.N)
