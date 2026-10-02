@@ -98,6 +98,9 @@ func TestRejects(t *testing.T) {
 		{"prefill without decode", func(d *Deployment) {
 			d.Pools = d.Pools[:1]
 		}},
+		{"decode without prefill", func(d *Deployment) {
+			d.Pools = d.Pools[1:]
+		}},
 		{"disaggregated without pd_transfer", func(d *Deployment) { d.PDTransfer = nil }},
 		{"speculative with zero drafts", func(d *Deployment) {
 			d.Pools[0].Engine.Speculative = &Speculative{Method: "mtp", NumSpecTokens: 0}
@@ -171,17 +174,17 @@ func TestAllReduceRequestConflict(t *testing.T) {
 func TestValidateAgainstCluster(t *testing.T) {
 	// The pdDeployment pools sum to 60 nodes of 8 GPUs, which the matching cluster
 	// declares, and every dp_local of 8 divides the node.
-	if p := pdDeployment().ValidateAgainstCluster(60, 8, nil); !p.OK() {
+	if p := pdDeployment().ValidateAgainstCluster(ClusterConstraints{Nodes: 60, GPUsPerNode: 8}); !p.OK() {
 		t.Fatalf("a deployment that fills its cluster should pass:\n%s", p.Error())
 	}
 	// Pool node counts that do not sum to the cluster are rejected.
-	if p := pdDeployment().ValidateAgainstCluster(59, 8, nil); p.OK() {
+	if p := pdDeployment().ValidateAgainstCluster(ClusterConstraints{Nodes: 59, GPUsPerNode: 8}); p.OK() {
 		t.Error("pool nodes summing to 60 against a 59-node cluster should fail")
 	}
 	// A data-parallel-local width that does not divide the node is rejected.
 	d := pdDeployment()
 	d.Pools[0].Parallel.DPLocal = 3
-	if p := d.ValidateAgainstCluster(60, 8, nil); p.OK() {
+	if p := d.ValidateAgainstCluster(ClusterConstraints{Nodes: 60, GPUsPerNode: 8}); p.OK() {
 		t.Error("dp_local of 3 does not divide an 8-GPU node and should fail")
 	}
 }
@@ -204,16 +207,16 @@ func TestValidateAgainstClusterStorage(t *testing.T) {
 	inventory := []string{"cpu_dram", "nvme_gen4"}
 
 	// A tier drawn from the declared inventory passes.
-	if p := withOffload("cpu_dram").ValidateAgainstCluster(1, 8, inventory); !p.OK() {
+	if p := withOffload("cpu_dram").ValidateAgainstCluster(ClusterConstraints{Nodes: 1, GPUsPerNode: 8, Storage: inventory}); !p.OK() {
 		t.Errorf("a tier in the inventory should pass:\n%s", p.Error())
 	}
 	// A tier naming a class the cluster does not list is rejected.
-	if p := withOffload("optane").ValidateAgainstCluster(1, 8, inventory); p.OK() {
+	if p := withOffload("optane").ValidateAgainstCluster(ClusterConstraints{Nodes: 1, GPUsPerNode: 8, Storage: inventory}); p.OK() {
 		t.Error("a tier outside the cluster storage inventory should fail")
 	}
 	// A cluster that declares no storage inventory constrains nothing: the same offload
 	// that would fail above passes, preserving pre-inventory behavior.
-	if p := withOffload("optane").ValidateAgainstCluster(1, 8, nil); !p.OK() {
+	if p := withOffload("optane").ValidateAgainstCluster(ClusterConstraints{Nodes: 1, GPUsPerNode: 8}); !p.OK() {
 		t.Errorf("an undeclared inventory should not constrain offload:\n%s", p.Error())
 	}
 }

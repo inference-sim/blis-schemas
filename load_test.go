@@ -116,8 +116,10 @@ pools:
 	if e.DBO == nil || !e.DBO.Enabled || e.DBO.DecodeTokenThreshold != 32 {
 		t.Errorf("dbo did not parse: %+v", e.DBO)
 	}
-	if rep := Validate(Bundle{Deployment: d}); !rep.Field.OK() {
-		t.Errorf("a loaded deployment failed field validation:\n%s", rep.Field.Error())
+	// Validate the loaded deployment on its own terms; the composition layer requires a
+	// scenario alongside a deployment (TestDeploymentWithoutScenarioIsRejected covers that).
+	if p := d.Validate(); !p.OK() {
+		t.Errorf("a loaded deployment failed field validation:\n%s", p.Error())
 	}
 }
 

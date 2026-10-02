@@ -145,6 +145,29 @@ func TestRegisteredVersions(t *testing.T) {
 	}
 }
 
+// TestDeploymentWithoutScenarioIsRejected guards the composition layer against a bundle
+// that would otherwise silently under-validate. A Deployment with no Scenario skips the
+// cluster-fit check and every version-scoped engine rule (both need the scenario), so a
+// deployment that does not fit its hardware would come back green. The layer reports a
+// field problem instead. The mirror holds: a Scenario with no Deployment is a complete
+// problem on its own and still validates.
+func TestDeploymentWithoutScenarioIsRejected(t *testing.T) {
+	b := bundle()
+
+	rep := Validate(Bundle{Deployment: b.Deployment})
+	if rep.Field.OK() {
+		t.Fatal("a deployment with no scenario should be a field problem, not a pass")
+	}
+	if rep.RulesApplied != "" {
+		t.Errorf("RulesApplied = %q, want empty when no scenario is present", rep.RulesApplied)
+	}
+
+	// The mirror: a scenario with no deployment is a complete problem and still validates.
+	if rep := Validate(Bundle{Scenario: b.Scenario}); !rep.OK() {
+		t.Fatalf("a scenario with no deployment should pass:\n%s", renderAll(rep))
+	}
+}
+
 func TestPartialBundlesValidate(t *testing.T) {
 	// A catalog contributor checks one chip, with no scenario at all.
 	rep := Validate(Bundle{Chip: bundle().Chip})

@@ -32,6 +32,18 @@ func (d *Deployment) Validate() *validate.Problems {
 	return p
 }
 
+// ClusterConstraints is the subset of a Scenario's cluster that deployment validation
+// reads: the node and per-node GPU counts, and the declared storage inventory. It is a
+// deployment-local type that mirrors those facts rather than importing scenario.Cluster,
+// so spec/deployment stays independent of spec/scenario. Named fields also stop the two
+// same-typed counts from being transposed at a call site, which a positional
+// (nodes, gpusPerNode int) pair invited.
+type ClusterConstraints struct {
+	Nodes       int
+	GPUsPerNode int
+	Storage     []string
+}
+
 // ValidateAgainstCluster adds the field-level checks that couple a deployment to the
 // available-hardware inventory it is placed on: that its pools' node counts sum to the
 // nodes the cluster declares, that each data-parallel-local width divides a node's GPU
@@ -45,39 +57,38 @@ func (d *Deployment) Validate() *validate.Problems {
 // split.
 //
 // They are separate from Validate because they need the cluster, which is a Scenario
-// property; the composition layer (blisschemas.Validate) supplies it when both documents
-// are present. The cluster is passed as primitives (counts and the storage name list)
-// rather than as a scenario.Cluster so this package stays independent of spec/scenario.
-func (d *Deployment) ValidateAgainstCluster(nodes, gpusPerNode int, storage []string) *validate.Problems {
+// property; the composition layer (blisschemas.Validate) supplies it as a
+// ClusterConstraints when both documents are present.
+func (d *Deployment) ValidateAgainstCluster(c ClusterConstraints) *validate.Problems {
 	p := &validate.Problems{}
 
 	total := 0
 	for i, pool := range d.Pools {
 		total += pool.Nodes
-		if pool.Parallel.DPLocal > 0 && gpusPerNode > 0 &&
-			gpusPerNode%pool.Parallel.DPLocal != 0 {
+		if pool.Parallel.DPLocal > 0 && c.GPUsPerNode > 0 &&
+			c.GPUsPerNode%pool.Parallel.DPLocal != 0 {
 			p.Field(fmt.Sprintf("pools[%d].parallel.dp_local", i),
-				"%d does not divide gpus_per_node %d", pool.Parallel.DPLocal, gpusPerNode)
+				"%d does not divide gpus_per_node %d", pool.Parallel.DPLocal, c.GPUsPerNode)
 		}
 	}
-	if len(d.Pools) > 0 && total != nodes {
+	if len(d.Pools) > 0 && total != c.Nodes {
 		p.Field("pools",
-			"pool node counts sum to %d but the cluster declares %d", total, nodes)
+			"pool node counts sum to %d but the cluster declares %d", total, c.Nodes)
 	}
 
 	// Each offload tier draws from the cluster's declared storage inventory, as the Tier
 	// doc states. The check fires only when the cluster lists storage: a cluster that
 	// declares none states no inventory to constrain against, so a deployment offloading
 	// against it is left as it was before the inventory existed, rather than rejected.
-	if d.Offload != nil && len(storage) > 0 {
-		declared := make(map[string]bool, len(storage))
-		for _, s := range storage {
+	if d.Offload != nil && len(c.Storage) > 0 {
+		declared := make(map[string]bool, len(c.Storage))
+		for _, s := range c.Storage {
 			declared[s] = true
 		}
 		for i, t := range d.Offload.Tiers {
 			if t.Device != "" && !declared[t.Device] {
 				p.Field(fmt.Sprintf("offload.tiers[%d].tier", i),
-					"%q is not in the cluster storage inventory %v", t.Device, storage)
+					"%q is not in the cluster storage inventory %v", t.Device, c.Storage)
 			}
 		}
 	}

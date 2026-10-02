@@ -71,13 +71,28 @@ func Validate(b Bundle) Report {
 	if b.Deployment != nil {
 		field.Merge("deployment", b.Deployment.Validate())
 	}
+	// A deployment is validated against the cluster that hosts it and the engine version
+	// it is tuned for, both of which live on the Scenario. A deployment with no scenario
+	// therefore cannot be fully checked — its cluster fit and every version-scoped engine
+	// rule would silently not run — and, unlike a chip-only bundle a catalog contributor
+	// checks, a deployment-only bundle has no standalone use. So require the scenario
+	// rather than return green on a deployment that only looks valid because half its
+	// checks were skipped.
+	if b.Deployment != nil && b.Scenario == nil {
+		field.Field("scenario",
+			"required when a deployment is present: a deployment is validated against the cluster and engine version its scenario fixes")
+	}
 	// A deployment and the cluster it is placed on are two documents, so the checks
-	// that couple them — that the pools fill the cluster and that each local
-	// data-parallel width divides a node — can only run when both are present.
+	// that couple them — that the pools fill the cluster, that each local data-parallel
+	// width divides a node, and that offload tiers draw from the declared storage
+	// inventory — can only run when both are present.
 	if b.Scenario != nil && b.Deployment != nil {
 		field.Merge("deployment", b.Deployment.ValidateAgainstCluster(
-			b.Scenario.Cluster.Nodes, b.Scenario.Cluster.GPUsPerNode,
-			b.Scenario.Cluster.Storage))
+			deployment.ClusterConstraints{
+				Nodes:       b.Scenario.Cluster.Nodes,
+				GPUsPerNode: b.Scenario.Cluster.GPUsPerNode,
+				Storage:     b.Scenario.Cluster.Storage,
+			}))
 	}
 	if b.Model != nil {
 		field.Merge("model", b.Model.Validate())
