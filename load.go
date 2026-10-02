@@ -113,7 +113,7 @@ func LoadEvaluationRun(path string) (*evaluation.Run, error) {
 // namespace.
 //
 // The file is a mapping of tier name to device facts rather than a list, because a tier
-// is referred to by name from a scenario's offload block. So this loader is not a plain
+// is referred to by name from a deployment's offload block. So this loader is not a plain
 // decodeStrict: it walks the mapping and stamps each device's Name from its key, which
 // is the only place that key survives into the loaded value.
 //

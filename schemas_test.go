@@ -156,6 +156,29 @@ func TestPartialBundlesValidate(t *testing.T) {
 	}
 }
 
+// TestOffloadTierMustBeInClusterStorage pins the inventory coupling at the layer that
+// owns it: the storage classes live on the Scenario's cluster, so only the composition
+// layer — which sees both documents — can check that a deployment's offload tiers draw
+// from the declared inventory.
+func TestOffloadTierMustBeInClusterStorage(t *testing.T) {
+	b := bundle()
+	b.Scenario.Cluster.Storage = []string{"cpu_dram", "nvme_gen4"}
+
+	// A tier drawn from the declared inventory passes.
+	b.Deployment.Offload = &deployment.Offload{
+		Tiers: []deployment.Tier{{Device: "cpu_dram", Bytes: 1}}}
+	if rep := Validate(b); !rep.OK() {
+		t.Fatalf("a tier drawn from the cluster inventory should pass:\n%s", renderAll(rep))
+	}
+
+	// A tier naming a class the cluster does not list is a field problem.
+	b.Deployment.Offload = &deployment.Offload{
+		Tiers: []deployment.Tier{{Device: "optane", Bytes: 1}}}
+	if rep := Validate(b); rep.Field.OK() {
+		t.Fatal("an offload tier outside the cluster storage inventory should be a field problem")
+	}
+}
+
 func renderAll(r Report) string {
 	var b strings.Builder
 	for _, p := range r.Problems() {

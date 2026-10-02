@@ -53,8 +53,8 @@ func Pack() *rules.Pack {
 		// The engine exposes no allreduce-backend name. What it has is a boolean,
 		// disable_custom_all_reduce, plus an environment-selected communicator; an
 		// earlier draft of this pack invented a backend enum, which would have
-		// rejected every scenario stating the real field. Kept as a set of the two
-		// values the scenario field accepts so the rule shape stays uniform.
+		// rejected every deployment stating the real field. Kept as a set of the two
+		// values the deployment field accepts so the rule shape stays uniform.
 		AllReduceBackends: set("custom", "nccl"),
 
 		// Transcribed from the CUDAGraphMode enum. Five members: the fifth,
@@ -310,7 +310,7 @@ func ruleList(p *rules.Pack) []rules.Rule {
 		},
 		{
 			Name:    "cascade-attention-is-opt-in",
-			Because: "cascade attention changes the attention primitive itself, and a scenario that leaves it unstated gets the engine default rather than the faster path",
+			Because: "cascade attention changes the attention primitive itself, and a deployment that leaves it unstated gets the engine default rather than the faster path",
 			Check: func(in rules.Input, out *validate.Problems) {
 				if !p.CascadeAttnOptIn {
 					return

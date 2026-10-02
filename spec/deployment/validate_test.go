@@ -171,17 +171,49 @@ func TestAllReduceRequestConflict(t *testing.T) {
 func TestValidateAgainstCluster(t *testing.T) {
 	// The pdDeployment pools sum to 60 nodes of 8 GPUs, which the matching cluster
 	// declares, and every dp_local of 8 divides the node.
-	if p := pdDeployment().ValidateAgainstCluster(60, 8); !p.OK() {
+	if p := pdDeployment().ValidateAgainstCluster(60, 8, nil); !p.OK() {
 		t.Fatalf("a deployment that fills its cluster should pass:\n%s", p.Error())
 	}
 	// Pool node counts that do not sum to the cluster are rejected.
-	if p := pdDeployment().ValidateAgainstCluster(59, 8); p.OK() {
+	if p := pdDeployment().ValidateAgainstCluster(59, 8, nil); p.OK() {
 		t.Error("pool nodes summing to 60 against a 59-node cluster should fail")
 	}
 	// A data-parallel-local width that does not divide the node is rejected.
 	d := pdDeployment()
 	d.Pools[0].Parallel.DPLocal = 3
-	if p := d.ValidateAgainstCluster(60, 8); p.OK() {
+	if p := d.ValidateAgainstCluster(60, 8, nil); p.OK() {
 		t.Error("dp_local of 3 does not divide an 8-GPU node and should fail")
+	}
+}
+
+// TestValidateAgainstClusterStorage covers the coupling check that an offload tier may
+// only name a storage class the cluster's inventory declares. The inventory lives on the
+// Scenario, so the composition layer supplies it; a cluster that lists no storage
+// constrains nothing, which keeps a deployment that offloads without a declared
+// inventory valid as it was before the inventory existed.
+func TestValidateAgainstClusterStorage(t *testing.T) {
+	withOffload := func(devices ...string) *Deployment {
+		d := singleNodeDeployment()
+		tiers := make([]Tier, len(devices))
+		for i, dev := range devices {
+			tiers[i] = Tier{Device: dev, Bytes: 1}
+		}
+		d.Offload = &Offload{Tiers: tiers}
+		return d
+	}
+	inventory := []string{"cpu_dram", "nvme_gen4"}
+
+	// A tier drawn from the declared inventory passes.
+	if p := withOffload("cpu_dram").ValidateAgainstCluster(1, 8, inventory); !p.OK() {
+		t.Errorf("a tier in the inventory should pass:\n%s", p.Error())
+	}
+	// A tier naming a class the cluster does not list is rejected.
+	if p := withOffload("optane").ValidateAgainstCluster(1, 8, inventory); p.OK() {
+		t.Error("a tier outside the cluster storage inventory should fail")
+	}
+	// A cluster that declares no storage inventory constrains nothing: the same offload
+	// that would fail above passes, preserving pre-inventory behavior.
+	if p := withOffload("optane").ValidateAgainstCluster(1, 8, nil); !p.OK() {
+		t.Errorf("an undeclared inventory should not constrain offload:\n%s", p.Error())
 	}
 }

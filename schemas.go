@@ -76,7 +76,8 @@ func Validate(b Bundle) Report {
 	// data-parallel width divides a node — can only run when both are present.
 	if b.Scenario != nil && b.Deployment != nil {
 		field.Merge("deployment", b.Deployment.ValidateAgainstCluster(
-			b.Scenario.Cluster.Nodes, b.Scenario.Cluster.GPUsPerNode))
+			b.Scenario.Cluster.Nodes, b.Scenario.Cluster.GPUsPerNode,
+			b.Scenario.Cluster.Storage))
 	}
 	if b.Model != nil {
 		field.Merge("model", b.Model.Validate())

@@ -34,11 +34,13 @@ func (d *Deployment) Validate() *validate.Problems {
 
 // ValidateAgainstCluster adds the field-level checks that couple a deployment to the
 // available-hardware inventory it is placed on: that its pools' node counts sum to the
-// nodes the cluster declares, and that each data-parallel-local width divides a node's
-// GPU count. They are separate from Validate because they need the cluster, which is a
-// Scenario property; the composition layer (blisschemas.Validate) supplies it when both
-// documents are present.
-func (d *Deployment) ValidateAgainstCluster(nodes, gpusPerNode int) *validate.Problems {
+// nodes the cluster declares, that each data-parallel-local width divides a node's GPU
+// count, and that every offload tier names a storage class the cluster actually lists.
+// They are separate from Validate because they need the cluster, which is a Scenario
+// property; the composition layer (blisschemas.Validate) supplies it when both documents
+// are present. The cluster is passed as primitives (counts and the storage name list)
+// rather than as a scenario.Cluster so this package stays independent of spec/scenario.
+func (d *Deployment) ValidateAgainstCluster(nodes, gpusPerNode int, storage []string) *validate.Problems {
 	p := &validate.Problems{}
 
 	total := 0
@@ -53,6 +55,23 @@ func (d *Deployment) ValidateAgainstCluster(nodes, gpusPerNode int) *validate.Pr
 	if len(d.Pools) > 0 && total != nodes {
 		p.Field("pools",
 			"pool node counts sum to %d but the cluster declares %d", total, nodes)
+	}
+
+	// Each offload tier draws from the cluster's declared storage inventory, as the Tier
+	// doc states. The check fires only when the cluster lists storage: a cluster that
+	// declares none states no inventory to constrain against, so a deployment offloading
+	// against it is left as it was before the inventory existed, rather than rejected.
+	if d.Offload != nil && len(storage) > 0 {
+		declared := make(map[string]bool, len(storage))
+		for _, s := range storage {
+			declared[s] = true
+		}
+		for i, t := range d.Offload.Tiers {
+			if t.Device != "" && !declared[t.Device] {
+				p.Field(fmt.Sprintf("offload.tiers[%d].tier", i),
+					"%q is not in the cluster storage inventory %v", t.Device, storage)
+			}
+		}
 	}
 	return p
 }
@@ -141,13 +160,13 @@ func validateEngine(p *validate.Problems, at string, e Engine) {
 			p.Warnf("%s.engine: allreduce_backend names nccl while disable_custom_all_reduce is false; the engine would use the custom kernel where reachable", at)
 		}
 	}
+	// gpu_memory_utilization is a non-pointer float, so an omitted one is zero. Zero is
+	// the unset sentinel — the engine picks its default — and a stated fraction lies in
+	// (0, 1], so the accepted range is [0, 1]. The message states that range rather than
+	// (0, 1] so it does not read as rejecting the zero the check deliberately allows.
 	if e.GPUMemoryUtilization < 0 || e.GPUMemoryUtilization > 1 {
 		p.Field(at+".engine.gpu_memory_utilization",
-			"must lie in (0, 1], got %v", e.GPUMemoryUtilization)
-	}
-	if e.MaxNumBatchedTokens > 0 && e.MaxModelLen > 0 &&
-		e.MaxNumBatchedTokens < 1 {
-		p.Field(at+".engine.max_num_batched_tokens", "must be positive when stated")
+			"must lie in [0, 1] (0 means unset), got %v", e.GPUMemoryUtilization)
 	}
 	if e.DBO != nil && e.DBO.Enabled {
 		if e.DBO.DecodeTokenThreshold < 0 || e.DBO.PrefillTokenThreshold < 0 {
