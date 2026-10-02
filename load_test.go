@@ -146,8 +146,10 @@ cluster:
 // leave a zero value, the same guarantee the top-level loaders give. yaml.v3 KnownFields
 // recurses, so no custom unmarshaller is needed — but the recursion is exactly the kind
 // of property that is assumed and then quietly lost, so each new level is pinned: at the
-// `workload` binding itself, directly under `trace`, under its `header`, and under the
-// `header.server` sub-block.
+// `workload` binding itself, directly under `trace`, under its `header`, under the
+// `header.server` sub-block, and inside a `header.slo_targets.<class>` map VALUE (the one
+// struct the feature reaches only through a map, where it is least obvious the strict
+// check still applies).
 func TestLoadScenarioRejectsUnknownTraceField(t *testing.T) {
 	// head is a valid scenario up to the workload block; each case supplies the workload
 	// subtree with an injection that must be rejected, naming the stray key.
@@ -196,6 +198,20 @@ func TestLoadScenarioRejectsUnknownTraceField(t *testing.T) {
         tensor_parallel: 8
         tensor_paralel: 8`,
 			badKey: "tensor_paralel",
+		},
+		{
+			name: "unknown key inside an slo_targets map value",
+			traceYAML: `  trace:
+    data: traces/run.csv
+    header:
+      trace_version: 3
+      time_unit: microseconds
+      mode: real
+      slo_targets:
+        critical:
+          ttft_ms: 500
+          ttft_mss: 500`,
+			badKey: "ttft_mss",
 		},
 	}
 	for _, tc := range cases {
