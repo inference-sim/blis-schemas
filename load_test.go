@@ -141,32 +141,79 @@ cluster:
 	}
 }
 
-// TestLoadScenarioRejectsUnknownTraceHeaderField pins strict decoding through the nested
-// trace header: a misspelled sub-key must fail loudly rather than leave a zero value, the
-// same guarantee the top-level loaders give. yaml.v3 KnownFields recurses, so no custom
-// unmarshaller is needed to get this — this test is what proves it stays true.
-func TestLoadScenarioRejectsUnknownTraceHeaderField(t *testing.T) {
-	path := write(t, "s.yaml", `
+// TestLoadScenarioRejectsUnknownTraceField pins strict decoding through EVERY nesting
+// level the trace reference introduces: a misspelled sub-key must fail loudly rather than
+// leave a zero value, the same guarantee the top-level loaders give. yaml.v3 KnownFields
+// recurses, so no custom unmarshaller is needed — but the recursion is exactly the kind
+// of property that is assumed and then quietly lost, so each new level is pinned: directly
+// under `trace`, under its `header`, and under the `header.server` sub-block.
+func TestLoadScenarioRejectsUnknownTraceField(t *testing.T) {
+	// head is a valid scenario up to the trace block; each case appends an injection that
+	// must be rejected, naming the stray key.
+	cases := []struct {
+		name      string
+		traceYAML string
+		badKey    string
+	}{
+		{
+			name: "unknown key directly under trace",
+			traceYAML: `  trace:
+    data: traces/run.csv
+    rowz: 10
+    header:
+      trace_version: 3
+      time_unit: microseconds
+      mode: real`,
+			badKey: "rowz",
+		},
+		{
+			name: "unknown key under trace.header",
+			traceYAML: `  trace:
+    data: traces/run.csv
+    header:
+      trace_version: 3
+      time_unit: microseconds
+      mode: real
+      time_uint: microseconds`,
+			badKey: "time_uint",
+		},
+		{
+			name: "unknown key under trace.header.server",
+			traceYAML: `  trace:
+    data: traces/run.csv
+    header:
+      trace_version: 3
+      time_unit: microseconds
+      mode: real
+      server:
+        tensor_parallel: 8
+        tensor_paralel: 8`,
+			badKey: "tensor_paralel",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := write(t, "s.yaml", `
 kind: Scenario
 name: typo
 model: granite-5-230b
 coefficients: [c]
 engine_version: "0.29.0"
 workload:
-  trace:
-    data: traces/run.csv
-    header:
-      trace_version: 3
-      time_unit: microseconds
-      mode: real
-      time_uint: microseconds
+`+tc.traceYAML+`
+cluster:
+  hardware: h200
+  nodes: 1
+  gpus_per_node: 8
 `)
-	_, err := LoadScenario(path)
-	if err == nil {
-		t.Fatal("a misspelled trace-header field was accepted; the trace would validate while silently dropping it")
-	}
-	if !strings.Contains(err.Error(), "time_uint") {
-		t.Errorf("the error should name the offending field, got: %v", err)
+			_, err := LoadScenario(path)
+			if err == nil {
+				t.Fatalf("a misspelled %q was accepted; the trace would validate while silently dropping it", tc.badKey)
+			}
+			if !strings.Contains(err.Error(), tc.badKey) {
+				t.Errorf("the error should name the offending field %q, got: %v", tc.badKey, err)
+			}
+		})
 	}
 }
 

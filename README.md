@@ -66,6 +66,46 @@ rules/v0_29/        one release's rules and constants
 internal/validate/  the accumulating, located problem list every validator shares
 ```
 
+## A scenario's workload: a shape or a trace
+
+A `Scenario` names its traffic in one `workload` slot, which is a sum type: it binds
+**either** a distributional shape (by catalog name) **or** a reference to a concrete
+captured trace. Exactly one arm is set; a scenario that poses a capacity question with no
+traffic omits the slot entirely.
+
+```yaml
+# distributional arm — name a catalog workload shape
+workload:
+  shape: chatbot
+```
+
+```yaml
+# concrete arm — reference an external TraceV2 by path; the bulk per-request rows
+# (which can run to millions) stay in the file, never inlined in the document
+workload:
+  trace:
+    data: traces/agentic-run.csv   # path to the bulk per-request data CSV
+    sha256: <64-hex>               # optional integrity digest of that file
+    rows: 1048576                  # optional expected row COUNT (not the rows)
+    header:                        # the small, bounded trace header metadata
+      trace_version: 3
+      time_unit: microseconds      # one of a closed set (us/microseconds/ms/s/ns…)
+      mode: real                   # real | generated | replayed
+      seed: 0                      # workload RNG seed, when one was recorded
+      server:                      # provenance of the server that produced the trace
+        type: vllm
+        tensor_parallel: 8
+        gpu_memory_utilization: 0.9
+      slo_targets:                 # per-class TTFT/ITL/E2E thresholds, in ms
+        critical: {ttft_ms: 500, itl_ms: 50, e2e_ms: 30000}
+```
+
+A shape's prefix is one scalar shared length; a trace's prefix is a per-request tree in
+the referenced rows, which is why the two are different fidelities of one question rather
+than one field. The operating point — the load level (`rate` XOR `concurrency`) — is
+deliberately **not** here: it is a run-level sweep axis recorded on a run's result, not a
+property of the immutable problem.
+
 ## Why the model schema is not a vendor configuration
 
 `blis-catalog` already commits each model's `config.json` verbatim, and that file

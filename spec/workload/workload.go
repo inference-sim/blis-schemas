@@ -102,10 +102,13 @@ type TraceHeader struct {
 
 	// TimeUnit names the unit of the data file's timestamp columns (microseconds in
 	// practice). A trace whose timestamps carry no stated unit is ambiguous, so it is
-	// required. The value is NOT drawn from a closed vocabulary: the producing tools spell
-	// it more than one way ("us", "microseconds"), and standardizing that spelling is
-	// their concern, not this schema's.
-	TimeUnit string `yaml:"time_unit"`
+	// required, and the set is CLOSED — an unrecognized unit is an error, following this
+	// repo's rule that a unit cannot be invented at the call site. The set admits the
+	// several spellings the producing tools use for one unit (observe writes "us", the
+	// converters write "microseconds"): accepting a known synonym is a producer
+	// convenience, where accepting an arbitrary string would let a typo through as a unit
+	// nothing downstream can map.
+	TimeUnit TimeUnit `yaml:"time_unit"`
 
 	// Mode records which pipeline produced the trace: a real server observed, a workload
 	// generated, or a trace replayed. It is the field that keeps an observed corpus
@@ -152,10 +155,45 @@ func (m Mode) Valid() bool { return modes[m] }
 
 // AllModes returns every mode, sorted, for an error message that names what was allowed
 // rather than only what was rejected.
-func AllModes() []string {
-	out := make([]string, 0, len(modes))
-	for m := range modes {
-		out = append(out, string(m))
+func AllModes() []string { return enumerate(modes) }
+
+// TimeUnit is the unit of a trace's timestamp columns. The set is closed, but it carries
+// more than one member per physical unit on purpose: the tools that write traces spell
+// microseconds as both "us" and "microseconds", and a schema that rejected one of its own
+// producers' spellings would be wrong, where one that accepts any string would not be a
+// vocabulary at all.
+type TimeUnit string
+
+const (
+	TimeUnitNanoseconds      TimeUnit = "ns"
+	TimeUnitNanosecondsLong  TimeUnit = "nanoseconds"
+	TimeUnitMicroseconds     TimeUnit = "us"
+	TimeUnitMicrosecondsLong TimeUnit = "microseconds"
+	TimeUnitMilliseconds     TimeUnit = "ms"
+	TimeUnitMillisecondsLong TimeUnit = "milliseconds"
+	TimeUnitSeconds          TimeUnit = "s"
+	TimeUnitSecondsLong      TimeUnit = "seconds"
+)
+
+var timeUnits = map[TimeUnit]bool{
+	TimeUnitNanoseconds: true, TimeUnitNanosecondsLong: true,
+	TimeUnitMicroseconds: true, TimeUnitMicrosecondsLong: true,
+	TimeUnitMilliseconds: true, TimeUnitMillisecondsLong: true,
+	TimeUnitSeconds: true, TimeUnitSecondsLong: true,
+}
+
+// Valid reports whether u is a recognized time unit.
+func (u TimeUnit) Valid() bool { return timeUnits[u] }
+
+// AllTimeUnits returns every recognized time unit, sorted, for an error that names what
+// was allowed.
+func AllTimeUnits() []string { return enumerate(timeUnits) }
+
+// enumerate returns the members of a closed string vocabulary, sorted, for error text.
+func enumerate[T ~string](set map[T]bool) []string {
+	out := make([]string, 0, len(set))
+	for v := range set {
+		out = append(out, string(v))
 	}
 	sort.Strings(out)
 	return out
@@ -172,7 +210,11 @@ type TraceServer struct {
 	MaxNumSeqs           int     `yaml:"max_num_seqs,omitempty"`
 	BlockSize            int     `yaml:"block_size,omitempty"`
 	GPUMemoryUtilization float64 `yaml:"gpu_memory_utilization,omitempty"`
-	MaxModelLen          int64   `yaml:"max_model_len,omitempty"`
+	// MaxModelLen is int, not int64, to match deployment.Engine.MaxModelLen: the two
+	// describe the same quantity (a context length, in the millions at most), and a
+	// schema that typed one field wider than its sibling would invite a reader to think
+	// the two meant different things.
+	MaxModelLen int `yaml:"max_model_len,omitempty"`
 }
 
 // SLODimTargets is one SLO class's latency thresholds, in milliseconds. A zero on any

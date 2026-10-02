@@ -2,6 +2,17 @@ package workload
 
 import "github.com/inference-sim/blis-schemas/internal/validate"
 
+// isHex reports whether every character of s is a hex digit. Used to reject a sha256 of
+// the right length but the wrong alphabet — a digest that could never match a file.
+func isHex(s string) bool {
+	for _, c := range s {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
+			return false
+		}
+	}
+	return true
+}
+
 // Validate performs field-level validation of a workload binding: that exactly one arm
 // is chosen, and that the chosen arm is itself well formed. A binding is validated only
 // when present; a Scenario with no traffic carries no binding, which this type never
@@ -28,12 +39,18 @@ func (t *TraceRef) Validate() *validate.Problems {
 	if t.Data == "" {
 		p.Field("data", "required: the path to the bulk per-request data CSV")
 	}
-	// Optional, but a digest that is present and the wrong length is a copy-paste error
-	// that would never match the file it is meant to guard.
-	if t.SHA256 != "" && len(t.SHA256) != 64 {
-		p.Field("sha256",
-			"must be a 64-character hex digest of the data file, got %d characters",
-			len(t.SHA256))
+	// Optional, but a digest that is present must be a plausible one: a wrong length or a
+	// non-hex character is a copy-paste error that would never match the file it is meant
+	// to guard, so it is better rejected here than discovered as a mismatch later.
+	if t.SHA256 != "" {
+		switch {
+		case len(t.SHA256) != 64:
+			p.Field("sha256",
+				"must be a 64-character hex digest of the data file, got %d characters",
+				len(t.SHA256))
+		case !isHex(t.SHA256):
+			p.Field("sha256", "must be a hex digest; it contains a non-hex character")
+		}
 	}
 	if t.Rows < 0 {
 		p.Field("rows", "must not be negative")
@@ -49,8 +66,11 @@ func (h *TraceHeader) Validate() *validate.Problems {
 		p.Field("trace_version",
 			"must be at least 1: a trace reference states the TraceV2 version its data file was written against")
 	}
-	if h.TimeUnit == "" {
+	switch {
+	case h.TimeUnit == "":
 		p.Field("time_unit", "required: names the unit of the data file's timestamp columns")
+	case !h.TimeUnit.Valid():
+		p.Field("time_unit", "%q is not one of %v", h.TimeUnit, AllTimeUnits())
 	}
 	switch {
 	case h.Mode == "":
@@ -76,14 +96,11 @@ func (s *TraceServer) Validate() *validate.Problems {
 	p := &validate.Problems{}
 	for field, v := range map[string]int{
 		"tensor_parallel": s.TensorParallel, "max_num_seqs": s.MaxNumSeqs,
-		"block_size": s.BlockSize,
+		"block_size": s.BlockSize, "max_model_len": s.MaxModelLen,
 	} {
 		if v < 0 {
 			p.Field(field, "must not be negative")
 		}
-	}
-	if s.MaxModelLen < 0 {
-		p.Field("max_model_len", "must not be negative")
 	}
 	// gpu_memory_utilization is a non-pointer float, so an omitted one is zero. Zero is
 	// the unset sentinel and a stated fraction lies in (0, 1], so the accepted range is

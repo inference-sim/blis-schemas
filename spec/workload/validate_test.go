@@ -111,9 +111,11 @@ func TestTraceRefRejects(t *testing.T) {
 	}{
 		{"no data path", func(tr *TraceRef) { tr.Data = "" }},
 		{"short sha256", func(tr *TraceRef) { tr.SHA256 = "abc" }},
+		{"non-hex sha256", func(tr *TraceRef) { tr.SHA256 = strRepeat("g", 64) }},
 		{"negative rows", func(tr *TraceRef) { tr.Rows = -1 }},
 		{"zero trace version", func(tr *TraceRef) { tr.Header.Version = 0 }},
 		{"no time unit", func(tr *TraceRef) { tr.Header.TimeUnit = "" }},
+		{"unknown time unit", func(tr *TraceRef) { tr.Header.TimeUnit = "fortnights" }},
 		{"no mode", func(tr *TraceRef) { tr.Header.Mode = "" }},
 		{"unknown mode", func(tr *TraceRef) { tr.Header.Mode = "simulated" }},
 		{"negative tensor_parallel", func(tr *TraceRef) { tr.Header.Server.TensorParallel = -1 }},
