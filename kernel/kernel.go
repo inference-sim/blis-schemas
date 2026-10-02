@@ -17,7 +17,7 @@ package kernel
 import (
 	"time"
 
-	"github.com/inference-sim/blis-schemas/spec/scenario"
+	"github.com/inference-sim/blis-schemas/spec/deployment"
 )
 
 // Kernel prices one instantiated deployment. Obtain one from a constructor that
@@ -232,7 +232,7 @@ const (
 type Placement struct {
 	Node int
 	Rack int
-	Pool scenario.Role
+	Pool deployment.Role
 }
 
 // CoefficientOrigin is one row of the provenance trail.
@@ -243,7 +243,7 @@ type CoefficientOrigin struct {
 	Scope  string // the scope as recorded
 }
 
-// Resolution reports what the constructor decided where a scenario expressed a
+// Resolution reports what the constructor decided where a deployment expressed a
 // request. It exists so a prediction can be read without re-deriving the resolver's
 // logic, and so a reader is never misled by a field the layout overrode.
 type Resolution struct {

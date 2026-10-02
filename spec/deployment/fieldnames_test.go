@@ -1,4 +1,4 @@
-package scenario
+package deployment
 
 import (
 	"reflect"
@@ -18,8 +18,8 @@ import (
 // this guards is silent renaming during a refactor here.
 func TestEngineFieldNames(t *testing.T) {
 	// Names taken from the engine's configuration surface. Where the CLI flag and
-	// the internal field differ, the CLI name is used, because a scenario is written
-	// by whoever launched the deployment.
+	// the internal field differ, the CLI name is used, because a deployment is written
+	// by whoever launched the engine.
 	want := map[string]string{
 		"all2all_backend":           "VLLM_ALL2ALL_BACKEND / --all2all-backend",
 		"disable_custom_all_reduce": "--disable-custom-all-reduce",

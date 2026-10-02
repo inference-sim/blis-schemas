@@ -27,12 +27,47 @@ func TestLoadScenario(t *testing.T) {
 kind: Scenario
 name: granite-230b-h200-tp8
 model: granite-5-230b
-hardware: h200
 coefficients: [cost-model-primitives-h200]
 engine_version: "0.29.0"
+workload: chatbot
 cluster:
+  hardware: h200
   nodes: 1
   gpus_per_node: 8
+  storage: [cpu_dram, nvme_gen4]
+`)
+	s, err := LoadScenario(path)
+	if err != nil {
+		t.Fatalf("LoadScenario: %v", err)
+	}
+	// Spot-check a field from each nesting level: a tag error at any depth would
+	// leave a zero value that the type system cannot catch.
+	if s.Name != "granite-230b-h200-tp8" {
+		t.Errorf("name = %q", s.Name)
+	}
+	if s.Workload != "chatbot" {
+		t.Errorf("workload = %q, want chatbot", s.Workload)
+	}
+	// The hardware and fabric references and the storage inventory are folded into
+	// the cluster rather than sitting loose at the top level.
+	if s.Cluster.Hardware != "h200" {
+		t.Errorf("cluster.hardware = %q, want h200", s.Cluster.Hardware)
+	}
+	if s.Cluster.GPUsPerNode != 8 {
+		t.Errorf("gpus_per_node = %d, want 8", s.Cluster.GPUsPerNode)
+	}
+	if len(s.Cluster.Storage) != 2 || s.Cluster.Storage[0] != "cpu_dram" {
+		t.Errorf("cluster.storage did not parse: %v", s.Cluster.Storage)
+	}
+	if rep := Validate(Bundle{Scenario: s}); !rep.Field.OK() {
+		t.Errorf("a loaded scenario failed field validation:\n%s", rep.Field.Error())
+	}
+}
+
+func TestLoadDeployment(t *testing.T) {
+	path := write(t, "d.yaml", `
+kind: Deployment
+name: granite-230b-h200-tp8
 pools:
   - role: colocated
     nodes: 1
@@ -53,22 +88,17 @@ pools:
         enable_dbo: true
         dbo_decode_token_threshold: 32
 `)
-	s, err := LoadScenario(path)
+	d, err := LoadDeployment(path)
 	if err != nil {
-		t.Fatalf("LoadScenario: %v", err)
+		t.Fatalf("LoadDeployment: %v", err)
 	}
-	// Spot-check a field from each nesting level: a tag error at any depth would
-	// leave a zero value that the type system cannot catch.
-	if s.Name != "granite-230b-h200-tp8" {
-		t.Errorf("name = %q", s.Name)
+	if d.Name != "granite-230b-h200-tp8" {
+		t.Errorf("name = %q", d.Name)
 	}
-	if s.Cluster.GPUsPerNode != 8 {
-		t.Errorf("gpus_per_node = %d, want 8", s.Cluster.GPUsPerNode)
+	if len(d.Pools) != 1 || d.Pools[0].Parallel.TP != 8 {
+		t.Fatalf("pools did not parse: %+v", d.Pools)
 	}
-	if len(s.Pools) != 1 || s.Pools[0].Parallel.TP != 8 {
-		t.Fatalf("pools did not parse: %+v", s.Pools)
-	}
-	e := s.Pools[0].Engine
+	e := d.Pools[0].Engine
 	if e.CacheDType != "fp8" {
 		t.Errorf("cache_dtype = %q, want fp8", e.CacheDType)
 	}
@@ -86,24 +116,20 @@ pools:
 	if e.DBO == nil || !e.DBO.Enabled || e.DBO.DecodeTokenThreshold != 32 {
 		t.Errorf("dbo did not parse: %+v", e.DBO)
 	}
-	if rep := Validate(Bundle{Scenario: s}); !rep.Field.OK() {
-		t.Errorf("a loaded scenario failed field validation:\n%s", rep.Field.Error())
+	// Validate the loaded deployment on its own terms; the composition layer requires a
+	// scenario alongside a deployment (TestDeploymentWithoutScenarioIsRejected covers that).
+	if p := d.Validate(); !p.OK() {
+		t.Errorf("a loaded deployment failed field validation:\n%s", p.Error())
 	}
 }
 
 // TestLoadRejectsUnknownFields is the property that makes strict decoding worth
-// having. A misspelled key must fail loudly rather than leave a zero value.
+// having. A misspelled key must fail loudly rather than leave a zero value. The engine
+// block it misspells lives in a deployment now, so that is what is loaded.
 func TestLoadRejectsUnknownFields(t *testing.T) {
-	path := write(t, "s.yaml", `
-kind: Scenario
+	path := write(t, "d.yaml", `
+kind: Deployment
 name: typo
-model: m
-hardware: h
-coefficients: [c]
-engine_version: "0.29.0"
-cluster:
-  nodes: 1
-  gpus_per_node: 8
 pools:
   - role: colocated
     nodes: 1
@@ -111,9 +137,9 @@ pools:
     engine:
       cache_dytpe: fp8
 `)
-	_, err := LoadScenario(path)
+	_, err := LoadDeployment(path)
 	if err == nil {
-		t.Fatal("a misspelled field was accepted; the scenario would validate while " +
+		t.Fatal("a misspelled field was accepted; the deployment would validate while " +
 			"silently omitting the setting its author intended")
 	}
 	if !strings.Contains(err.Error(), "cache_dytpe") {

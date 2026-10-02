@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/inference-sim/blis-schemas/spec/deployment"
 	"github.com/inference-sim/blis-schemas/spec/model"
 	"github.com/inference-sim/blis-schemas/spec/scenario"
 )
@@ -118,40 +119,44 @@ func TestModelShapesAreExpressible(t *testing.T) {
 	}
 }
 
-// deployment builds a scenario from the parts a corpus report states.
-func deployment(name string, nodes, gpusPerNode int, fabric string,
-	pools []scenario.Pool, mutate func(*scenario.Scenario)) *scenario.Scenario {
+// corpus builds a Scenario+Deployment pair from the parts a corpus report states: the
+// immutable problem (model, available-hardware inventory, coefficient/engine refs) and
+// the mutable layout (pools, offload, PD transfer) chosen against it.
+func corpus(name string, nodes, gpusPerNode int, fabric string,
+	pools []deployment.Pool,
+	mutate func(*scenario.Scenario, *deployment.Deployment)) Bundle {
 	s := &scenario.Scenario{
-		Kind: "Scenario", Name: name, Model: "granite-5-230b", Hardware: "h200",
-		Fabric: fabric, Coefficients: []string{"cost-model-primitives-h200"},
+		Kind: "Scenario", Name: name, Model: "granite-5-230b",
+		Coefficients:  []string{"cost-model-primitives-h200"},
 		EngineVersion: "0.29.0",
-		Cluster:       scenario.Cluster{Nodes: nodes, GPUsPerNode: gpusPerNode},
-		Pools:         pools,
+		Cluster: scenario.Cluster{Hardware: "h200", Fabric: fabric,
+			Nodes: nodes, GPUsPerNode: gpusPerNode},
 	}
+	d := &deployment.Deployment{Kind: "Deployment", Name: name, Pools: pools}
 	if mutate != nil {
-		mutate(s)
+		mutate(s, d)
 	}
-	return s
+	return Bundle{Scenario: s, Deployment: d}
 }
 
-func pool(role scenario.Role, nodes int, pl scenario.Parallelism,
-	e scenario.Engine) scenario.Pool {
-	return scenario.Pool{Role: role, Nodes: nodes, Parallel: pl, Engine: e}
+func pool(role deployment.Role, nodes int, pl deployment.Parallelism,
+	e deployment.Engine) deployment.Pool {
+	return deployment.Pool{Role: role, Nodes: nodes, Parallel: pl, Engine: e}
 }
 
 // TestCorpusDeploymentsAreExpressible walks the deployment shapes the published
 // reports measured and the design documents work through. Each case names the knob
 // it is testing, so a failure says which capability was lost.
 func TestCorpusDeploymentsAreExpressible(t *testing.T) {
-	tp8 := scenario.Parallelism{TP: 8, PP: 1, DP: 1}
+	tp8 := deployment.Parallelism{TP: 8, PP: 1, DP: 1}
 	cases := []struct {
 		what string
-		s    *scenario.Scenario
+		b    Bundle
 	}{
 		{
 			what: "single node, tp8, fp8 KV cache, large batched-token bound",
-			s: deployment("granite-h100-tp8", 1, 8, "", []scenario.Pool{
-				pool(scenario.RoleColocated, 1, tp8, scenario.Engine{
+			b: corpus("granite-h100-tp8", 1, 8, "", []deployment.Pool{
+				pool(deployment.RoleColocated, 1, tp8, deployment.Engine{
 					CacheDType: "fp8", BlockSize: 16, MaxNumBatchedTokens: 32768,
 					MaxNumSeqs: 1024, GPUMemoryUtilization: 0.9,
 					CUDAGraphMode: "FULL_AND_PIECEWISE"}),
@@ -159,69 +164,69 @@ func TestCorpusDeploymentsAreExpressible(t *testing.T) {
 		},
 		{
 			what: "CPU offload with a 1 TiB tier and a lazy connector",
-			s: deployment("granite-h200-offload", 1, 8, "", []scenario.Pool{
-				pool(scenario.RoleColocated, 1, tp8, scenario.Engine{
+			b: corpus("granite-h200-offload", 1, 8, "", []deployment.Pool{
+				pool(deployment.RoleColocated, 1, tp8, deployment.Engine{
 					CacheDType: "fp8", BlockSize: 16, GPUMemoryUtilization: 0.9}),
-			}, func(s *scenario.Scenario) {
-				s.Offload = &scenario.Offload{
+			}, func(s *scenario.Scenario, d *deployment.Deployment) {
+				d.Offload = &deployment.Offload{
 					Connector: "OffloadingConnector", Spec: "CPUOffloadingSpec",
 					EvictionPolicy: "lru", PrefetchDepth: 2,
-					Tiers: []scenario.Tier{{Device: "cpu_dram", Bytes: 1 << 40}}}
+					Tiers: []deployment.Tier{{Device: "cpu_dram", Bytes: 1 << 40}}}
 			}),
 		},
 		{
 			what: "multi-tier offload: CPU above NVMe",
-			s: deployment("granite-h200-tiered", 1, 8, "", []scenario.Pool{
-				pool(scenario.RoleColocated, 1, tp8, scenario.Engine{
+			b: corpus("granite-h200-tiered", 1, 8, "", []deployment.Pool{
+				pool(deployment.RoleColocated, 1, tp8, deployment.Engine{
 					CacheDType: "fp8", BlockSize: 16, GPUMemoryUtilization: 0.9}),
-			}, func(s *scenario.Scenario) {
-				s.Offload = &scenario.Offload{Spec: "TieringOffloadingSpec",
+			}, func(s *scenario.Scenario, d *deployment.Deployment) {
+				d.Offload = &deployment.Offload{Spec: "TieringOffloadingSpec",
 					EvictionPolicy: "arc", PrefetchDepth: 3,
-					Tiers: []scenario.Tier{
+					Tiers: []deployment.Tier{
 						{Device: "cpu_dram", Bytes: 512 << 30},
 						{Device: "nvme_gen4", Bytes: 4 << 40}}}
 			}),
 		},
 		{
 			what: "prefill/decode disaggregation across 60 nodes, wide EP",
-			s: deployment("glm-5.3-60node-pd", 60, 8, "ib-400g", []scenario.Pool{
-				pool(scenario.RolePrefill, 36, scenario.Parallelism{TP: 1, PP: 1,
+			b: corpus("glm-5.3-60node-pd", 60, 8, "ib-400g", []deployment.Pool{
+				pool(deployment.RolePrefill, 36, deployment.Parallelism{TP: 1, PP: 1,
 					DP: 8, DPLocal: 8, EnableExpertParallel: true},
-					scenario.Engine{All2AllBackend: "deepep_high_throughput",
+					deployment.Engine{All2AllBackend: "deepep_high_throughput",
 						CUDAGraphMode: "PIECEWISE", CacheDType: "fp8",
 						BlockSize: 64, GPUMemoryUtilization: 0.9,
-						Speculative: &scenario.Speculative{Method: "glm4_moe_mtp",
+						Speculative: &deployment.Speculative{Method: "glm4_moe_mtp",
 							NumSpecTokens: 1}}),
-				pool(scenario.RoleDecode, 24, scenario.Parallelism{TP: 1, PP: 1,
+				pool(deployment.RoleDecode, 24, deployment.Parallelism{TP: 1, PP: 1,
 					DP: 16, DPLocal: 8, EnableExpertParallel: true},
-					scenario.Engine{All2AllBackend: "deepep_low_latency",
+					deployment.Engine{All2AllBackend: "deepep_low_latency",
 						CUDAGraphMode: "FULL_AND_PIECEWISE", CacheDType: "fp8",
 						BlockSize: 64, GPUMemoryUtilization: 0.9,
-						DBO: &scenario.DBO{Enabled: true,
+						DBO: &deployment.DBO{Enabled: true,
 							DecodeTokenThreshold: 32, PrefillTokenThreshold: 512},
-						EPLB: &scenario.EPLB{Enabled: true,
+						EPLB: &deployment.EPLB{Enabled: true,
 							NumRedundantExperts: 32, WindowSize: 1000,
 							StepInterval: 3000}}),
-			}, func(s *scenario.Scenario) {
-				s.PDTransfer = &scenario.PDTransfer{Connector: "nixl"}
+			}, func(s *scenario.Scenario, d *deployment.Deployment) {
+				d.PDTransfer = &deployment.PDTransfer{Connector: "nixl"}
 			}),
 		},
 		{
 			what: "aggregated 32-GPU serving, the alternative PD is compared against",
-			s: deployment("glm-5.3-flash-32gpu", 4, 8, "ib-400g", []scenario.Pool{
-				pool(scenario.RoleColocated, 4, scenario.Parallelism{TP: 1, PP: 1,
+			b: corpus("glm-5.3-flash-32gpu", 4, 8, "ib-400g", []deployment.Pool{
+				pool(deployment.RoleColocated, 4, deployment.Parallelism{TP: 1, PP: 1,
 					DP: 32, DPLocal: 8, EnableExpertParallel: true},
-					scenario.Engine{All2AllBackend: "deepep_low_latency",
+					deployment.Engine{All2AllBackend: "deepep_low_latency",
 						CacheDType: "fp8", BlockSize: 64,
 						GPUMemoryUtilization: 0.9}),
 			}, nil),
 		},
 		{
 			what: "eager execution with the custom all-reduce disabled",
-			s: deployment("nemotron-h100-eager", 2, 8, "roce-200g", []scenario.Pool{
-				pool(scenario.RoleColocated, 2, scenario.Parallelism{TP: 8, PP: 1,
+			b: corpus("nemotron-h100-eager", 2, 8, "roce-200g", []deployment.Pool{
+				pool(deployment.RoleColocated, 2, deployment.Parallelism{TP: 8, PP: 1,
 					DP: 2, DPLocal: 1, EnableExpertParallel: true},
-					scenario.Engine{CUDAGraphMode: "NONE",
+					deployment.Engine{CUDAGraphMode: "NONE",
 						AllReduceBackend: "nccl", CacheDType: "auto",
 						All2AllBackend:       "deepep_high_throughput",
 						GPUMemoryUtilization: 0.9}),
@@ -229,8 +234,8 @@ func TestCorpusDeploymentsAreExpressible(t *testing.T) {
 		},
 		{
 			what: "hybrid stack: mamba cache mode and both state dtypes",
-			s: deployment("granite-hybrid-h200", 1, 8, "", []scenario.Pool{
-				pool(scenario.RoleColocated, 1, tp8, scenario.Engine{
+			b: corpus("granite-hybrid-h200", 1, 8, "", []deployment.Pool{
+				pool(deployment.RoleColocated, 1, tp8, deployment.Engine{
 					CacheDType: "fp8", MambaCacheDType: "auto",
 					MambaSSMCacheDType: "auto", MambaCacheMode: "align",
 					MaxModelLen: 131072, GPUMemoryUtilization: 0.9}),
@@ -238,28 +243,30 @@ func TestCorpusDeploymentsAreExpressible(t *testing.T) {
 		},
 		{
 			what: "priority scheduling with async scheduling declined",
-			s: deployment("granite-priority", 1, 8, "", []scenario.Pool{
-				pool(scenario.RoleColocated, 1, tp8, scenario.Engine{
+			b: corpus("granite-priority", 1, 8, "", []deployment.Pool{
+				pool(deployment.RoleColocated, 1, tp8, deployment.Engine{
 					SchedulingPolicy: "priority", AsyncScheduling: boolPtr(false),
 					CacheDType: "fp8", GPUMemoryUtilization: 0.9}),
 			}, nil),
 		},
 		{
 			what: "GB200-class three-tier topology",
-			s: deployment("dsr1-gb200", 18, 4, "ib-400g", []scenario.Pool{
-				pool(scenario.RoleColocated, 18, scenario.Parallelism{TP: 1, PP: 1,
+			b: corpus("dsr1-gb200", 18, 4, "ib-400g", []deployment.Pool{
+				pool(deployment.RoleColocated, 18, deployment.Parallelism{TP: 1, PP: 1,
 					DP: 72, DPLocal: 4, EnableExpertParallel: true},
-					scenario.Engine{All2AllBackend: "deepep_low_latency",
+					deployment.Engine{All2AllBackend: "deepep_low_latency",
 						CacheDType: "fp8", GPUMemoryUtilization: 0.9,
-						EPLB: &scenario.EPLB{Enabled: true,
+						EPLB: &deployment.EPLB{Enabled: true,
 							NumRedundantExperts: 32}}),
-			}, func(s *scenario.Scenario) { s.Cluster.GPUsPerRack = 72 }),
+			}, func(s *scenario.Scenario, d *deployment.Deployment) {
+				s.Cluster.GPUsPerRack = 72
+			}),
 		},
 	}
 	for _, c := range cases {
 		t.Run(c.what, func(t *testing.T) {
-			if p := c.s.Validate(); !p.OK() {
-				t.Fatalf("not expressible:\n%s", p.Error())
+			if rep := Validate(c.b); !rep.Field.OK() {
+				t.Fatalf("not expressible:\n%s", rep.Field.Error())
 			}
 		})
 	}
@@ -272,15 +279,16 @@ func boolPtr(b bool) *bool { return &b }
 // infeasible until enough redundant experts are added.
 func TestGraniteAtEP72NeedsRedundantExperts(t *testing.T) {
 	build := func(redundant int) Bundle {
-		s := deployment("granite-ep72", 9, 8, "ib-400g", []scenario.Pool{
-			pool(scenario.RoleColocated, 9, scenario.Parallelism{TP: 1, PP: 1,
+		b := corpus("granite-ep72", 9, 8, "ib-400g", []deployment.Pool{
+			pool(deployment.RoleColocated, 9, deployment.Parallelism{TP: 1, PP: 1,
 				DP: 72, DPLocal: 8, EnableExpertParallel: true},
-				scenario.Engine{All2AllBackend: "deepep_low_latency",
+				deployment.Engine{All2AllBackend: "deepep_low_latency",
 					CacheDType: "fp8", GPUMemoryUtilization: 0.9,
-					EPLB: &scenario.EPLB{Enabled: true,
+					EPLB: &deployment.EPLB{Enabled: true,
 						NumRedundantExperts: redundant}}),
 		}, nil)
-		return Bundle{Scenario: s, Model: graniteMoE()}
+		b.Model = graniteMoE()
+		return b
 	}
 	if rep := Validate(build(32)); rep.OK() {
 		t.Fatal("224 + 32 does not divide 72; expected a rule failure")

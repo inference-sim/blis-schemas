@@ -89,12 +89,12 @@ func assertSameSet(t *testing.T, what string, pack map[string]bool, source []str
 	sort.Strings(extra)
 	sort.Strings(missing)
 	if len(extra) > 0 {
-		t.Errorf("%s: the pack accepts %v, which the engine does not; a scenario "+
+		t.Errorf("%s: the pack accepts %v, which the engine does not; a deployment "+
 			"using one would validate here and fail to launch", what, extra)
 	}
 	if len(missing) > 0 {
 		t.Errorf("%s: the engine accepts %v, which the pack does not; a valid "+
-			"scenario would be rejected", what, missing)
+			"deployment would be rejected", what, missing)
 	}
 }
 
@@ -265,7 +265,7 @@ func TestNoAllReduceBackendEnumInSource(t *testing.T) {
 			"models this as a boolean and should be revisited")
 	}
 	if !strings.Contains(src, "disable_custom_all_reduce: bool") {
-		t.Error("disable_custom_all_reduce is no longer a boolean; the scenario " +
+		t.Error("disable_custom_all_reduce is no longer a boolean; the deployment " +
 			"field mirrors it and should be revisited")
 	}
 }

@@ -14,7 +14,7 @@ package v0_29
 import (
 	"github.com/inference-sim/blis-schemas/internal/validate"
 	"github.com/inference-sim/blis-schemas/rules"
-	"github.com/inference-sim/blis-schemas/spec/scenario"
+	"github.com/inference-sim/blis-schemas/spec/deployment"
 )
 
 // Version is the engine release this pack describes.
@@ -53,8 +53,8 @@ func Pack() *rules.Pack {
 		// The engine exposes no allreduce-backend name. What it has is a boolean,
 		// disable_custom_all_reduce, plus an environment-selected communicator; an
 		// earlier draft of this pack invented a backend enum, which would have
-		// rejected every scenario stating the real field. Kept as a set of the two
-		// values the scenario field accepts so the rule shape stays uniform.
+		// rejected every deployment stating the real field. Kept as a set of the two
+		// values the deployment field accepts so the rule shape stays uniform.
 		AllReduceBackends: set("custom", "nccl"),
 
 		// Transcribed from the CUDAGraphMode enum. Five members: the fifth,
@@ -110,7 +110,7 @@ func ruleList(p *rules.Pack) []rules.Rule {
 			Name:    "all2all-backend-known",
 			Because: "an unrecognized backend name would be priced with the default volume basis, which differs by a factor of top_k",
 			Check: func(in rules.Input, out *validate.Problems) {
-				forEachEngine(in, func(at string, e scenario.Engine) {
+				forEachEngine(in, func(at string, e deployment.Engine) {
 					if e.All2AllBackend == "" {
 						return
 					}
@@ -126,7 +126,7 @@ func ruleList(p *rules.Pack) []rules.Rule {
 			Name:    "allreduce-backend-known",
 			Because: "the backend decides whether a reduction consumes SMs or the NIC, so an unknown name leaves the cost on no resource",
 			Check: func(in rules.Input, out *validate.Problems) {
-				forEachEngine(in, func(at string, e scenario.Engine) {
+				forEachEngine(in, func(at string, e deployment.Engine) {
 					if e.AllReduceBackend == "" {
 						return
 					}
@@ -142,7 +142,7 @@ func ruleList(p *rules.Pack) []rules.Rule {
 			Name:    "enum-values-known",
 			Because: "graph mode, cache dtype, mamba cache mode and scheduler policy each change a cost term, and an unknown value silently selects a default",
 			Check: func(in rules.Input, out *validate.Problems) {
-				forEachEngine(in, func(at string, e scenario.Engine) {
+				forEachEngine(in, func(at string, e deployment.Engine) {
 					check := func(field, value string, allowed map[string]bool) {
 						if value == "" || allowed[value] {
 							return
@@ -164,7 +164,7 @@ func ruleList(p *rules.Pack) []rules.Rule {
 			Name:    "speculative-method-known",
 			Because: "an unknown draft method cannot be priced, and the draft pass of an MoE target is a second MoE rather than a scalar multiplier",
 			Check: func(in rules.Input, out *validate.Problems) {
-				forEachEngine(in, func(at string, e scenario.Engine) {
+				forEachEngine(in, func(at string, e deployment.Engine) {
 					if e.Speculative == nil {
 						return
 					}
@@ -194,7 +194,7 @@ func ruleList(p *rules.Pack) []rules.Rule {
 				if experts == 0 {
 					return
 				}
-				forEachPool(in, func(at string, pool scenario.Pool) {
+				forEachPool(in, func(at string, pool deployment.Pool) {
 					e := pool.Engine
 					if e.EPLB == nil || !e.EPLB.Enabled {
 						return
@@ -224,7 +224,7 @@ func ruleList(p *rules.Pack) []rules.Rule {
 				if experts == 0 {
 					return
 				}
-				forEachPool(in, func(at string, pool scenario.Pool) {
+				forEachPool(in, func(at string, pool deployment.Pool) {
 					e := pool.Engine
 					if e.EPLB != nil && e.EPLB.Enabled {
 						return
@@ -255,7 +255,7 @@ func ruleList(p *rules.Pack) []rules.Rule {
 				if in.Scenario != nil {
 					gpusPerNode = in.Scenario.Cluster.GPUsPerNode
 				}
-				forEachPool(in, func(at string, pool scenario.Pool) {
+				forEachPool(in, func(at string, pool deployment.Pool) {
 					if pool.Engine.AllReduceBackend != "custom" {
 						return
 					}
@@ -277,10 +277,10 @@ func ruleList(p *rules.Pack) []rules.Rule {
 			Name:    "offload-spec-known",
 			Because: "the spec decides whether a fetch consumes SMs or a copy engine, which is the only way the offload path enters step time",
 			Check: func(in rules.Input, out *validate.Problems) {
-				if in.Scenario == nil || in.Scenario.Offload == nil {
+				if in.Deployment == nil || in.Deployment.Offload == nil {
 					return
 				}
-				s := in.Scenario.Offload.Spec
+				s := in.Deployment.Offload.Spec
 				if s != "" && !p.OffloadSpecs[s] {
 					out.RuleErrorf("offload-spec-known",
 						"offload.spec: %q is not a registered spec in engine %s",
@@ -296,7 +296,7 @@ func ruleList(p *rules.Pack) []rules.Rule {
 					return
 				}
 				hasRecurrent := modelHasRecurrent(in)
-				forEachEngine(in, func(at string, e scenario.Engine) {
+				forEachEngine(in, func(at string, e deployment.Engine) {
 					if e.MambaCacheMode != "" && !hasRecurrent {
 						out.RuleWarnf("mamba-cache-mode-matches-model",
 							"%s.engine.mamba_cache_mode is set but the model has no recurrent layer, so it has no effect", at)
@@ -310,12 +310,12 @@ func ruleList(p *rules.Pack) []rules.Rule {
 		},
 		{
 			Name:    "cascade-attention-is-opt-in",
-			Because: "cascade attention changes the attention primitive itself, and a scenario that leaves it unstated gets the engine default rather than the faster path",
+			Because: "cascade attention changes the attention primitive itself, and a deployment that leaves it unstated gets the engine default rather than the faster path",
 			Check: func(in rules.Input, out *validate.Problems) {
 				if !p.CascadeAttnOptIn {
 					return
 				}
-				forEachPool(in, func(at string, pool scenario.Pool) {
+				forEachPool(in, func(at string, pool deployment.Pool) {
 					e := pool.Engine
 					if e.DisableCascadeAttn != nil && !*e.DisableCascadeAttn &&
 						e.Speculative != nil && e.AsyncScheduling == nil {
@@ -329,7 +329,7 @@ func ruleList(p *rules.Pack) []rules.Rule {
 			Name:    "dbo-thresholds-stated-when-enabled",
 			Because: "which threshold applies turns on batch uniformity, and an unstated threshold silently takes a default that differs by 16x between the two",
 			Check: func(in rules.Input, out *validate.Problems) {
-				forEachEngine(in, func(at string, e scenario.Engine) {
+				forEachEngine(in, func(at string, e deployment.Engine) {
 					if e.DBO == nil || !e.DBO.Enabled {
 						return
 					}
@@ -346,7 +346,7 @@ func ruleList(p *rules.Pack) []rules.Rule {
 			Name:    "sequence-parallel-moe-implied",
 			Because: "on this backend with tensor and data parallelism both above one, the engine makes the MoE input sequence-parallel, which replaces the layer's all-reduce with a different pair of collectives",
 			Check: func(in rules.Input, out *validate.Problems) {
-				forEachPool(in, func(at string, pool scenario.Pool) {
+				forEachPool(in, func(at string, pool deployment.Pool) {
 					pl := pool.Parallel
 					e := pool.Engine
 					if !pl.EnableExpertParallel || pl.TP <= 1 || pl.DP <= 1 {
@@ -364,17 +364,17 @@ func ruleList(p *rules.Pack) []rules.Rule {
 	}
 }
 
-func forEachPool(in rules.Input, fn func(at string, pool scenario.Pool)) {
-	if in.Scenario == nil {
+func forEachPool(in rules.Input, fn func(at string, pool deployment.Pool)) {
+	if in.Deployment == nil {
 		return
 	}
-	for i, pool := range in.Scenario.Pools {
+	for i, pool := range in.Deployment.Pools {
 		fn(poolPath(i), pool)
 	}
 }
 
-func forEachEngine(in rules.Input, fn func(at string, e scenario.Engine)) {
-	forEachPool(in, func(at string, pool scenario.Pool) { fn(at, pool.Engine) })
+func forEachEngine(in rules.Input, fn func(at string, e deployment.Engine)) {
+	forEachPool(in, func(at string, pool deployment.Pool) { fn(at, pool.Engine) })
 }
 
 func poolPath(i int) string {

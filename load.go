@@ -10,6 +10,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/inference-sim/blis-schemas/spec/coefficient"
+	"github.com/inference-sim/blis-schemas/spec/deployment"
 	"github.com/inference-sim/blis-schemas/spec/evaluation"
 	"github.com/inference-sim/blis-schemas/spec/hardware"
 	"github.com/inference-sim/blis-schemas/spec/model"
@@ -23,7 +24,7 @@ import (
 // them through one channel.
 //
 // Every loader rejects unknown fields. A misspelled key that parsed silently would
-// leave a scenario that validates while omitting the setting its author intended,
+// leave a document that validates while omitting the setting its author intended,
 // which is the failure mode hardest to notice: the document looks right and the
 // estimate is wrong for a reason nothing reports.
 
@@ -34,6 +35,16 @@ func LoadScenario(path string) (*scenario.Scenario, error) {
 		return nil, err
 	}
 	return &s, nil
+}
+
+// LoadDeployment reads a deployment document — the tunable configuration applied to a
+// scenario. It does not validate; call Validate.
+func LoadDeployment(path string) (*deployment.Deployment, error) {
+	var d deployment.Deployment
+	if err := decodeStrict(path, &d); err != nil {
+		return nil, err
+	}
+	return &d, nil
 }
 
 // LoadModelGraph reads a derived model graph.
@@ -102,7 +113,7 @@ func LoadEvaluationRun(path string) (*evaluation.Run, error) {
 // namespace.
 //
 // The file is a mapping of tier name to device facts rather than a list, because a tier
-// is referred to by name from a scenario's offload block. So this loader is not a plain
+// is referred to by name from a deployment's offload block. So this loader is not a plain
 // decodeStrict: it walks the mapping and stamps each device's Name from its key, which
 // is the only place that key survives into the loaded value.
 //

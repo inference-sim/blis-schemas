@@ -6,6 +6,7 @@ import (
 
 	"github.com/inference-sim/blis-schemas/rules"
 	"github.com/inference-sim/blis-schemas/spec/coefficient"
+	"github.com/inference-sim/blis-schemas/spec/deployment"
 	"github.com/inference-sim/blis-schemas/spec/hardware"
 	"github.com/inference-sim/blis-schemas/spec/model"
 	"github.com/inference-sim/blis-schemas/spec/scenario"
@@ -16,13 +17,16 @@ func bundle() Bundle {
 	return Bundle{
 		Scenario: &scenario.Scenario{
 			Kind: "Scenario", Name: "granite-230b-h200-tp8",
-			Model: "granite-5-230b", Hardware: "h200",
+			Model:         "granite-5-230b",
 			Coefficients:  []string{"cost-model-primitives-h200"},
 			EngineVersion: "0.29.0",
-			Cluster:       scenario.Cluster{Nodes: 1, GPUsPerNode: 8},
-			Pools: []scenario.Pool{{Role: scenario.RoleColocated, Nodes: 1,
-				Parallel: scenario.Parallelism{TP: 8, PP: 1, DP: 1},
-				Engine: scenario.Engine{CacheDType: "fp8", BlockSize: 16,
+			Cluster:       scenario.Cluster{Hardware: "h200", Nodes: 1, GPUsPerNode: 8},
+		},
+		Deployment: &deployment.Deployment{
+			Kind: "Deployment", Name: "granite-230b-h200-tp8",
+			Pools: []deployment.Pool{{Role: deployment.RoleColocated, Nodes: 1,
+				Parallel: deployment.Parallelism{TP: 8, PP: 1, DP: 1},
+				Engine: deployment.Engine{CacheDType: "fp8", BlockSize: 16,
 					MaxNumBatchedTokens: 32768, GPUMemoryUtilization: 0.9}}},
 		},
 		Model: &model.Graph{
@@ -93,7 +97,7 @@ func TestUnknownEngineVersionIsReported(t *testing.T) {
 func TestRulesDoNotRunOnMalformedDocuments(t *testing.T) {
 	b := bundle()
 	b.Scenario.Kind = "NotAScenario"
-	b.Scenario.Pools[0].Engine.All2AllBackend = "telepathy" // would fire a rule
+	b.Deployment.Pools[0].Engine.All2AllBackend = "telepathy" // would fire a rule
 	rep := Validate(b)
 	if rep.Field.OK() {
 		t.Fatal("expected a field problem")
@@ -110,7 +114,7 @@ func TestRulesDoNotRunOnMalformedDocuments(t *testing.T) {
 // from one that a particular engine would refuse.
 func TestLayersAreDistinguishable(t *testing.T) {
 	b := bundle()
-	b.Scenario.Pools[0].Engine.All2AllBackend = "telepathy"
+	b.Deployment.Pools[0].Engine.All2AllBackend = "telepathy"
 	rep := Validate(b)
 	if !rep.Field.OK() {
 		t.Fatalf("field layer should pass; got:\n%s", rep.Field.Error())
@@ -141,6 +145,29 @@ func TestRegisteredVersions(t *testing.T) {
 	}
 }
 
+// TestDeploymentWithoutScenarioIsRejected guards the composition layer against a bundle
+// that would otherwise silently under-validate. A Deployment with no Scenario skips the
+// cluster-fit check and every version-scoped engine rule (both need the scenario), so a
+// deployment that does not fit its hardware would come back green. The layer reports a
+// field problem instead. The mirror holds: a Scenario with no Deployment is a complete
+// problem on its own and still validates.
+func TestDeploymentWithoutScenarioIsRejected(t *testing.T) {
+	b := bundle()
+
+	rep := Validate(Bundle{Deployment: b.Deployment})
+	if rep.Field.OK() {
+		t.Fatal("a deployment with no scenario should be a field problem, not a pass")
+	}
+	if rep.RulesApplied != "" {
+		t.Errorf("RulesApplied = %q, want empty when no scenario is present", rep.RulesApplied)
+	}
+
+	// The mirror: a scenario with no deployment is a complete problem and still validates.
+	if rep := Validate(Bundle{Scenario: b.Scenario}); !rep.OK() {
+		t.Fatalf("a scenario with no deployment should pass:\n%s", renderAll(rep))
+	}
+}
+
 func TestPartialBundlesValidate(t *testing.T) {
 	// A catalog contributor checks one chip, with no scenario at all.
 	rep := Validate(Bundle{Chip: bundle().Chip})
@@ -149,6 +176,29 @@ func TestPartialBundlesValidate(t *testing.T) {
 	}
 	if rep.RulesApplied != "" {
 		t.Error("no scenario means no rules should apply")
+	}
+}
+
+// TestOffloadTierMustBeInClusterStorage pins the inventory coupling at the layer that
+// owns it: the storage classes live on the Scenario's cluster, so only the composition
+// layer — which sees both documents — can check that a deployment's offload tiers draw
+// from the declared inventory.
+func TestOffloadTierMustBeInClusterStorage(t *testing.T) {
+	b := bundle()
+	b.Scenario.Cluster.Storage = []string{"cpu_dram", "nvme_gen4"}
+
+	// A tier drawn from the declared inventory passes.
+	b.Deployment.Offload = &deployment.Offload{
+		Tiers: []deployment.Tier{{Device: "cpu_dram", Bytes: 1}}}
+	if rep := Validate(b); !rep.OK() {
+		t.Fatalf("a tier drawn from the cluster inventory should pass:\n%s", renderAll(rep))
+	}
+
+	// A tier naming a class the cluster does not list is a field problem.
+	b.Deployment.Offload = &deployment.Offload{
+		Tiers: []deployment.Tier{{Device: "optane", Bytes: 1}}}
+	if rep := Validate(b); rep.Field.OK() {
+		t.Fatal("an offload tier outside the cluster storage inventory should be a field problem")
 	}
 }
 

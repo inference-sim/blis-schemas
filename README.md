@@ -31,7 +31,7 @@ with no pack is reported as unvalidated rather than assumed fine.
 
 ```go
 rep := blisschemas.Validate(blisschemas.Bundle{
-    Scenario: s, Model: g, Chip: c, Coefficients: sets,
+    Scenario: s, Deployment: d, Model: g, Chip: c, Coefficients: sets,
 })
 if !rep.OK() {
     for _, p := range rep.Problems() {
@@ -56,7 +56,8 @@ vocab/              closed vocabularies: units, methods, scope keys, provenance
 spec/model/         a model as a DAG of cost primitives
 spec/hardware/      chip, fabric, storage device — three schemas, not one
 spec/coefficient/   coefficient sets, mirroring blis-registry's contract
-spec/scenario/      a deployment: model, hardware, layout, engine settings
+spec/scenario/      the immutable problem: model, cluster inventory, workload + refs
+spec/deployment/    the mutable config: pools, parallelism, engine knobs, offload, PD
 spec/workload/      traffic shape as a distribution
 spec/evaluation/    a measured run, for scoring a prediction against
 kernel/             the interface a cost model implements

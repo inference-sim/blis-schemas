@@ -18,8 +18,8 @@ func TestSpecDoesNotDependOnRules(t *testing.T) {
 	const mod = "github.com/inference-sim/blis-schemas/"
 	for _, pkg := range []string{
 		"./spec/model", "./spec/hardware", "./spec/coefficient",
-		"./spec/scenario", "./spec/workload", "./spec/evaluation",
-		"./vocab", "./internal/validate",
+		"./spec/scenario", "./spec/deployment", "./spec/workload",
+		"./spec/evaluation", "./vocab", "./internal/validate",
 	} {
 		out, err := exec.Command("go", "list", "-deps", pkg).Output()
 		if err != nil {

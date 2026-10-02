@@ -16,6 +16,7 @@ import (
 	"github.com/inference-sim/blis-schemas/internal/validate"
 	"github.com/inference-sim/blis-schemas/rules"
 	"github.com/inference-sim/blis-schemas/spec/coefficient"
+	"github.com/inference-sim/blis-schemas/spec/deployment"
 	"github.com/inference-sim/blis-schemas/spec/evaluation"
 	"github.com/inference-sim/blis-schemas/spec/hardware"
 	"github.com/inference-sim/blis-schemas/spec/model"
@@ -23,11 +24,14 @@ import (
 	"github.com/inference-sim/blis-schemas/spec/workload"
 )
 
-// Bundle is a complete set of documents describing one deployment. Optional members
-// are nil when a caller is validating a subset: a catalog contributor checks a chip
-// alone, where a CI job checking a deployment supplies everything.
+// Bundle is a complete set of documents describing one run. Optional members are nil
+// when a caller is validating a subset: a catalog contributor checks a chip alone,
+// where a CI job checking a run supplies everything. The Scenario fixes the immutable
+// problem and the Deployment the mutable configuration against it; validating both
+// together is what checks that a deployment fits its cluster.
 type Bundle struct {
 	Scenario     *scenario.Scenario
+	Deployment   *deployment.Deployment
 	Model        *model.Graph
 	Chip         *hardware.Chip
 	Fabric       *hardware.Fabric
@@ -64,6 +68,32 @@ func Validate(b Bundle) Report {
 	if b.Scenario != nil {
 		field.Merge("scenario", b.Scenario.Validate())
 	}
+	if b.Deployment != nil {
+		field.Merge("deployment", b.Deployment.Validate())
+	}
+	// A deployment is validated against the cluster that hosts it and the engine version
+	// it is tuned for, both of which live on the Scenario. A deployment with no scenario
+	// therefore cannot be fully checked — its cluster fit and every version-scoped engine
+	// rule would silently not run — and, unlike a chip-only bundle a catalog contributor
+	// checks, a deployment-only bundle has no standalone use. So require the scenario
+	// rather than return green on a deployment that only looks valid because half its
+	// checks were skipped.
+	if b.Deployment != nil && b.Scenario == nil {
+		field.Field("scenario",
+			"required when a deployment is present: a deployment is validated against the cluster and engine version its scenario fixes")
+	}
+	// A deployment and the cluster it is placed on are two documents, so the checks
+	// that couple them — that the pools fill the cluster, that each local data-parallel
+	// width divides a node, and that offload tiers draw from the declared storage
+	// inventory — can only run when both are present.
+	if b.Scenario != nil && b.Deployment != nil {
+		field.Merge("deployment", b.Deployment.ValidateAgainstCluster(
+			deployment.ClusterConstraints{
+				Nodes:       b.Scenario.Cluster.Nodes,
+				GPUsPerNode: b.Scenario.Cluster.GPUsPerNode,
+				Storage:     b.Scenario.Cluster.Storage,
+			}))
+	}
 	if b.Model != nil {
 		field.Merge("model", b.Model.Validate())
 	}
@@ -98,7 +128,8 @@ func Validate(b Bundle) Report {
 		return rep
 	}
 	if b.Scenario != nil {
-		rep.Rule = rules.Apply(rules.Input{Scenario: b.Scenario, Model: b.Model})
+		rep.Rule = rules.Apply(rules.Input{
+			Scenario: b.Scenario, Deployment: b.Deployment, Model: b.Model})
 		if rules.Lookup(b.Scenario.EngineVersion) != nil {
 			rep.RulesApplied = b.Scenario.EngineVersion
 		}
