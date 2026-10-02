@@ -58,7 +58,7 @@ spec/hardware/      chip, fabric, storage device — three schemas, not one
 spec/coefficient/   coefficient sets, mirroring blis-registry's contract
 spec/scenario/      the immutable problem: model, cluster inventory, workload + refs
 spec/deployment/    the mutable config: pools, parallelism, engine knobs, offload, PD
-spec/workload/      traffic shape as a distribution
+spec/workload/      the "what traffic" binding: a distributional shape or a trace ref
 spec/evaluation/    a measured run, for scoring a prediction against
 kernel/             the interface a cost model implements
 rules/              the version-scoped rule mechanism
