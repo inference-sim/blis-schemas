@@ -17,7 +17,7 @@ package kernel
 import (
 	"time"
 
-	"github.com/inference-sim/blis-schemas/spec/scenario"
+	"github.com/inference-sim/blis-schemas/spec/deployment"
 )
 
 // Kernel prices one instantiated deployment. Obtain one from a constructor that
@@ -232,7 +232,7 @@ const (
 type Placement struct {
 	Node int
 	Rack int
-	Pool scenario.Role
+	Pool deployment.Role
 }
 
 // CoefficientOrigin is one row of the provenance trail.

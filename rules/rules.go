@@ -24,16 +24,20 @@ import (
 	"sync"
 
 	"github.com/inference-sim/blis-schemas/internal/validate"
+	"github.com/inference-sim/blis-schemas/spec/deployment"
 	"github.com/inference-sim/blis-schemas/spec/model"
 	"github.com/inference-sim/blis-schemas/spec/scenario"
 )
 
 // Input is everything a rule may read. A rule sees the whole resolved set of
 // documents, because the interesting rules are cross-document: expert divisibility
-// needs the scenario's layout and the model's expert count, and neither alone.
+// needs the deployment's layout and the model's expert count, and neither alone. The
+// Scenario carries the immutable problem (engine version, cluster inventory) and the
+// Deployment the mutable layout (pools, offload) a rule checks against it.
 type Input struct {
-	Scenario *scenario.Scenario
-	Model    *model.Graph
+	Scenario   *scenario.Scenario
+	Deployment *deployment.Deployment
+	Model      *model.Graph
 }
 
 // Rule is one named, version-scoped check.

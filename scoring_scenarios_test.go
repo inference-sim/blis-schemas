@@ -22,8 +22,7 @@ func TestEveryScoringScenarioLoadsAndValidates(t *testing.T) {
 		for _, pr := range schemas.Validate(schemas.Bundle{Scenario: s}).Problems() {
 			t.Errorf("%s: %s", filepath.Base(p), pr.String())
 		}
-		t.Logf("%-34s model=%-34s hw=%s tp=%d dp=%d ep=%d", s.Name, s.Model,
-			s.Hardware, s.Pools[0].Parallel.TP, s.Pools[0].Parallel.DP,
-			s.Pools[0].Parallel.ExpertParallelWidth())
+		t.Logf("%-34s model=%-34s hw=%s nodes=%d gpus_per_node=%d", s.Name, s.Model,
+			s.Cluster.Hardware, s.Cluster.Nodes, s.Cluster.GPUsPerNode)
 	}
 }

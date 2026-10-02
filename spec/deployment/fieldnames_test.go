@@ -1,4 +1,4 @@
-package scenario
+package deployment
 
 import (
 	"reflect"

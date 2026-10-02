@@ -10,6 +10,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/inference-sim/blis-schemas/spec/coefficient"
+	"github.com/inference-sim/blis-schemas/spec/deployment"
 	"github.com/inference-sim/blis-schemas/spec/evaluation"
 	"github.com/inference-sim/blis-schemas/spec/hardware"
 	"github.com/inference-sim/blis-schemas/spec/model"
@@ -34,6 +35,16 @@ func LoadScenario(path string) (*scenario.Scenario, error) {
 		return nil, err
 	}
 	return &s, nil
+}
+
+// LoadDeployment reads a deployment document — the tunable configuration applied to a
+// scenario. It does not validate; call Validate.
+func LoadDeployment(path string) (*deployment.Deployment, error) {
+	var d deployment.Deployment
+	if err := decodeStrict(path, &d); err != nil {
+		return nil, err
+	}
+	return &d, nil
 }
 
 // LoadModelGraph reads a derived model graph.

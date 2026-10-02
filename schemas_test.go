@@ -6,6 +6,7 @@ import (
 
 	"github.com/inference-sim/blis-schemas/rules"
 	"github.com/inference-sim/blis-schemas/spec/coefficient"
+	"github.com/inference-sim/blis-schemas/spec/deployment"
 	"github.com/inference-sim/blis-schemas/spec/hardware"
 	"github.com/inference-sim/blis-schemas/spec/model"
 	"github.com/inference-sim/blis-schemas/spec/scenario"
@@ -16,13 +17,16 @@ func bundle() Bundle {
 	return Bundle{
 		Scenario: &scenario.Scenario{
 			Kind: "Scenario", Name: "granite-230b-h200-tp8",
-			Model: "granite-5-230b", Hardware: "h200",
+			Model:         "granite-5-230b",
 			Coefficients:  []string{"cost-model-primitives-h200"},
 			EngineVersion: "0.29.0",
-			Cluster:       scenario.Cluster{Nodes: 1, GPUsPerNode: 8},
-			Pools: []scenario.Pool{{Role: scenario.RoleColocated, Nodes: 1,
-				Parallel: scenario.Parallelism{TP: 8, PP: 1, DP: 1},
-				Engine: scenario.Engine{CacheDType: "fp8", BlockSize: 16,
+			Cluster:       scenario.Cluster{Hardware: "h200", Nodes: 1, GPUsPerNode: 8},
+		},
+		Deployment: &deployment.Deployment{
+			Kind: "Deployment", Name: "granite-230b-h200-tp8",
+			Pools: []deployment.Pool{{Role: deployment.RoleColocated, Nodes: 1,
+				Parallel: deployment.Parallelism{TP: 8, PP: 1, DP: 1},
+				Engine: deployment.Engine{CacheDType: "fp8", BlockSize: 16,
 					MaxNumBatchedTokens: 32768, GPUMemoryUtilization: 0.9}}},
 		},
 		Model: &model.Graph{
@@ -93,7 +97,7 @@ func TestUnknownEngineVersionIsReported(t *testing.T) {
 func TestRulesDoNotRunOnMalformedDocuments(t *testing.T) {
 	b := bundle()
 	b.Scenario.Kind = "NotAScenario"
-	b.Scenario.Pools[0].Engine.All2AllBackend = "telepathy" // would fire a rule
+	b.Deployment.Pools[0].Engine.All2AllBackend = "telepathy" // would fire a rule
 	rep := Validate(b)
 	if rep.Field.OK() {
 		t.Fatal("expected a field problem")
@@ -110,7 +114,7 @@ func TestRulesDoNotRunOnMalformedDocuments(t *testing.T) {
 // from one that a particular engine would refuse.
 func TestLayersAreDistinguishable(t *testing.T) {
 	b := bundle()
-	b.Scenario.Pools[0].Engine.All2AllBackend = "telepathy"
+	b.Deployment.Pools[0].Engine.All2AllBackend = "telepathy"
 	rep := Validate(b)
 	if !rep.Field.OK() {
 		t.Fatalf("field layer should pass; got:\n%s", rep.Field.Error())

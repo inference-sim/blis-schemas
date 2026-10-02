@@ -1,4 +1,4 @@
-package scenario
+package deployment
 
 import (
 	"testing"
@@ -53,13 +53,13 @@ func TestPrefixCachingTriStateRoundTrips(t *testing.T) {
 	}
 }
 
-// A scenario that disables prefix caching must validate. The field changes what a
+// A deployment that disables prefix caching must validate. The field changes what a
 // prefill costs, not whether a deployment is coherent, so there is nothing to reject.
 func TestDisablingPrefixCachingValidates(t *testing.T) {
 	off := false
-	s := pdScenario()
-	s.Pools[0].Engine.EnablePrefixCaching = &off
-	if p := s.Validate(); !p.OK() {
+	d := pdDeployment()
+	d.Pools[0].Engine.EnablePrefixCaching = &off
+	if p := d.Validate(); !p.OK() {
 		t.Errorf("a deployment with prefix caching disabled should validate:\n%s", p.Error())
 	}
 }
