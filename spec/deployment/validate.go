@@ -420,6 +420,9 @@ func validateBacklogDrift(p *validate.Problems, b *BacklogDriftDetector) {
 	// slope_k is the false-alarm calibration knob; a value of 1 or below is a legitimate
 	// "maximally severe" setting, so only non-positive is rejected.
 	posFloat("slope_k", b.SlopeK)
+	// peak_ratio_band is a band WIDTH around peak_ratio, so a width of zero is a
+	// legitimate "no band" setting — unlike peak_ratio and the drain ratios, which must
+	// be positive. Only a negative or non-finite width is rejected.
 	if b.PeakRatioBand != nil {
 		if v := *b.PeakRatioBand; v < 0 || math.IsNaN(v) || math.IsInf(v, 0) {
 			p.Field("saturation.backlog_drift.peak_ratio_band",

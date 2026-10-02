@@ -34,10 +34,13 @@ package deployment
 // below selects BLIS's own instance-queue ordering (fcfs/priority-fcfs/sjf/
 // reverse-priority), which has no vLLM counterpart. Both are kept.
 //
-// Flow-control admission (the real-time SLO-goodput / dispatch-ordering subsystem) is
-// a separate DeploymentConfig surface in the simulator, not part of the policy bundle,
-// and is not modeled here; it is a candidate for a later block rather than part of this
-// one.
+// The flow-control admission subsystem is NOT modeled here. It is a separate surface
+// the simulator toggles with --flow-control — carrying its own saturation detector,
+// request dispatch ordering, fairness policy and gateway-queue bounds in
+// DeploymentConfig, outside the --policy-config bundle this file mirrors — and is a
+// candidate for a later block. The SLO priority and target maps on Admission below are
+// NOT part of that subsystem: they are fields of the admission bundle itself, which
+// tier-shed admission and priority preemption read, so they are included here.
 
 // --- Admission ------------------------------------------------------------------
 
@@ -74,8 +77,8 @@ type Admission struct {
 	// the GAIE defaults (critical=4, standard=3, batch=-1, sheddable=-2, background=-3);
 	// a negative priority is sheddable.
 	SLOPriorities map[string]int `yaml:"slo_priorities,omitempty"`
-	// SLOTargets sets per-SLO-class TTFT targets in microseconds, read by SLO-deadline
-	// dispatch ordering.
+	// SLOTargets sets per-SLO-class TTFT targets in microseconds. It is a field of the
+	// admission bundle, read by the simulator's SLO-aware ordering.
 	SLOTargets map[string]int64 `yaml:"slo_targets,omitempty"`
 
 	// LatencyUs is the fixed latency in microseconds the admission stage adds to each
