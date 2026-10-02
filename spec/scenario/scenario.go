@@ -166,6 +166,26 @@ type Engine struct {
 	// shared prefix once per batch rather than once per request.
 	DisableCascadeAttn *bool `yaml:"disable_cascade_attn,omitempty"`
 
+	// EnablePrefixCaching decides whether a request may skip recomputing a prefix
+	// another request already placed in the cache. It changes the WORK a prefill does,
+	// not only the memory it occupies: with caching on, a matched prefix arrives as
+	// already-computed tokens and only the remainder is charged, so the same prompt
+	// costs a different number of scheduled tokens depending on this one field.
+	//
+	// A cost model cannot derive it. Whether a prefix hits depends on what else the
+	// deployment served, so the engine's own setting is the only way to know whether
+	// the hit was available at all.
+	//
+	// Tri-state: nil takes the engine default, which is TRUE in vLLM -- caching is on
+	// unless disabled. A scenario that omits this therefore describes a deployment
+	// WITH prefix caching, which is why the field is a pointer: false and unstated are
+	// different deployments, and a benchmark that passes --no-enable-prefix-caching
+	// cannot be expressed by omission.
+	//
+	// The field name follows the engine's CLI flag (--enable-prefix-caching /
+	// --no-enable-prefix-caching).
+	EnablePrefixCaching *bool `yaml:"enable_prefix_caching,omitempty"`
+
 	BlockSize           int `yaml:"block_size,omitempty"`
 	MaxNumBatchedTokens int `yaml:"max_num_batched_tokens,omitempty"`
 	MaxNumSeqs          int `yaml:"max_num_seqs,omitempty"`

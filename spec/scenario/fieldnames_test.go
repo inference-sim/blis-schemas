@@ -27,6 +27,7 @@ func TestEngineFieldNames(t *testing.T) {
 		"cudagraph_mode":            "-O/--compilation-config cudagraph_mode",
 		"async_scheduling":          "--async-scheduling",
 		"disable_cascade_attn":      "--disable-cascade-attn",
+		"enable_prefix_caching":     "--enable-prefix-caching / --no-enable-prefix-caching",
 		"block_size":                "--block-size",
 		"max_num_batched_tokens":    "--max-num-batched-tokens",
 		"max_num_seqs":              "--max-num-seqs",
