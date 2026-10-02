@@ -252,7 +252,10 @@ type Offload struct {
 }
 
 // Tier is one offload level: a device class from the catalog, and how much of it.
-// The device class is drawn from the Scenario cluster's storage inventory.
+// Where the Scenario cluster declares a storage inventory, the device class must be one
+// it lists (ValidateAgainstCluster checks this). A cluster that declares none states no
+// inventory to draw from, so the tier is unconstrained — the shape that predates the
+// inventory, kept valid; declaring storage is optional and opts a cluster into the check.
 type Tier struct {
 	Device string `yaml:"tier"`
 	Bytes  int64  `yaml:"bytes"`
