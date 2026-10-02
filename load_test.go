@@ -259,6 +259,224 @@ coefficients:
 	}
 }
 
+// TestLoadSimResult parses a predicted result end to end, which is the only check that
+// the type's yaml tags are right at every nesting depth: a misspelled tag compiles and
+// validates while silently dropping the field it was meant to read. It covers the
+// operating point, a latency distribution, the conservation ledger, a breakdown, an
+// external requests reference, the quarantined runtime block, the embedded input, and
+// provenance.
+func TestLoadSimResult(t *testing.T) {
+	path := write(t, "r.yaml", `
+kind: SimResult
+name: granite-230b-h200-tp8@10rps
+engine_version: "0.29.0"
+operating_point:
+  rate: 10
+summary:
+  output_tokens_per_sec: 287.5
+  input_tokens_per_sec: 4761.5
+  requests_per_sec: 9.8
+  ttft_ms: {mean: 52.5, p90: 90, p95: 110, p99: 168}
+  itl_ms: {mean: 6.7, p90: 7, p95: 7.5, p99: 9}
+  e2e_ms: {mean: 3200, p90: 4100, p95: 4500, p99: 5200}
+  sched_delay_p99_ms: 12
+  goodput_rps: 9.4
+  slo_attainment: 0.96
+conservation:
+  injected: 100
+  completed: 96
+  still_running: 2
+  still_queued: 1
+  dropped: 1
+  length_capped: 4
+  preemptions: 7
+  kv_alloc_failures: 0
+breakdowns:
+  per_class:
+    - name: interactive
+      summary:
+        output_tokens_per_sec: 120
+        ttft_ms: {mean: 40, p99: 150}
+        itl_ms: {mean: 6}
+        e2e_ms: {mean: 2800}
+  per_model:
+    - name: granite-5-230b
+      summary: {output_tokens_per_sec: 287.5}
+  per_tenant:
+    - name: team-a
+      summary: {output_tokens_per_sec: 100}
+      conservation: {injected: 50, completed: 50}
+  adapters:
+    - name: lora-sql
+      summary: {output_tokens_per_sec: 20}
+  pd:
+    prefill_ttft_ms: {mean: 30, p99: 60}
+    decode_ttft_ms: {mean: 10, p99: 20}
+    transfer_ms: {mean: 5, p99: 12}
+    transfers: 96
+  saturation: {saturated: false, detector: composite, knee_rps: 14.2}
+  fitness:
+    score: 0.82
+    components:
+      - {name: goodput, value: 9.4, weight: 0.7}
+      - {name: p99_e2e, value: 5200, weight: 0.3}
+requests:
+  file: run1-requests.csv
+  count: 100000
+runtime:
+  wall_clock_ms: 1234.5
+  host: node-7
+  build: deadbeef
+  started_at: "2026-10-02T00:00:00Z"
+  finished_at: "2026-10-02T00:00:01Z"
+scenario:
+  kind: Scenario
+  name: granite-230b-h200-tp8
+  model: granite-5-230b
+  coefficients: [cost-model-primitives-h200]
+  engine_version: "0.29.0"
+  cluster:
+    hardware: h200
+    nodes: 1
+    gpus_per_node: 8
+deployment:
+  kind: Deployment
+  name: granite-230b-h200-tp8
+  pools:
+    - role: colocated
+      nodes: 1
+      parallel: {tp: 8, pp: 1, dp: 1}
+      engine: {cache_dtype: fp8, gpu_memory_utilization: 0.9}
+provenance:
+  catalog: blis-catalog@0.1.1
+  registry: blis-registry@abc123
+  coefficients:
+    - {name: gemm_eps_max_bf16, set: cost-model-primitives-h200, method: measured, scope: h200}
+`)
+	r, err := LoadSimResult(path)
+	if err != nil {
+		t.Fatalf("LoadSimResult: %v", err)
+	}
+	// Spot-check a field from each nesting level: a tag error at any depth leaves a zero
+	// value the type system cannot catch.
+	if r.Point.Rate == nil || *r.Point.Rate != 10 || r.Point.Concurrency != nil {
+		t.Errorf("operating_point did not parse: %+v", r.Point)
+	}
+	if r.Summary.TTFT.P99 == nil || *r.Summary.TTFT.P99 != 168 || r.Summary.SLOAttainment != 0.96 {
+		t.Errorf("summary did not parse: %+v", r.Summary)
+	}
+	if r.Conservation.Injected != 100 || r.Conservation.LengthCapped != 4 {
+		t.Errorf("conservation did not parse: %+v", r.Conservation)
+	}
+	if r.Breakdowns == nil || len(r.Breakdowns.PerClass) != 1 ||
+		r.Breakdowns.PerClass[0].Name != "interactive" {
+		t.Errorf("breakdowns.per_class did not parse: %+v", r.Breakdowns)
+	}
+	// Every breakdown dimension's tags must parse, not only per_class — a typo in one of
+	// the others would otherwise silently drop the field it reads.
+	if len(r.Breakdowns.PerModel) != 1 || r.Breakdowns.PerModel[0].Name != "granite-5-230b" {
+		t.Errorf("breakdowns.per_model did not parse: %+v", r.Breakdowns.PerModel)
+	}
+	if len(r.Breakdowns.PerTenant) != 1 || r.Breakdowns.PerTenant[0].Conservation == nil ||
+		r.Breakdowns.PerTenant[0].Conservation.Injected != 50 {
+		t.Errorf("breakdowns.per_tenant (with conservation) did not parse: %+v", r.Breakdowns.PerTenant)
+	}
+	if len(r.Breakdowns.Adapters) != 1 || r.Breakdowns.Adapters[0].Name != "lora-sql" {
+		t.Errorf("breakdowns.adapters did not parse: %+v", r.Breakdowns.Adapters)
+	}
+	if r.Breakdowns.PD == nil || r.Breakdowns.PD.Transfers != 96 ||
+		r.Breakdowns.PD.PrefillTTFTms.P99 == nil || *r.Breakdowns.PD.PrefillTTFTms.P99 != 60 {
+		t.Errorf("breakdowns.pd did not parse: %+v", r.Breakdowns.PD)
+	}
+	if r.Breakdowns.Fitness == nil || len(r.Breakdowns.Fitness.Components) != 2 ||
+		r.Breakdowns.Fitness.Components[1].Name != "p99_e2e" {
+		t.Errorf("breakdowns.fitness did not parse: %+v", r.Breakdowns.Fitness)
+	}
+	if r.Requests == nil || r.Requests.File != "run1-requests.csv" ||
+		r.Requests.Count == nil || *r.Requests.Count != 100000 {
+		t.Errorf("requests reference did not parse: %+v", r.Requests)
+	}
+	if r.Runtime == nil || r.Runtime.Host != "node-7" {
+		t.Errorf("runtime did not parse: %+v", r.Runtime)
+	}
+	// The embedded input is the real spec types, so a field from deep inside each must
+	// have arrived.
+	if r.Scenario.Cluster.Hardware != "h200" || r.Deployment.Pools[0].Parallel.TP != 8 {
+		t.Errorf("embedded input did not parse: scenario=%+v deployment=%+v", r.Scenario, r.Deployment)
+	}
+	if len(r.Provenance.Coefficients) != 1 || r.Provenance.Coefficients[0].Method != "measured" {
+		t.Errorf("provenance did not parse: %+v", r.Provenance)
+	}
+	// And it validates through the composition layer, both on its own and in a bundle.
+	if p := r.Validate(); !p.OK() {
+		t.Errorf("a loaded result failed field validation:\n%s", p.Error())
+	}
+	if rep := Validate(Bundle{SimResult: r}); !rep.Field.OK() {
+		t.Errorf("a loaded result failed bundle field validation:\n%s", rep.Field.Error())
+	}
+}
+
+// TestLoadSimResultRejectsUnknownFields is the strict-decoding property for the result:
+// a misspelled key — including one deep in the embedded input — must fail loudly rather
+// than leave a zero value a validated document silently omits.
+func TestLoadSimResultRejectsUnknownFields(t *testing.T) {
+	path := write(t, "r.yaml", `
+kind: SimResult
+name: typo
+engine_version: "0.29.0"
+operating_point: {rate: 10}
+summary:
+  output_tokens_per_sec: 1
+  ttft_ms: {mean: 1}
+  itl_ms: {mean: 1}
+  e2e_ms: {mean: 1}
+conservation: {injected: 1, completed: 1}
+scenario:
+  kind: Scenario
+  name: s
+  model: m
+  coefficients: [c]
+  engine_version: "0.29.0"
+  cluster: {hardware: h200, nodes: 1, gpus_per_node: 8}
+deployment:
+  kind: Deployment
+  name: d
+  pools:
+    - role: colocated
+      nodes: 1
+      parallel: {tp: 8, pp: 1, dp: 1}
+      engine: {cache_dytpe: fp8}
+provenance: {}
+`)
+	_, err := LoadSimResult(path)
+	if err == nil {
+		t.Fatal("a misspelled field in the embedded deployment was accepted")
+	}
+	if !strings.Contains(err.Error(), "cache_dytpe") {
+		t.Errorf("the error should name the offending field, got: %v", err)
+	}
+
+	// Strict decoding also catches a stray key at the TOP level of the result, not only
+	// inside the embedded input: the one KnownFields decoder covers the whole tree.
+	root := write(t, "r2.yaml", `
+kind: SimResult
+name: typo
+engine_version: "0.29.0"
+operating_point: {rate: 10}
+summary: {output_tokens_per_sec: 1, ttft_ms: {mean: 1}, itl_ms: {mean: 1}, e2e_ms: {mean: 1}}
+conservation: {injected: 1, completed: 1}
+scenario: {kind: Scenario, name: s, model: m, coefficients: [c], engine_version: "0.29.0", cluster: {hardware: h200, nodes: 1, gpus_per_node: 8}}
+deployment: {kind: Deployment, name: d, pools: [{role: colocated, nodes: 1, parallel: {tp: 8, pp: 1, dp: 1}, engine: {}}]}
+provenance: {}
+oops_unknown_root_key: true
+`)
+	if _, err := LoadSimResult(root); err == nil {
+		t.Fatal("a stray key at the top level of a sim-result was accepted")
+	} else if !strings.Contains(err.Error(), "oops_unknown_root_key") {
+		t.Errorf("the error should name the offending root field, got: %v", err)
+	}
+}
+
 // TestLoadCatalogFilesIfPresent parses the committed catalog files themselves. It is
 // the strongest check of the tags: a hand-written fixture agrees with whatever the
 // tags happen to say, where the real files do not.
