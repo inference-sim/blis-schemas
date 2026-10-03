@@ -140,6 +140,28 @@ type StepEstimate struct {
 	Overlap   time.Duration
 	NoOverlap time.Duration
 
+	// Expected is the edge the measured evidence selects, so a caller that wants one
+	// number does not have to re-decide per call site. Overlap and NoOverlap remain for
+	// a caller that needs the band itself.
+	//
+	// An implementation sets this from measurement, not preference. The figure that
+	// settles it is the SIGNED error against a whole-forward measurement, because a
+	// one-sided error is a missing term where a symmetric one is scatter. Over 219
+	// points of NVIDIA's FPM dataset spanning two models, two parts and five
+	// parallelism topologies, Overlap's signed mean is -13.45% and NoOverlap's is
+	// -3.44%; NoOverlap is closer on 158 of them. So an implementation serving vLLM
+	// sets Expected = NoOverlap, and the physical reason is PIECEWISE cudagraph mode:
+	// attention runs eagerly between captured segments, so per-layer overlap is
+	// structurally limited.
+	//
+	// It is not a constructor option. The choice depends on how concentrated a step's
+	// work is across resources — where one resource holds most of a step, per-stage max
+	// IS the right composition, and the one dissenting cell in that evidence is exactly
+	// that case (a whole model on two GPUs). Only the implementation holds PerResource,
+	// so only the implementation can make that call per step. A caller passing a flag
+	// would be guessing at something the kernel can measure.
+	Expected time.Duration
+
 	// Bottleneck is the resource that did the most work over the step. It distinguishes
 	// "add GPUs" from "raise the batch size" as the next action, and the answer changes
 	// with batch size within one deployment.
