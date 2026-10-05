@@ -194,10 +194,17 @@ func (g *Graph) validateStack(p *validate.Problems) {
 		}
 	}
 	// Every declared kind should appear, or it prices nothing and is more likely a
-	// leftover than an intention.
+	// leftover than an intention. A kind the speculator's own stack uses counts as
+	// used: a draft module is a second stack over the same layer kinds, so a kind that
+	// only a speculator references (DeepSeek-V4-Pro's mtp_moe) is intentional, not a leftover.
 	used := map[string]bool{}
 	for _, id := range s.Expand() {
 		used[id] = true
+	}
+	if g.Speculator != nil {
+		for _, id := range g.Speculator.Stack.Expand() {
+			used[id] = true
+		}
 	}
 	for _, lk := range g.LayerKinds {
 		if !used[lk.ID] {
@@ -275,6 +282,15 @@ func (n Node) validate(p *validate.Problems, at string) {
 		if n.Op != OpAttention || n.AttentionKind != AttentionSparseMLA {
 			p.Field(at+".compress_ratio", "only priced by a sparse_mla attention node")
 		}
+	}
+
+	// index_topk selects a top-k of the latent cache, so like compress_ratio it belongs
+	// only on a sparse_mla attention node; a value set anywhere else is rejected. Its
+	// positivity and the index_topk-or-compress_ratio requirement are checked in the
+	// sparse-MLA branch below, so this guard only polices placement -- reporting the
+	// negative value there too would double-report the one in the branch.
+	if n.IndexTopK != 0 && (n.Op != OpAttention || n.AttentionKind != AttentionSparseMLA) {
+		p.Field(at+".index_topk", "only priced by a sparse_mla attention node")
 	}
 
 	switch n.Op {

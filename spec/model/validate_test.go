@@ -251,6 +251,68 @@ func TestCompressRatioAccumulatesProblems(t *testing.T) {
 	}
 }
 
+// index_topk, like compress_ratio, selects over the latent cache, so it is valid only on
+// a sparse_mla attention node and rejected on any other op or kind.
+func TestIndexTopKGating(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		node Node
+		ok   bool
+	}{
+		{"index_topk on a sparse_mla node is valid",
+			Node{Op: OpAttention, AttentionKind: AttentionSparseMLA,
+				NumQHeads: 128, NumKVHeads: 1, HeadDim: 512, IndexTopK: 1024}, true},
+		{"index_topk on a non-sparse_mla attention node is rejected",
+			Node{Op: OpAttention, AttentionKind: AttentionGQA,
+				NumQHeads: 48, NumKVHeads: 8, HeadDim: 64, IndexTopK: 1024}, false},
+		{"index_topk on a node whose op does not price it is rejected",
+			Node{Op: OpGEMM, N: 4096, K: 3072, IndexTopK: 1024}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := validGraph()
+			g.LayerKinds[0].Nodes[2] = tc.node
+			p := g.Validate()
+			if got := p.OK(); got != tc.ok {
+				t.Fatalf("OK() = %v, want %v: %v", got, tc.ok, p.Error())
+			}
+		})
+	}
+}
+
+// A layer kind the speculator's own stack uses is intentional, not a leftover, so it must
+// not draw the "declared but never used" warning; a kind used by neither stack still does.
+func TestSpeculatorLayerKindCountsAsUsed(t *testing.T) {
+	warned := func(g *Graph, id string) bool {
+		for _, it := range g.Validate().All() {
+			if strings.Contains(it.Message, `layer kind "`+id+`" is declared but never used`) {
+				return true
+			}
+		}
+		return false
+	}
+	// Start from the valid single-kind graph, add a kind only the speculator references.
+	base := func() *Graph {
+		g := validGraph()
+		draft := g.LayerKinds[0]
+		draft.ID = "draft"
+		g.LayerKinds = append(g.LayerKinds, draft)
+		g.Speculator = &Speculator{Method: "glm4_moe_mtp", NumSpec: 1,
+			Stack: Stack{Pattern: []string{"draft"}, Repeat: 1}}
+		return g
+	}
+	if warned(base(), "draft") {
+		t.Errorf("a layer kind used only by the speculator was flagged as unused")
+	}
+	// A kind used by neither the main stack nor the speculator is still flagged.
+	g := base()
+	orphan := g.LayerKinds[0]
+	orphan.ID = "orphan"
+	g.LayerKinds = append(g.LayerKinds, orphan)
+	if !warned(g, "orphan") {
+		t.Errorf("a genuinely unused layer kind was not flagged")
+	}
+}
+
 func TestLatentKVAndDTypeBytes(t *testing.T) {
 	for _, k := range []AttentionKind{AttentionMLA, AttentionSparseMLA} {
 		if !k.LatentKV() {
