@@ -264,10 +264,10 @@ func (n Node) validate(p *validate.Problems, at string) {
 
 	// The latent-read compression factor is meaningful only on a compressed sparse-MLA
 	// layer, so it is rejected on any other op or attention kind -- gated the same way as
-	// the other MLA-specific parameters -- and must be positive where it appears, since a
-	// zero or negative ratio compresses nothing. The two faults are independent, so a
-	// node that is both the wrong kind and non-positive reports both rather than masking
-	// one, matching the validator's report-every-problem contract.
+	// the other MLA-specific parameters. The field is optional (omitempty), so a zero is
+	// an absent value, not a declared one; a negative ratio is a mistake and is rejected.
+	// The wrong-kind and negative faults are independent, so a node that is both reports
+	// both rather than masking one, matching the validator's report-every-problem contract.
 	if n.CompressRatio != 0 {
 		if n.CompressRatio < 0 {
 			p.Field(at+".compress_ratio", "must be positive, got %d", n.CompressRatio)

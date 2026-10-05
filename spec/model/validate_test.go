@@ -186,7 +186,9 @@ func TestCompressRatio(t *testing.T) {
 	}{
 		{"positive on a sparse_mla node is valid", with(sparse(), 4), true},
 		{"absent is valid when index_topk carries the sparsity", sparse(), true},
-		{"non-positive on a sparse_mla node is rejected", with(sparse(), -1), false},
+		{"a negative value on a sparse_mla node is rejected", with(sparse(), -1), false},
+		{"an explicit zero is treated as absent (omitempty), so index_topk still carries it",
+			with(sparse(), 0), true},
 		// A sparse_mla layer must do at least one of top-k selection or latent
 		// compression; DeepSeek-V4-Pro ships one layer kind of each.
 		{"compress_ratio alone satisfies a sparse_mla node (csa128_moe)",
