@@ -328,3 +328,29 @@ func TestCompressRatioSurvivesAYAMLRoundTrip(t *testing.T) {
 		t.Errorf("a graph with no compressed stream emitted compress_ratio:\n%s", plain)
 	}
 }
+
+func TestWindowIsValidOnALatentKindThatRetainsOne(t *testing.T) {
+	// The contract the DeepSeek-V4 graphs rely on: a compressed-stream read keeps its
+	// sliding window, and an uncompressed draft layer keeps one with no compressed
+	// term. Asserted because "zero for other kinds" used to be the documented rule, and
+	// a reader checking the schema would have read these nodes as malformed.
+	for _, c := range []struct {
+		name  string
+		graph *Graph
+	}{
+		{"compressed stream with a window", sparseMLAGraph(128, 0, 128)},
+		{"windowed top-k selection", sparseMLAGraph(128, 1024, 4)},
+		{"uncompressed latent layer with a window", func() *Graph {
+			g := validGraph()
+			g.LayerKinds[0].Nodes[2] = Node{
+				Op: OpAttention, AttentionKind: AttentionMLA,
+				NumQHeads: 128, NumKVHeads: 1, HeadDim: 512, Window: 128,
+			}
+			return g
+		}()},
+	} {
+		if p := c.graph.Validate(); !p.OK() {
+			t.Errorf("%s was rejected:\n%s", c.name, p.Error())
+		}
+	}
+}

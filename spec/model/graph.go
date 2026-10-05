@@ -299,7 +299,11 @@ type Node struct {
 	// MLA-specific latent dimensions; zero for other kinds.
 	KVLoRARank    int `yaml:"kv_lora_rank,omitempty"`
 	QKRopeHeadDim int `yaml:"qk_rope_head_dim,omitempty"`
-	// SWA window, in tokens; zero for other kinds.
+	// Window is a sliding-window bound in tokens. It is REQUIRED on swa, and also
+	// valid on a latent kind that retains a window alongside another bound: a
+	// compressed-stream attention reads the union of its window and its compressed
+	// positions, so DeepSeek-V4 states both, and its uncompressed draft layer states a
+	// window with no compressed term at all. Zero means the read is not window-bounded.
 	Window int `yaml:"window,omitempty"`
 	// SparseMLA top-k index count; zero for other kinds.
 	IndexTopK int `yaml:"index_topk,omitempty"`
