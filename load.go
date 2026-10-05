@@ -92,9 +92,13 @@ func LoadCoefficientSet(path string) (*coefficient.Set, error) {
 }
 
 // LoadWorkload reads a traffic shape from blis-catalog's workloads namespace. The file
-// carries no name — identity is the filename, as with LoadChip and LoadFabric — so the
-// loader supplies it. The Shape type tags Name `yaml:"-"`, so the stamp is the field's
-// only source: there is no in-file name to prefer, hence no `if Name == ""` guard.
+// carries no name — identity is the filename — so the loader stamps Shape.Name from the
+// path stem. The Shape type tags Name `yaml:"-"`, so the stamp is the field's only
+// source: there is no in-file name to prefer, hence no `if Name == ""` guard, and an
+// in-file `name` is rejected under strict decode. This TIGHTENS the by-filename rule that
+// LoadChip/LoadFabric only partly enforce — they keep a `yaml:"name"` tag and an empty-name
+// guard that still accept an in-file name — rather than matching them; aligning chips and
+// fabrics is tracked as #27.
 func LoadWorkload(path string) (*workload.Shape, error) {
 	var w workload.Shape
 	if err := decodeStrict(path, &w); err != nil {
