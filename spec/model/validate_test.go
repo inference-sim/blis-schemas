@@ -1,6 +1,11 @@
 package model
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"gopkg.in/yaml.v3"
+)
 
 // validGraph is a Granite-shaped uniform MoE stack: 224 experts, GQA attention,
 // one layer kind repeated. Each negative test mutates one field of a copy, so a
@@ -225,5 +230,101 @@ func TestPerNodeWeightDType(t *testing.T) {
 				t.Fatalf("OK() = %v, want %v: %v", got, tc.ok, p.Error())
 			}
 		})
+	}
+}
+
+// sparseMLAGraph is a DeepSeek-V4-shaped layer: a compressed-stream latent read that
+// keeps its sliding window. The read set is the union of the window and the compressed
+// positions, so a node states both rather than choosing between them.
+func sparseMLAGraph(window, topK, ratio int) *Graph {
+	g := validGraph()
+	g.LayerKinds[0].Nodes[2] = Node{
+		Op: OpAttention, AttentionKind: AttentionSparseMLA,
+		NumQHeads: 128, NumKVHeads: 1, HeadDim: 512,
+		Window: window, IndexTopK: topK, CompressRatio: ratio,
+	}
+	return g
+}
+
+func TestCompressRatioBoundsASparseLatentRead(t *testing.T) {
+	// A top-k selection over a compressed stream: DeepSeek-V4's ratio-4 layers.
+	if p := sparseMLAGraph(128, 1024, 4).Validate(); !p.OK() {
+		t.Errorf("a windowed top-k sparse MLA layer was rejected:\n%s", p.Error())
+	}
+	// A compressed stream with NO top-k: the ratio-128 layers, whose read is
+	// context/128 and which select nothing. Requiring index_topk would reject this.
+	if p := sparseMLAGraph(128, 0, 128).Validate(); !p.OK() {
+		t.Errorf("a compressed-stream layer with no top-k was rejected:\n%s", p.Error())
+	}
+	// An uncompressed latent layer, which is what a draft module runs.
+	if p := sparseMLAGraph(128, 1024, 1).Validate(); !p.OK() {
+		t.Errorf("a ratio-1 layer was rejected:\n%s", p.Error())
+	}
+}
+
+func TestCompressRatioRejections(t *testing.T) {
+	cases := []struct {
+		name  string
+		graph *Graph
+	}{
+		// The rule this field relaxed must still fire when NEITHER bound is stated:
+		// a sparse latent read bounded by nothing describes no real layer.
+		{"sparse MLA with neither index_topk nor compress_ratio",
+			sparseMLAGraph(128, 0, 0)},
+		{"negative compress_ratio", sparseMLAGraph(128, 1024, -4)},
+		// A ratio on a kind that reads no latent stream is a field sizing nothing.
+		{"compress_ratio on GQA", func() *Graph {
+			g := validGraph()
+			g.LayerKinds[0].Nodes[2].CompressRatio = 4
+			return g
+		}()},
+		{"compress_ratio on SWA", func() *Graph {
+			g := validGraph()
+			g.LayerKinds[0].Nodes[2] = Node{
+				Op: OpAttention, AttentionKind: AttentionSWA,
+				NumQHeads: 48, NumKVHeads: 8, HeadDim: 64,
+				Window: 128, CompressRatio: 4,
+			}
+			return g
+		}()},
+	}
+	for _, c := range cases {
+		if p := c.graph.Validate(); p.OK() {
+			t.Errorf("%s: accepted, but it should be rejected", c.name)
+		}
+	}
+}
+
+func TestCompressRatioSurvivesAYAMLRoundTrip(t *testing.T) {
+	// The field has to reach a consumer through YAML, which is how a catalog graph is
+	// actually read. A field present in the struct but missing its yaml tag would pass
+	// every test above and still arrive as zero.
+	in := sparseMLAGraph(128, 0, 128)
+	blob, err := yaml.Marshal(in)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(blob), "compress_ratio: 128") {
+		t.Errorf("compress_ratio did not serialize; got:\n%s", blob)
+	}
+	var out Graph
+	if err := yaml.Unmarshal(blob, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	n := out.LayerKinds[0].Nodes[2]
+	if n.CompressRatio != 128 {
+		t.Errorf("compress_ratio = %d after a round trip, want 128", n.CompressRatio)
+	}
+	if n.Window != 128 {
+		t.Errorf("window = %d after a round trip, want 128", n.Window)
+	}
+	// An uncompressed node must not emit the field at all, or every existing graph
+	// would gain a zero-valued key.
+	plain, err := yaml.Marshal(validGraph())
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(plain), "compress_ratio") {
+		t.Errorf("a graph with no compressed stream emitted compress_ratio:\n%s", plain)
 	}
 }

@@ -303,6 +303,18 @@ type Node struct {
 	Window int `yaml:"window,omitempty"`
 	// SparseMLA top-k index count; zero for other kinds.
 	IndexTopK int `yaml:"index_topk,omitempty"`
+	// CompressRatio is the factor by which a compressed-stream attention reduces the
+	// positions it reads: the compressed term is context/CompressRatio, so a larger
+	// ratio bounds the read tighter. It is NOT an alternative to Window -- an
+	// implementation that compresses still retains its sliding window, and the read
+	// set is the union of the two -- so a node states both. Zero means the kind reads
+	// no compressed stream.
+	//
+	// It is a ratio rather than a token count because the term it describes is
+	// context-dependent: DeepSeek-V4's ratio-128 layers read context/128 compressed
+	// positions, which no fixed Window or IndexTopK can express. A ratio of 1 is an
+	// uncompressed layer, which is what a draft module uses.
+	CompressRatio int `yaml:"compress_ratio,omitempty"`
 
 	// RecurrentUpdate.
 	RecurrentKind    RecurrentKind `yaml:"recurrent_kind,omitempty"`

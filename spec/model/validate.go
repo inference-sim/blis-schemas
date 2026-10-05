@@ -312,8 +312,21 @@ func (n Node) validate(p *validate.Problems, at string) {
 		if n.AttentionKind == AttentionSWA && n.Window < 1 {
 			p.Field(at+".window", "sliding-window attention requires a positive window")
 		}
-		if n.AttentionKind == AttentionSparseMLA && n.IndexTopK < 1 {
-			p.Field(at+".index_topk", "sparse MLA requires a positive index_topk")
+		if n.AttentionKind == AttentionSparseMLA && n.IndexTopK < 1 &&
+			n.CompressRatio < 1 {
+			// A sparse latent read is bounded either by a top-k selection or by a
+			// compressed stream. DeepSeek-V4's ratio-128 layers use the second with no
+			// top-k at all, so requiring index_topk alone would reject a real layer.
+			p.Field(at+".index_topk",
+				"sparse MLA requires a positive index_topk or compress_ratio")
+		}
+		if n.CompressRatio < 0 {
+			p.Field(at+".compress_ratio", "must not be negative")
+		}
+		if n.CompressRatio > 0 && !n.AttentionKind.LatentKV() {
+			p.Field(at+".compress_ratio",
+				"stated on %s, which reads no compressed latent stream",
+				n.AttentionKind)
 		}
 		forbid(p, at, map[string]int{"experts": n.Experts, "state_size": n.StateSize})
 	case OpRecurrentUpdate:
