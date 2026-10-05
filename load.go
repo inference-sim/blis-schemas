@@ -91,12 +91,16 @@ func LoadCoefficientSet(path string) (*coefficient.Set, error) {
 	return &s, nil
 }
 
-// LoadWorkload reads a traffic shape from blis-catalog's workloads namespace.
+// LoadWorkload reads a traffic shape from blis-catalog's workloads namespace. The file
+// carries no name — identity is the filename, as with LoadChip and LoadFabric — so the
+// loader supplies it. The Shape type tags Name `yaml:"-"`, so the stamp is the field's
+// only source: there is no in-file name to prefer, hence no `if Name == ""` guard.
 func LoadWorkload(path string) (*workload.Shape, error) {
 	var w workload.Shape
 	if err := decodeStrict(path, &w); err != nil {
 		return nil, err
 	}
+	w.Name = stem(path)
 	return &w, nil
 }
 

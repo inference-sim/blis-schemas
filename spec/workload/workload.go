@@ -16,7 +16,16 @@ import "sort"
 
 // Shape is one traffic class. Token counts are per request.
 type Shape struct {
-	Name string `yaml:"name"`
+	// Name is the shape's identity, and it is a filename fact, not a file field — the
+	// same convention LoadChip and LoadFabric follow: the loader stamps it from the path
+	// stem, so a workload is referred to by the name of its file and nothing inside the
+	// file can disagree. The `yaml:"-"` tag drops it from the file contract entirely:
+	// without it yaml.v3 would still bind a `name` key here by the field's lowercased
+	// name, re-introducing the second source of truth this removes (and, under strict
+	// decoding, an in-file `name` is now an unknown field and is rejected). Validate still
+	// requires it, so a Shape reaching a cost model without one is an error — it just
+	// cannot originate from the file.
+	Name string `yaml:"-"`
 
 	// PrefixTokens is the shared prefix length, which becomes the cached fraction a
 	// cost model consumes. Zero means no sharing.
