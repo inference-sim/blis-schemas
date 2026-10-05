@@ -30,6 +30,14 @@ jobs:
   # Until something parses those files the tags are untested: a misspelled tag
   # compiles, validates, and silently drops the field it was meant to read. Every
   # committed file in both repositories failed to parse when this job was first added.
+  #
+  # The artifacts are VENDORED under testdata/ rather than checked out here. This
+  # repository takes no dependency, not even a test dependency, on another repository's
+  # current state: those move independently, so a job that checked out their main
+  # branches would fail for reasons unrelated to any schema change -- and did, when the
+  # registry dropped a coefficient set and the expected warning count became correct
+  # against one tree and wrong against the other. testdata/refresh.sh updates the
+  # snapshot, and the diff is the record of what this schema is known to accept.
   parse-committed-data:
     runs-on: ubuntu-latest
     steps:
@@ -37,21 +45,18 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.24'
-      - uses: actions/checkout@v4
-        with:
-          repository: inference-sim/blis-catalog
-          path: blis-catalog
-          fetch-depth: 1
-      - uses: actions/checkout@v4
-        with:
-          repository: inference-sim/blis-registry
-          path: blis-registry
-          fetch-depth: 1
-      - name: parse every committed catalog and registry file
-        env:
-          BLIS_CATALOG: ${{ github.workspace }}/blis-catalog
-          BLIS_REGISTRY: ${{ github.workspace }}/blis-registry
-        run: go test -v -run 'LoadCatalog|LoadRegistry' .
+      - name: parse and validate every vendored catalog and registry file
+        # Parsing is the tag contract; validating is the schema contract. The
+        # EveryCommitted/EveryDerived tests were previously excluded by this filter
+        # AND pinned to a developer's home directory, so the only check that loads
+        # every ModelGraph through the published entry point ran nowhere.
+        run: go test -v -run 'LoadCatalog|LoadRegistry|EveryCommitted|EveryDerived' .
+
+      - name: validate the vendored graphs through the published binary
+        # The same binary blis-catalog's CI invokes against itself, exercised here so
+        # a schema change that rejects known-good catalog data fails in THIS
+        # repository, where the change is being made, rather than downstream.
+        run: go run ./cmd/validate-catalog testdata/catalog
 
   # The rules packs transcribe one engine release's configuration surface by hand.
   # These tests re-derive those constants from a checkout and fail on any divergence:

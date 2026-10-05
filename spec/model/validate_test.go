@@ -354,3 +354,45 @@ func TestWindowIsValidOnALatentKindThatRetainsOne(t *testing.T) {
 		}
 	}
 }
+
+func TestADraftOnlyLayerKindIsNotReportedAsUnused(t *testing.T) {
+	// A draft module whose structure no target layer shares declares its own kind, and
+	// it is reached through speculator.stack rather than the target stack.
+	// DeepSeek-V4-Pro is the real case: its MTP layer is uncompressed where every
+	// target layer is compressed, so reusing a target kind would price the wrong read.
+	g := validGraph()
+	draft := g.LayerKinds[0]
+	draft.ID = "mtp_moe"
+	g.LayerKinds = append(g.LayerKinds, draft)
+	g.Speculator = &Speculator{
+		Method:  "deepseek_mtp",
+		NumSpec: 1,
+		Stack:   Stack{Pattern: []string{"mtp_moe"}, Repeat: 1},
+	}
+	rep := g.Validate()
+	if !rep.OK() {
+		t.Fatalf("a draft-only layer kind was rejected:\n%s", rep.Error())
+	}
+	for _, problem := range rep.All() {
+		if strings.Contains(problem.String(), "mtp_moe") {
+			t.Errorf("the draft kind was reported as unused: %s", problem.String())
+		}
+	}
+}
+
+func TestAGenuinelyUnusedLayerKindIsStillReported(t *testing.T) {
+	// The negative case: widening the reachability rule must not make it vacuous.
+	g := validGraph()
+	orphan := g.LayerKinds[0]
+	orphan.ID = "orphan"
+	g.LayerKinds = append(g.LayerKinds, orphan)
+	found := false
+	for _, problem := range g.Validate().All() {
+		if strings.Contains(problem.String(), "orphan") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("a layer kind reached by neither stack went unreported")
+	}
+}

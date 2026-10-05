@@ -195,13 +195,26 @@ func (g *Graph) validateStack(p *validate.Problems) {
 	}
 	// Every declared kind should appear, or it prices nothing and is more likely a
 	// leftover than an intention.
+	//
+	// The SPECULATOR's draft stack counts as use. A draft module whose structure no
+	// target layer shares declares its own kind -- DeepSeek-V4's MTP layer is
+	// uncompressed where every target layer is compressed -- and that kind is reached
+	// through speculator.stack, never through the target stack. Counting only the
+	// target stack reported such a kind as dead, which is the opposite of true: it is
+	// the one kind a draft pass runs.
 	used := map[string]bool{}
 	for _, id := range s.Expand() {
 		used[id] = true
 	}
+	if g.Speculator != nil {
+		for _, id := range g.Speculator.Stack.Expand() {
+			used[id] = true
+		}
+	}
 	for _, lk := range g.LayerKinds {
 		if !used[lk.ID] {
-			p.Warnf("layer kind %q is declared but never used by the stack", lk.ID)
+			p.Warnf("layer kind %q is declared but used by neither the stack nor the "+
+				"speculator", lk.ID)
 		}
 	}
 }
