@@ -12,11 +12,12 @@ import (
 // schema capability it exercises, so a failure says which capability was lost rather
 // than only which model broke.
 //
-// Eight families cover the catalog's twenty-three models: dense attention (Llama,
+// Nine families cover the catalog's thirty-two models: dense attention (Llama,
 // Mistral, Qwen3, Yi, CodeLlama), sliding-window (Qwen2.5), routed MoE (Mixtral,
 // Qwen3-MoE, Llama-4), latent-attention MoE (DeepSeek-V2-Lite), latent MoE with
-// sparse indexing (GLM-5.x), latent plus linear attention (Kimi-K3), state-space
-// plus MoE (NemotronH), and sliding-window MoE (Inkling).
+// sparse indexing (GLM-5.x), compressed sparse-MLA MoE (DeepSeek-V4-Pro), latent
+// plus linear attention (Kimi-K3), state-space plus MoE (NemotronH), and
+// sliding-window MoE (Inkling).
 
 func derivation(path string) model.Derivation {
 	d := model.Derivation{Format: "hf_config_json", Path: path, DeriverVersion: 1}
@@ -270,6 +271,37 @@ func inkling() *model.Graph {
 	return g
 }
 
+// deepseekV4Pro is the DeepSeek-V4-Pro shape: compressed sparse-MLA attention over an
+// MoE stack. One layer kind both selects a top-k of the latent cache and compresses it
+// (csa4_moe: index_topk and compress_ratio 4); the other compresses heavily with no
+// top-k selection (csa128_moe: compress_ratio 128, no index_topk) — the compress-only
+// sparse-MLA shape this schema gained CompressRatio to express.
+func deepseekV4Pro() *model.Graph {
+	moe := func(attn model.Node) []model.Node {
+		return []model.Node{
+			{Op: model.OpElementwise, Role: "input_norm"},
+			attn,
+			{Op: model.OpGroupedGEMM, Role: "experts", N: 2048, K: 7168,
+				Experts: 256, TopK: 8, SharedExperts: 1, SharedIntermediateSize: 2048},
+			{Op: model.OpAll2All, Role: "moe", Emit: model.EmitExpertParallel},
+		}
+	}
+	edges := [][2]int{{0, 1}, {1, 2}, {2, 3}}
+	csa4 := model.LayerKind{ID: "csa4_moe", Nodes: moe(model.Node{
+		Op: model.OpAttention, AttentionKind: model.AttentionSparseMLA,
+		NumQHeads: 128, NumKVHeads: 1, HeadDim: 512, QKRopeHeadDim: 64,
+		IndexTopK: 1024, CompressRatio: 4}), Edges: edges}
+	csa128 := model.LayerKind{ID: "csa128_moe", Nodes: moe(model.Node{
+		Op: model.OpAttention, AttentionKind: model.AttentionSparseMLA,
+		NumQHeads: 128, NumKVHeads: 1, HeadDim: 512, QKRopeHeadDim: 64,
+		CompressRatio: 128}), Edges: edges}
+	return graph("deepseek-v4-pro", 7168, 129280, model.DTypeFP8,
+		[]model.LayerKind{csa128, csa4},
+		// A csa128 prologue, then csa128/csa4 pairs repeated: 1 + 2*30 = 61 layers.
+		model.Stack{Prologue: []string{"csa128_moe"},
+			Pattern: []string{"csa128_moe", "csa4_moe"}, Repeat: 30})
+}
+
 // TestCatalogArchitectureFamiliesAreExpressible walks every family in the catalog.
 func TestCatalogArchitectureFamiliesAreExpressible(t *testing.T) {
 	cases := []struct {
@@ -286,6 +318,7 @@ func TestCatalogArchitectureFamiliesAreExpressible(t *testing.T) {
 		{"a non-periodic layer vector stated literally, latent MoE", nemotronH(), 108},
 		{"the same architecture at a narrower weight dtype", nemotronNVFP4(), 108},
 		{"sliding-window and full attention with shared experts", inkling(), 66},
+		{"compress-only and top-k-plus-compress sparse-MLA (DeepSeek-V4-Pro)", deepseekV4Pro(), 61},
 	}
 	for _, c := range cases {
 		t.Run(c.capability, func(t *testing.T) {
