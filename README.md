@@ -53,7 +53,9 @@ those from real ones.
 
 ```
 vocab/              closed vocabularies: units, methods, scope keys, provenance
-spec/model/         a model as a DAG of cost primitives
+spec/model/         a model as a DAG of cost primitives (the ModelGraph type; the
+                    catalog's models/<name>/graph.yaml are its instances, generated
+                    from a vendor config.json by the catalog's derive_graph.py)
 spec/hardware/      chip, fabric, storage device — three schemas, not one
 spec/coefficient/   coefficient sets, mirroring blis-registry's contract
 spec/scenario/      a deployment: model, hardware, layout, engine settings
