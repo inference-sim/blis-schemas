@@ -164,6 +164,54 @@ func TestRecurrentNodeRequirements(t *testing.T) {
 	}
 }
 
+// CompressRatio is the sparse-MLA latent-read compression factor DeepSeek-V4-Pro's
+// csa4_moe/csa128_moe layers carry. It is valid only on a sparse_mla attention node
+// and must be positive, the same way the other MLA-specific parameters are gated to
+// their kind. These check it is governed rather than merely accepted.
+func TestCompressRatio(t *testing.T) {
+	// A sparse_mla node that already satisfies its kind's other requirements, so each
+	// case below isolates the compress_ratio rule rather than tripping another.
+	sparse := func() Node {
+		return Node{Op: OpAttention, AttentionKind: AttentionSparseMLA,
+			NumQHeads: 128, NumKVHeads: 1, HeadDim: 512, IndexTopK: 1024}
+	}
+	with := func(n Node, r int) Node { n.CompressRatio = r; return n }
+	for _, tc := range []struct {
+		name string
+		node Node
+		ok   bool
+	}{
+		{"positive on a sparse_mla node is valid", with(sparse(), 4), true},
+		{"absent is valid when index_topk carries the sparsity", sparse(), true},
+		{"non-positive on a sparse_mla node is rejected", with(sparse(), -1), false},
+		// A sparse_mla layer must do at least one of top-k selection or latent
+		// compression; DeepSeek-V4-Pro ships one layer kind of each.
+		{"compress_ratio alone satisfies a sparse_mla node (csa128_moe)",
+			Node{Op: OpAttention, AttentionKind: AttentionSparseMLA,
+				NumQHeads: 128, NumKVHeads: 1, HeadDim: 512, CompressRatio: 128}, true},
+		{"index_topk alone satisfies a sparse_mla node (csa4_moe)",
+			Node{Op: OpAttention, AttentionKind: AttentionSparseMLA,
+				NumQHeads: 128, NumKVHeads: 1, HeadDim: 512, IndexTopK: 1024}, true},
+		{"a sparse_mla node with neither is rejected",
+			Node{Op: OpAttention, AttentionKind: AttentionSparseMLA,
+				NumQHeads: 128, NumKVHeads: 1, HeadDim: 512}, false},
+		{"on a non-sparse_mla attention node is rejected",
+			Node{Op: OpAttention, AttentionKind: AttentionGQA,
+				NumQHeads: 48, NumKVHeads: 8, HeadDim: 64, CompressRatio: 4}, false},
+		{"on a node whose op does not price it is rejected",
+			Node{Op: OpGEMM, N: 4096, K: 3072, CompressRatio: 4}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := validGraph()
+			g.LayerKinds[0].Nodes[2] = tc.node
+			p := g.Validate()
+			if got := p.OK(); got != tc.ok {
+				t.Fatalf("OK() = %v, want %v: %v", got, tc.ok, p.Error())
+			}
+		})
+	}
+}
+
 func TestLatentKVAndDTypeBytes(t *testing.T) {
 	for _, k := range []AttentionKind{AttentionMLA, AttentionSparseMLA} {
 		if !k.LatentKV() {

@@ -262,6 +262,19 @@ func (n Node) validate(p *validate.Problems, at string) {
 		}
 	}
 
+	// The latent-read compression factor is meaningful only on a compressed sparse-MLA
+	// layer, so it is rejected on any other op or attention kind -- gated the same way as
+	// the other MLA-specific parameters -- and must be positive where it appears, since a
+	// zero or negative ratio compresses nothing.
+	if n.CompressRatio != 0 {
+		switch {
+		case n.CompressRatio < 0:
+			p.Field(at+".compress_ratio", "must be positive, got %d", n.CompressRatio)
+		case n.Op != OpAttention || n.AttentionKind != AttentionSparseMLA:
+			p.Field(at+".compress_ratio", "only priced by a sparse_mla attention node")
+		}
+	}
+
 	switch n.Op {
 	case OpGEMM:
 		requirePositive(p, at, "n", n.N)
@@ -312,8 +325,14 @@ func (n Node) validate(p *validate.Problems, at string) {
 		if n.AttentionKind == AttentionSWA && n.Window < 1 {
 			p.Field(at+".window", "sliding-window attention requires a positive window")
 		}
-		if n.AttentionKind == AttentionSparseMLA && n.IndexTopK < 1 {
-			p.Field(at+".index_topk", "sparse MLA requires a positive index_topk")
+		// A sparse-MLA layer must do at least one of the two things that make it sparse:
+		// select a top-k of the latent cache (index_topk) or compress the latent read
+		// (compress_ratio). DeepSeek-V4-Pro ships both shapes -- csa4_moe selects a top-k
+		// and lightly compresses, csa128_moe compresses heavily with no top-k selection --
+		// so requiring index_topk unconditionally would reject a layer the catalog ships.
+		if n.AttentionKind == AttentionSparseMLA && n.IndexTopK < 1 && n.CompressRatio < 1 {
+			p.Field(at+".index_topk",
+				"sparse MLA requires a positive index_topk or compress_ratio")
 		}
 		forbid(p, at, map[string]int{"experts": n.Experts, "state_size": n.StateSize})
 	case OpRecurrentUpdate:
