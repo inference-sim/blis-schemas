@@ -437,9 +437,10 @@ func TestLayerCountsMatchTheCommittedConfigurations(t *testing.T) {
 		"kimi-k3":                         93,
 		"nemotron-3-ultra-550b-a55b-bf16": 108,
 		"inkling":                         66,
+		"deepseek-v4-pro":                 61,
 	}
 	for _, g := range []*model.Graph{dense(), slidingWindow(), routedMoE(),
-		latentMoE(), glm53(), kimiK3(), nemotronH(), inkling()} {
+		latentMoE(), glm53(), kimiK3(), nemotronH(), inkling(), deepseekV4Pro()} {
 		exp, ok := want[g.Name]
 		if !ok {
 			t.Errorf("%s has no expected layer count", g.Name)
