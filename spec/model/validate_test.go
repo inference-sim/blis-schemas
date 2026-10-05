@@ -1,6 +1,9 @@
 package model
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // validGraph is a Granite-shaped uniform MoE stack: 224 experts, GQA attention,
 // one layer kind repeated. Each negative test mutates one field of a copy, so a
@@ -195,6 +198,11 @@ func TestCompressRatio(t *testing.T) {
 		{"a sparse_mla node with neither is rejected",
 			Node{Op: OpAttention, AttentionKind: AttentionSparseMLA,
 				NumQHeads: 128, NumKVHeads: 1, HeadDim: 512}, false},
+		// A positive compress_ratio must not mask a negative index_topk: a negative
+		// count is a mistake, not a compress-only layer.
+		{"a negative index_topk is rejected even with a valid compress_ratio",
+			Node{Op: OpAttention, AttentionKind: AttentionSparseMLA,
+				NumQHeads: 128, NumKVHeads: 1, HeadDim: 512, IndexTopK: -5, CompressRatio: 4}, false},
 		{"on a non-sparse_mla attention node is rejected",
 			Node{Op: OpAttention, AttentionKind: AttentionGQA,
 				NumQHeads: 48, NumKVHeads: 8, HeadDim: 64, CompressRatio: 4}, false},
@@ -209,6 +217,30 @@ func TestCompressRatio(t *testing.T) {
 				t.Fatalf("OK() = %v, want %v: %v", got, tc.ok, p.Error())
 			}
 		})
+	}
+}
+
+// A node that is both the wrong op for compress_ratio and carries a non-positive
+// value must report both faults rather than masking one, matching the validator's
+// report-every-problem contract.
+func TestCompressRatioAccumulatesProblems(t *testing.T) {
+	g := validGraph()
+	g.LayerKinds[0].Nodes[2] = Node{Op: OpGEMM, N: 4096, K: 3072, CompressRatio: -1}
+	var positive, wrongKind bool
+	for _, e := range g.Validate().Errors() {
+		if e.Path != "layer_kinds[0].nodes[2].compress_ratio" {
+			continue
+		}
+		switch {
+		case strings.Contains(e.Message, "must be positive"):
+			positive = true
+		case strings.Contains(e.Message, "only priced by"):
+			wrongKind = true
+		}
+	}
+	if !positive || !wrongKind {
+		t.Fatalf("want both the positivity and the wrong-op problems, got positive=%v wrongKind=%v:\n%s",
+			positive, wrongKind, g.Validate().Error())
 	}
 }
 
