@@ -208,8 +208,13 @@ func TestCompressRatio(t *testing.T) {
 		{"on a non-sparse_mla attention node is rejected",
 			Node{Op: OpAttention, AttentionKind: AttentionGQA,
 				NumQHeads: 48, NumKVHeads: 8, HeadDim: 64, CompressRatio: 4}, false},
-		{"on a node whose op does not price it is rejected",
+		{"a set (nonzero) value on a node whose op does not price it is rejected",
 			Node{Op: OpGEMM, N: 4096, K: 3072, CompressRatio: 4}, false},
+		// omitempty makes a zero indistinguishable from an absent field, so an explicit
+		// compress_ratio: 0 is an unset value and does not make a GEMM invalid -- the same
+		// convention index_topk and every other optional shape field follows.
+		{"an unset (zero) value on a node whose op does not price it is accepted",
+			Node{Op: OpGEMM, N: 4096, K: 3072, CompressRatio: 0}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			g := validGraph()
