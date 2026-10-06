@@ -1,382 +1,315 @@
 package blisschemas
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/inference-sim/blis-schemas/spec/model"
 )
 
 // This suite asserts that the model schema expresses every architecture family in
-// blis-catalog, not only the three the design documents work through. The shapes
-// below are taken from the committed vendor configurations; each case names the
-// schema capability it exercises, so a failure says which capability was lost rather
-// than only which model broke.
+// blis-catalog, and that no schema capability a family needs has silently lost its last
+// exerciser. It reads the vendored catalog snapshot under testdata/ (committed by #23)
+// rather than hand-transcribed Go literals.
 //
-// Nine families cover the catalog's thirty-two models: dense attention (Llama,
-// Mistral, Qwen3, Yi, CodeLlama), sliding-window (Qwen2.5), routed MoE (Mixtral,
-// Qwen3-MoE, Llama-4), latent-attention MoE (DeepSeek-V2-Lite), latent MoE with
-// sparse indexing (GLM-5.x), compressed sparse-MLA MoE (DeepSeek-V4-Pro), latent
-// plus linear attention (Kimi-K3), state-space plus MoE (NemotronH), and
-// sliding-window MoE (Inkling).
-
-func derivation(path string) model.Derivation {
-	d := model.Derivation{Format: "hf_config_json", Path: path, DeriverVersion: 1}
-	for i := 0; i < 64; i++ {
-		d.SHA256 += "d"
-	}
-	return d
-}
-
-func graph(name string, hidden, vocab int, dt model.DType,
-	kinds []model.LayerKind, stack model.Stack) *model.Graph {
-	return &model.Graph{
-		Kind: "ModelGraph", Name: name, DerivedFrom: derivation("config.json"),
-		Global: model.GlobalShape{HiddenSize: hidden, VocabSize: vocab,
-			WeightDType: dt},
-		LayerKinds: kinds, Stack: stack,
-	}
-}
-
-// dense is the Llama/Mistral/Qwen3/Yi shape: GQA attention and a dense MLP.
-func dense() *model.Graph {
-	return graph("llama-3.1-70b-instruct", 8192, 128256, model.DTypeBF16,
-		[]model.LayerKind{{ID: "dense", Nodes: []model.Node{
-			{Op: model.OpElementwise, Role: "input_norm"},
-			{Op: model.OpGEMM, Role: "qkv_proj", N: 10240, K: 8192},
-			{Op: model.OpAttention, AttentionKind: model.AttentionGQA,
-				NumQHeads: 64, NumKVHeads: 8, HeadDim: 128},
-			{Op: model.OpGEMM, Role: "o_proj", N: 8192, K: 8192},
-			{Op: model.OpAllReduce, Role: "attn_out", Emit: model.EmitTensorParallel},
-			{Op: model.OpGEMM, Role: "mlp_gate_up", N: 57344, K: 8192},
-			{Op: model.OpGEMM, Role: "mlp_down", N: 8192, K: 28672},
-			{Op: model.OpAllReduce, Role: "mlp_out", Emit: model.EmitTensorParallel},
-		}, Edges: [][2]int{{0, 1}, {1, 2}, {2, 3}, {3, 4}, {4, 5}, {5, 6}, {6, 7}}}},
-		model.Stack{Pattern: []string{"dense"}, Repeat: 80})
-}
-
-// slidingWindow is the Qwen2.5 shape: the same as dense, with a bounded per-token
-// read rather than a context-length one.
-func slidingWindow() *model.Graph {
-	g := dense()
-	g.Name = "qwen2.5-7b-instruct"
-	g.Global = model.GlobalShape{HiddenSize: 3584, VocabSize: 152064,
-		WeightDType: model.DTypeBF16}
-	g.LayerKinds[0].Nodes[2] = model.Node{Op: model.OpAttention,
-		AttentionKind: model.AttentionSWA, NumQHeads: 28, NumKVHeads: 4,
-		HeadDim: 128, Window: 131072}
-	g.Stack = model.Stack{Pattern: []string{"dense"}, Repeat: 28}
-	return g
-}
-
-// routedMoE is the Mixtral/Qwen3-MoE shape: a routed expert layer, no shared expert.
-func routedMoE() *model.Graph {
-	return graph("mixtral-8x7b-v0.1", 4096, 32000, model.DTypeBF16,
-		[]model.LayerKind{{ID: "moe", Nodes: []model.Node{
-			{Op: model.OpElementwise, Role: "input_norm"},
-			{Op: model.OpAttention, AttentionKind: model.AttentionGQA,
-				NumQHeads: 32, NumKVHeads: 8, HeadDim: 128},
-			{Op: model.OpGroupedGEMM, Role: "experts", N: 14336, K: 4096,
-				Experts: 8, TopK: 2},
-			{Op: model.OpAll2All, Role: "moe", Emit: model.EmitExpertParallel},
-		}, Edges: [][2]int{{0, 1}, {1, 2}, {2, 3}}}},
-		model.Stack{Pattern: []string{"moe"}, Repeat: 32})
-}
-
-// latentMoE is the DeepSeek-V2-Lite shape: latent attention with shared experts.
-func latentMoE() *model.Graph {
-	return graph("deepseek-v2-lite", 2048, 102400, model.DTypeBF16,
-		[]model.LayerKind{{ID: "mla_moe", Nodes: []model.Node{
-			{Op: model.OpElementwise, Role: "input_norm"},
-			{Op: model.OpAttention, AttentionKind: model.AttentionMLA,
-				NumQHeads: 16, NumKVHeads: 1, HeadDim: 576,
-				KVLoRARank: 512, QKRopeHeadDim: 64},
-			{Op: model.OpGroupedGEMM, Role: "experts", N: 1408, K: 2048,
-				Experts: 64, TopK: 6, SharedExperts: 2,
-				SharedIntermediateSize: 2816},
-			{Op: model.OpAll2All, Role: "moe", Emit: model.EmitExpertParallel},
-		}, Edges: [][2]int{{0, 1}, {1, 2}, {2, 3}}}},
-		model.Stack{Pattern: []string{"mla_moe"}, Repeat: 27})
-}
-
-// glm53 is the GLM-5.3 shape: latent attention with a sparse index, a shared expert,
-// and dense layers before the sparse ones — so the stack has two kinds.
-func glm53() *model.Graph {
-	sparseAttn := model.Node{Op: model.OpAttention,
-		AttentionKind: model.AttentionSparseMLA, NumQHeads: 64, NumKVHeads: 1,
-		HeadDim: 192, KVLoRARank: 512, QKRopeHeadDim: 64, IndexTopK: 2048}
-	denseLayer := model.LayerKind{ID: "mla_dense", Nodes: []model.Node{
-		{Op: model.OpElementwise, Role: "input_norm"},
-		sparseAttn,
-		{Op: model.OpGEMM, Role: "mlp_gate_up", N: 32768, K: 6144},
-		{Op: model.OpGEMM, Role: "mlp_down", N: 6144, K: 16384},
-		{Op: model.OpAllReduce, Role: "mlp_out", Emit: model.EmitTensorParallel},
-	}, Edges: [][2]int{{0, 1}, {1, 2}, {2, 3}, {3, 4}}}
-	sparseLayer := model.LayerKind{ID: "mla_sparse", Nodes: []model.Node{
-		{Op: model.OpElementwise, Role: "input_norm"},
-		sparseAttn,
-		{Op: model.OpGroupedGEMM, Role: "experts", N: 2048, K: 6144,
-			Experts: 256, TopK: 8, SharedExperts: 1, SharedIntermediateSize: 2048},
-		{Op: model.OpAll2All, Role: "moe", Emit: model.EmitExpertParallel},
-	}, Edges: [][2]int{{0, 1}, {1, 2}, {2, 3}}}
-	g := graph("glm-5.3", 6144, 151552, model.DTypeBF16,
-		[]model.LayerKind{denseLayer, sparseLayer},
-		// Three dense layers, then sparse throughout: expressed as a leading
-		// pattern would need a prologue, so the repeated unit carries both.
-		// Three dense layers then seventy-five sparse: a prologue, because the
-		// sequence has no repeating unit that includes the dense run.
-		model.Stack{Prologue: []string{"mla_dense", "mla_dense", "mla_dense"},
-			Pattern: []string{"mla_sparse"}, Repeat: 75})
-	g.Speculator = &model.Speculator{Method: "glm4_moe_mtp", NumSpec: 1,
-		Stack: model.Stack{Pattern: []string{"mla_sparse"}, Repeat: 1}}
-	return g
-}
-
-// kimiK3 is the Kimi-K3 shape: linear attention on most layers, latent attention
-// every fourth, 896 experts with two shared.
-func kimiK3() *model.Graph {
-	moeNodes := func(attn model.Node) []model.Node {
-		return []model.Node{
-			{Op: model.OpElementwise, Role: "input_norm"},
-			attn,
-			{Op: model.OpGroupedGEMM, Role: "experts", N: 3072, K: 7168,
-				Experts: 896, TopK: 16, SharedExperts: 2,
-				SharedIntermediateSize: 3072},
-			{Op: model.OpAll2All, Role: "moe", Emit: model.EmitExpertParallel},
-		}
-	}
-	edges := [][2]int{{0, 1}, {1, 2}, {2, 3}}
-	kda := model.LayerKind{ID: "kda_moe", Nodes: moeNodes(model.Node{
-		Op: model.OpRecurrentUpdate, RecurrentKind: model.RecurrentKDA,
-		NumHeads: 96, StateSize: 128, StateDType: model.DTypeFP32}), Edges: edges}
-	mla := model.LayerKind{ID: "mla_moe", Nodes: moeNodes(model.Node{
-		Op: model.OpAttention, AttentionKind: model.AttentionMLA,
-		NumQHeads: 96, NumKVHeads: 1, HeadDim: 576, KVLoRARank: 512,
-		QKRopeHeadDim: 64}), Edges: edges}
-	g := graph("kimi-k3", 7168, 163840, model.DTypeFP8,
-		[]model.LayerKind{kda, mla},
-		// Full attention on every fourth layer: twenty-three complete groups of
-		// four, then one trailing linear-attention layer, for ninety-three.
-		model.Stack{Pattern: []string{"kda_moe", "kda_moe", "kda_moe", "mla_moe"},
-			Repeat: 23, Epilogue: []string{"kda_moe"}})
-	// The committed configuration nests these shapes under a text sub-object beside a
-	// vision tower, so the graph prices the decoder alone and says so.
-	g.Modality = model.ModalityTextDecoderOfMultimodal
-	return g
-}
-
-// nemotronH is the NemotronH shape: a Mamba2 state-space layer, a separate MoE
-// layer, and an attention layer, alternating on a declared pattern. It also uses
-// latent MoE, which narrows the expert input below the hidden size.
-func nemotronH() *model.Graph {
-	mamba := model.LayerKind{ID: "mamba", Nodes: []model.Node{
-		{Op: model.OpElementwise, Role: "input_norm"},
-		{Op: model.OpRecurrentUpdate, RecurrentKind: model.RecurrentMamba2,
-			NumHeads: 256, StateSize: 128, NumGroups: 8, ConvKernel: 4,
-			IntermediateSize: 16384, StateDType: model.DTypeFP32},
-		{Op: model.OpAllReduce, Role: "mixer_out", Emit: model.EmitTensorParallel},
-	}, Edges: [][2]int{{0, 1}, {1, 2}}}
-	moe := model.LayerKind{ID: "moe", Nodes: []model.Node{
-		{Op: model.OpElementwise, Role: "input_norm"},
-		{Op: model.OpGroupedGEMM, Role: "experts", N: 5120, K: 8192,
-			Experts: 512, TopK: 22, SharedExperts: 1,
-			SharedIntermediateSize: 10240, LatentSize: 2048},
-		{Op: model.OpAll2All, Role: "moe", Emit: model.EmitExpertParallel},
-	}, Edges: [][2]int{{0, 1}, {1, 2}}}
-	attn := model.LayerKind{ID: "attention", Nodes: []model.Node{
-		{Op: model.OpElementwise, Role: "input_norm"},
-		{Op: model.OpAttention, AttentionKind: model.AttentionGQA,
-			NumQHeads: 64, NumKVHeads: 2, HeadDim: 128},
-		{Op: model.OpAllReduce, Role: "attn_out", Emit: model.EmitTensorParallel},
-	}, Edges: [][2]int{{0, 1}, {1, 2}}}
-	g := graph("nemotron-3-ultra-550b-a55b-bf16", 8192, 131072, model.DTypeBF16,
-		[]model.LayerKind{mamba, moe, attn},
-		// The committed configuration declares a 108-entry layer vector with no
-		// repeating unit, so it is stated literally rather than compressed. This is
-		// the case a pattern-and-repeat schema alone could not express.
-		model.Stack{Prologue: nemotronLayerVector()})
-	g.Speculator = &model.Speculator{Method: "nemotron_h_mtp", NumSpec: 1,
-		Stack: model.Stack{Pattern: []string{"attention", "moe"}, Repeat: 1}}
-	return g
-}
-
-// nemotronLayerVector is the committed layer sequence, transcribed verbatim from the
-// vendor configuration: 48 state-space layers, 48 MoE layers and 12 attention layers
-// in a declared order with no repeating unit that divides 108.
+// The literals were only ever a stand-in for a catalog the test could not read, and they
+// had already drifted from it: an earlier draft of this file made qwen2.5 sliding-window
+// where the committed graph is full GQA, gave inkling a speculator the committed graph
+// does not carry, and wrote nemotron's 108 layers out as one literal vector where the
+// committed graph expresses them as a periodic pattern. Reading the committed graphs
+// removes that whole class of drift. A family is covered the moment its fixture lands,
+// and a capability a family needs cannot be dropped from the schema or re-derived away
+// without a vendored graph failing to load, validate, or exercise it here.
 //
-// It is stated literally rather than generated. An earlier version of this file built
-// it from a motif and produced 54/41/13, which the composition test caught: a
-// sequence that looks periodic at a glance is not, and guessing its rule silently
-// describes a different model.
-func nemotronLayerVector() []string {
-	return []string{
-		"mamba", "moe", "mamba", "moe", "mamba", "moe",
-		"mamba", "attention", "moe", "mamba", "moe", "mamba",
-		"moe", "mamba", "attention", "moe", "mamba", "moe",
-		"mamba", "moe", "mamba", "moe", "mamba", "attention",
-		"moe", "mamba", "moe", "mamba", "moe", "mamba",
-		"moe", "mamba", "attention", "moe", "mamba", "moe",
-		"mamba", "moe", "mamba", "attention", "moe", "mamba",
-		"moe", "mamba", "moe", "mamba", "moe", "mamba",
-		"attention", "moe", "mamba", "moe", "mamba", "moe",
-		"mamba", "moe", "mamba", "attention", "moe", "mamba",
-		"moe", "mamba", "moe", "mamba", "attention", "moe",
-		"mamba", "moe", "mamba", "moe", "mamba", "moe",
-		"mamba", "attention", "moe", "mamba", "moe", "mamba",
-		"moe", "mamba", "moe", "mamba", "attention", "moe",
-		"mamba", "moe", "mamba", "moe", "mamba", "attention",
-		"moe", "mamba", "moe", "mamba", "moe", "mamba",
-		"moe", "mamba", "attention", "moe", "mamba", "moe",
-		"mamba", "moe", "mamba", "moe", "mamba", "moe",
+// The whole snapshot is also loaded and validated by TestLoadCatalogModels in
+// load_test.go; what this suite adds is the per-family capability each graph must exhibit
+// and the across-the-catalog guard that every schema primitive, kind and dtype is used.
+
+// loadCatalogGraphs loads every models/<name>/graph.yaml in the vendored snapshot, keyed
+// by directory name. A load error fails loudly rather than skipping: a graph that cannot
+// be read is a broken fixture, and a skip is indistinguishable from a pass. It reuses the
+// catalogFixtures snapshot root that load_test.go pins.
+func loadCatalogGraphs(t *testing.T) map[string]*model.Graph {
+	t.Helper()
+	modelsDir := filepath.Join(catalogFixtures, "models")
+	entries, err := os.ReadDir(modelsDir)
+	if err != nil {
+		t.Fatalf("reading %s: %v (the vendored catalog snapshot is missing)", modelsDir, err)
 	}
+	graphs := map[string]*model.Graph{}
+	for _, e := range entries {
+		// A model entry is a directory; skip hidden entries so a stray editor/VCS dir is
+		// never mistaken for a model.
+		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		path := filepath.Join(modelsDir, e.Name(), "graph.yaml")
+		g, err := LoadModelGraph(path)
+		if err != nil {
+			t.Fatalf("LoadModelGraph(%s): %v", path, err)
+		}
+		graphs[e.Name()] = g
+	}
+	if len(graphs) == 0 {
+		t.Fatalf("no model graphs under %s: the vendored catalog snapshot is missing", modelsDir)
+	}
+	return graphs
 }
 
-// nemotronNVFP4 is the same architecture at a narrower weight dtype, which is the
-// only difference between the catalog's two Nemotron variants.
-func nemotronNVFP4() *model.Graph {
-	g := nemotronH()
-	g.Name = "nemotron-3-ultra-550b-a55b-nvfp4"
-	g.Global.WeightDType = model.DTypeNVFP4
-	return g
-}
-
-// inkling is the Inkling shape: sliding-window attention interleaved with full
-// attention, and a routed MoE with two shared experts.
-func inkling() *model.Graph {
-	moe := func(attn model.Node) []model.Node {
-		return []model.Node{
-			{Op: model.OpElementwise, Role: "input_norm"},
-			attn,
-			{Op: model.OpGroupedGEMM, Role: "experts", N: 2048, K: 6144,
-				Experts: 256, TopK: 6, SharedExperts: 2,
-				SharedIntermediateSize: 2048},
-			{Op: model.OpAll2All, Role: "moe", Emit: model.EmitExpertParallel},
+// anyNode reports whether any node in the graph's layer kinds or head satisfies f. The
+// speculator's draft layers are declared in LayerKinds like any other kind, so walking
+// LayerKinds reaches a kind only the draft stack uses (DeepSeek-V4-Pro's mtp_moe).
+func anyNode(g *model.Graph, f func(model.Node) bool) bool {
+	for _, lk := range g.LayerKinds {
+		for _, n := range lk.Nodes {
+			if f(n) {
+				return true
+			}
 		}
 	}
-	edges := [][2]int{{0, 1}, {1, 2}, {2, 3}}
-	swa := model.LayerKind{ID: "swa_moe", Nodes: moe(model.Node{
-		Op: model.OpAttention, AttentionKind: model.AttentionSWA,
-		NumQHeads: 64, NumKVHeads: 16, HeadDim: 128, Window: 512}), Edges: edges}
-	full := model.LayerKind{ID: "full_moe", Nodes: moe(model.Node{
-		Op: model.OpAttention, AttentionKind: model.AttentionGQA,
-		NumQHeads: 64, NumKVHeads: 8, HeadDim: 128}), Edges: edges}
-	g := graph("inkling", 6144, 151552, model.DTypeBF16,
-		[]model.LayerKind{swa, full},
-		model.Stack{Pattern: []string{"swa_moe", "swa_moe", "swa_moe", "swa_moe",
-			"swa_moe", "full_moe"}, Repeat: 11})
-	g.Speculator = &model.Speculator{Method: "inkling_mtp", NumSpec: 1,
-		Stack: model.Stack{Pattern: []string{"full_moe"}, Repeat: 1}}
-	// Also multimodal in the catalog: a vision and an audio tower sit beside the
-	// text shapes this graph prices.
-	g.Modality = model.ModalityTextDecoderOfMultimodal
-	return g
-}
-
-// deepseekV4Pro is the DeepSeek-V4-Pro shape: compressed sparse-MLA attention over an
-// MoE stack. One layer kind both selects a top-k of the latent cache and compresses it
-// (csa4_moe: index_topk and compress_ratio 4); the other compresses heavily with no
-// top-k selection (csa128_moe: compress_ratio 128, no index_topk) — the compress-only
-// sparse-MLA shape this schema gained CompressRatio to express.
-func deepseekV4Pro() *model.Graph {
-	moe := func(attn model.Node) []model.Node {
-		return []model.Node{
-			{Op: model.OpElementwise, Role: "input_norm"},
-			attn,
-			{Op: model.OpGroupedGEMM, Role: "experts", N: 2048, K: 7168,
-				Experts: 256, TopK: 8, SharedExperts: 1, SharedIntermediateSize: 2048},
-			{Op: model.OpAll2All, Role: "moe", Emit: model.EmitExpertParallel},
+	for _, n := range g.Head {
+		if f(n) {
+			return true
 		}
 	}
-	edges := [][2]int{{0, 1}, {1, 2}, {2, 3}}
-	csa4 := model.LayerKind{ID: "csa4_moe", Nodes: moe(model.Node{
-		Op: model.OpAttention, AttentionKind: model.AttentionSparseMLA,
-		NumQHeads: 128, NumKVHeads: 1, HeadDim: 512, QKRopeHeadDim: 64,
-		IndexTopK: 1024, CompressRatio: 4}), Edges: edges}
-	csa128 := model.LayerKind{ID: "csa128_moe", Nodes: moe(model.Node{
-		Op: model.OpAttention, AttentionKind: model.AttentionSparseMLA,
-		NumQHeads: 128, NumKVHeads: 1, HeadDim: 512, QKRopeHeadDim: 64,
-		CompressRatio: 128}), Edges: edges}
-	return graph("deepseek-v4-pro", 7168, 129280, model.DTypeFP8,
-		[]model.LayerKind{csa128, csa4},
-		// A csa128 prologue, then csa128/csa4 pairs repeated: 1 + 2*30 = 61 layers.
-		model.Stack{Prologue: []string{"csa128_moe"},
-			Pattern: []string{"csa128_moe", "csa4_moe"}, Repeat: 30})
+	return false
 }
 
-// TestCatalogArchitectureFamiliesAreExpressible walks every family in the catalog.
+func hasOp(g *model.Graph, op model.Op) bool {
+	return anyNode(g, func(n model.Node) bool { return n.Op == op })
+}
+
+func hasAttention(g *model.Graph, k model.AttentionKind) bool {
+	return anyNode(g, func(n model.Node) bool {
+		return n.Op == model.OpAttention && n.AttentionKind == k
+	})
+}
+
+func hasRecurrent(g *model.Graph, k model.RecurrentKind) bool {
+	return anyNode(g, func(n model.Node) bool { return n.RecurrentKind == k })
+}
+
+func hasSharedExperts(g *model.Graph) bool {
+	return anyNode(g, func(n model.Node) bool { return n.SharedExperts > 0 })
+}
+
+func hasLatentMoE(g *model.Graph) bool {
+	return anyNode(g, func(n model.Node) bool { return n.LatentSize > 0 })
+}
+
+func hasCompressRatio(g *model.Graph) bool {
+	return anyNode(g, func(n model.Node) bool { return n.CompressRatio > 0 })
+}
+
+func hasIndexTopK(g *model.Graph) bool {
+	return anyNode(g, func(n model.Node) bool { return n.IndexTopK > 0 })
+}
+
+// hasNodeWeightDType reports a per-node weight-dtype override, used for a mixed-precision
+// checkpoint whose experts differ from the rest (DeepSeek-V4-Pro's and gpt-oss's mxfp4
+// experts, Nemotron-NVFP4's nvfp4 experts beside fp8).
+func hasNodeWeightDType(g *model.Graph, d model.DType) bool {
+	return anyNode(g, func(n model.Node) bool { return n.WeightDType == d })
+}
+
+func hasPrologue(g *model.Graph) bool { return len(g.Stack.Prologue) > 0 }
+
+func isMultimodal(g *model.Graph) bool {
+	return g.Modality == model.ModalityTextDecoderOfMultimodal
+}
+
+// TestCatalogArchitectureFamiliesAreExpressible walks every architecture family the
+// catalog holds, each represented by one committed graph. A case names the schema
+// capability the family exercises, pins the family's layer depth, and asserts the
+// vendored graph both validates and still shows that capability — so a case cannot pass
+// while the capability it claims has gone missing from the catalog or the schema. The
+// `exercises` predicate asserts the family's DEFINING shape, which is why a re-derivation
+// that dropped it (a sparse-MLA layer re-derived without its compression, say) fails here
+// rather than silently.
 func TestCatalogArchitectureFamiliesAreExpressible(t *testing.T) {
+	graphs := loadCatalogGraphs(t)
 	cases := []struct {
+		model      string
 		capability string
-		g          *model.Graph
 		layers     int
+		exercises  func(*model.Graph) bool
 	}{
-		{"dense GQA attention with a dense MLP", dense(), 80},
-		{"sliding-window attention", slidingWindow(), 28},
-		{"routed MoE with no shared expert", routedMoE(), 32},
-		{"latent attention with shared experts", latentMoE(), 27},
-		{"a dense prologue before sparse layers, sparse indexing, MTP", glm53(), 78},
-		{"linear plus latent attention, 896 experts, odd layer count", kimiK3(), 93},
-		{"a non-periodic layer vector stated literally, latent MoE", nemotronH(), 108},
-		{"the same architecture at a narrower weight dtype", nemotronNVFP4(), 108},
-		{"sliding-window and full attention with shared experts", inkling(), 66},
-		{"compress-only and top-k-plus-compress sparse-MLA (DeepSeek-V4-Pro)", deepseekV4Pro(), 61},
+		{"llama-3.1-70b-instruct", "dense GQA attention with a dense MLP", 80,
+			func(g *model.Graph) bool {
+				return hasAttention(g, model.AttentionGQA) && len(g.LayerKinds) == 1 &&
+					!hasOp(g, model.OpGroupedGEMM)
+			}},
+		{"mixtral-8x7b-v0.1", "routed MoE with no shared expert", 32,
+			func(g *model.Graph) bool {
+				return hasOp(g, model.OpGroupedGEMM) && !hasSharedExperts(g)
+			}},
+		{"deepseek-v2-lite", "latent (MLA) attention with shared experts", 27,
+			func(g *model.Graph) bool {
+				return hasAttention(g, model.AttentionMLA) && hasSharedExperts(g)
+			}},
+		{"deepseek-v3", "latent (MLA) MoE with a dense prologue and an MTP speculator", 61,
+			func(g *model.Graph) bool {
+				return hasAttention(g, model.AttentionMLA) && hasPrologue(g) && g.Speculator != nil
+			}},
+		{"deepseek-v4-pro", "compress-only and top-k-plus-compress sparse-MLA, mxfp4 experts", 61,
+			func(g *model.Graph) bool {
+				return hasAttention(g, model.AttentionSparseMLA) && hasCompressRatio(g) &&
+					hasIndexTopK(g) && hasNodeWeightDType(g, model.DTypeMXFP4)
+			}},
+		{"glm-5", "sparse-MLA with an index top-k, a dense prologue and an MTP speculator", 78,
+			func(g *model.Graph) bool {
+				return hasAttention(g, model.AttentionSparseMLA) && hasIndexTopK(g) &&
+					hasPrologue(g) && g.Speculator != nil
+			}},
+		{"gpt-oss-120b", "alternating sliding-window and full attention, mxfp4 experts", 36,
+			func(g *model.Graph) bool {
+				return hasAttention(g, model.AttentionSWA) && hasAttention(g, model.AttentionGQA) &&
+					hasNodeWeightDType(g, model.DTypeMXFP4)
+			}},
+		// minimax-m2.5 and m2.7 are the same family at two revisions; both are listed so
+		// each vendored graph is loaded, validated and shown to carry the capability.
+		{"minimax-m2.5", "full-attention fp8 MoE", 62,
+			func(g *model.Graph) bool {
+				return hasAttention(g, model.AttentionGQA) && hasOp(g, model.OpGroupedGEMM) &&
+					g.Global.WeightDType == model.DTypeFP8
+			}},
+		{"minimax-m2.7", "full-attention fp8 MoE", 62,
+			func(g *model.Graph) bool {
+				return hasAttention(g, model.AttentionGQA) && hasOp(g, model.OpGroupedGEMM) &&
+					g.Global.WeightDType == model.DTypeFP8
+			}},
+		{"minimax-m3", "sliding-window attention MoE with a dense prologue, MTP, multimodal", 60,
+			func(g *model.Graph) bool {
+				return hasAttention(g, model.AttentionSWA) && hasPrologue(g) &&
+					g.Speculator != nil && isMultimodal(g)
+			}},
+		{"kimi-k2.5", "int4 (W4A16) weights, latent-attention MoE", 61,
+			func(g *model.Graph) bool {
+				return g.Global.WeightDType == model.DTypeINT4 && hasAttention(g, model.AttentionMLA)
+			}},
+		{"kimi-k3", "linear (KDA) plus latent attention, mxfp4 weights", 93,
+			func(g *model.Graph) bool {
+				return hasRecurrent(g, model.RecurrentKDA) && hasAttention(g, model.AttentionMLA) &&
+					g.Global.WeightDType == model.DTypeMXFP4
+			}},
+		{"qwen3.5-397b-a17b", "gated-deltanet (GDN) and full attention, MTP, multimodal", 60,
+			func(g *model.Graph) bool {
+				return hasRecurrent(g, model.RecurrentGDN) && hasAttention(g, model.AttentionGQA) &&
+					g.Speculator != nil && isMultimodal(g)
+			}},
+		{"nemotron-3-ultra-550b-a55b-bf16", "Mamba2, attention and latent-MoE hybrid with an MTP speculator", 108,
+			func(g *model.Graph) bool {
+				return hasRecurrent(g, model.RecurrentMamba2) && hasAttention(g, model.AttentionGQA) &&
+					hasLatentMoE(g) && g.Speculator != nil
+			}},
+		{"nemotron-3-ultra-550b-a55b-nvfp4", "the same hybrid with per-node nvfp4 expert weights", 108,
+			func(g *model.Graph) bool {
+				return hasRecurrent(g, model.RecurrentMamba2) && hasNodeWeightDType(g, model.DTypeNVFP4)
+			}},
+		{"inkling", "sliding-window interleaved with full attention, shared experts, multimodal", 66,
+			func(g *model.Graph) bool {
+				return hasAttention(g, model.AttentionSWA) && hasAttention(g, model.AttentionGQA) &&
+					hasSharedExperts(g) && isMultimodal(g)
+			}},
 	}
 	for _, c := range cases {
-		t.Run(c.capability, func(t *testing.T) {
-			if p := c.g.Validate(); !p.OK() {
-				t.Fatalf("%s is not expressible:\n%s", c.g.Name, p.Error())
+		t.Run(c.model, func(t *testing.T) {
+			g, ok := graphs[c.model]
+			if !ok {
+				t.Fatalf("no vendored graph for %q; the snapshot does not hold the family this case covers (%s)",
+					c.model, c.capability)
 			}
-			if got := c.g.Stack.Layers(); got != c.layers {
-				t.Errorf("%s: layers = %d, want %d", c.g.Name, got, c.layers)
+			if p := g.Validate(); !p.OK() {
+				t.Fatalf("%s is not expressible:\n%s", c.model, p.Error())
+			}
+			if got := g.Stack.Layers(); got != c.layers {
+				t.Errorf("%s: stack expands to %d layers, want %d", c.model, got, c.layers)
+			}
+			if !c.exercises(g) {
+				t.Errorf("%s no longer exercises %q; the vendored graph does not show the capability this case names",
+					c.model, c.capability)
 			}
 		})
 	}
 }
 
-// TestEveryPrimitiveAndKindIsExercised guards against a family passing because the
-// suite never uses the schema feature it needs. A capability with no case is a
-// capability with no coverage.
+// TestEveryPrimitiveAndKindIsExercised guards against a schema capability passing with no
+// catalog family that uses it. It reads the WHOLE snapshot and asserts that every member
+// of the required lists appears somewhere. That is not a tautology over the data it reads:
+// the required lists are the schema capabilities the catalog is expected to exercise, so a
+// member losing its last exerciser — a model dropped, or a graph re-derived without it —
+// fails here, which validation alone would not catch because a graph that never uses a
+// capability still validates. A new schema capability the catalog adopts belongs on one of
+// these lists so its coverage is pinned the same way.
+//
+// The sequence-parallel collectives (AllGather, ReduceScatter) are deliberately absent:
+// they are a deployment-time choice no model graph carries, so no catalog family exercises
+// them and the list does not require them.
 func TestEveryPrimitiveAndKindIsExercised(t *testing.T) {
-	graphs := []*model.Graph{dense(), slidingWindow(), routedMoE(), latentMoE(),
-		glm53(), kimiK3(), nemotronH(), nemotronNVFP4(), inkling()}
+	graphs := loadCatalogGraphs(t)
 
 	ops := map[model.Op]bool{}
 	attnKinds := map[model.AttentionKind]bool{}
 	recurrentKinds := map[model.RecurrentKind]bool{}
-	dtypes := map[model.DType]bool{}
-	sawShared, sawLatentMoE, sawSpeculator, sawMultiKind := false, false, false, false
+	weightDTypes := map[model.DType]bool{}
+	stateDTypes := map[model.DType]bool{}
+	var sawShared, sawLatentMoE, sawCompressRatio, sawIndexTopK bool
+	var sawSpeculator, sawMultiKind, sawMultimodal bool
 
 	for _, g := range graphs {
-		dtypes[g.Global.WeightDType] = true
+		weightDTypes[g.Global.WeightDType] = true
 		if g.Speculator != nil {
 			sawSpeculator = true
 		}
 		if len(g.LayerKinds) > 1 {
 			sawMultiKind = true
 		}
+		if isMultimodal(g) {
+			sawMultimodal = true
+		}
+		record := func(n model.Node) {
+			ops[n.Op] = true
+			if n.Op == model.OpAttention && n.AttentionKind != "" {
+				attnKinds[n.AttentionKind] = true
+			}
+			if n.RecurrentKind != "" {
+				recurrentKinds[n.RecurrentKind] = true
+			}
+			if n.WeightDType != "" {
+				weightDTypes[n.WeightDType] = true
+			}
+			if n.StateDType != "" {
+				stateDTypes[n.StateDType] = true
+			}
+			if n.SharedExperts > 0 {
+				sawShared = true
+			}
+			if n.LatentSize > 0 {
+				sawLatentMoE = true
+			}
+			if n.CompressRatio > 0 {
+				sawCompressRatio = true
+			}
+			if n.IndexTopK > 0 {
+				sawIndexTopK = true
+			}
+		}
 		for _, lk := range g.LayerKinds {
 			for _, n := range lk.Nodes {
-				ops[n.Op] = true
-				if n.AttentionKind != "" {
-					attnKinds[n.AttentionKind] = true
-				}
-				if n.RecurrentKind != "" {
-					recurrentKinds[n.RecurrentKind] = true
-				}
-				if n.SharedExperts > 0 {
-					sawShared = true
-				}
-				if n.LatentSize > 0 {
-					sawLatentMoE = true
-				}
+				record(n)
 			}
+		}
+		for _, n := range g.Head {
+			record(n)
 		}
 	}
 
-	for _, op := range []model.Op{model.OpGEMM, model.OpGroupedGEMM,
-		model.OpAttention, model.OpRecurrentUpdate, model.OpElementwise,
-		model.OpAllReduce, model.OpAll2All} {
+	for _, op := range []model.Op{model.OpGEMM, model.OpGroupedGEMM, model.OpAttention,
+		model.OpRecurrentUpdate, model.OpElementwise, model.OpAllReduce, model.OpAll2All} {
 		if !ops[op] {
-			t.Errorf("no catalog family exercises %s", op)
+			t.Errorf("no catalog family exercises op %s", op)
 		}
 	}
 	for _, k := range []model.AttentionKind{model.AttentionGQA, model.AttentionMLA,
@@ -385,21 +318,41 @@ func TestEveryPrimitiveAndKindIsExercised(t *testing.T) {
 			t.Errorf("no catalog family exercises attention kind %s", k)
 		}
 	}
-	for _, k := range []model.RecurrentKind{model.RecurrentMamba2, model.RecurrentKDA} {
+	// All three recurrent kinds are now in the catalog: Mamba2 (Nemotron), KDA (Kimi-K3)
+	// and GDN (Qwen3.5-397B).
+	for _, k := range []model.RecurrentKind{model.RecurrentMamba2, model.RecurrentKDA,
+		model.RecurrentGDN} {
 		if !recurrentKinds[k] {
 			t.Errorf("no catalog family exercises recurrent kind %s", k)
 		}
 	}
-	for _, d := range []model.DType{model.DTypeBF16, model.DTypeFP8, model.DTypeNVFP4} {
-		if !dtypes[d] {
+	// Six weight dtypes have a home in the catalog: bf16, fp16 (Llama-2), fp8, nvfp4
+	// (Nemotron-NVFP4 experts), mxfp4 (gpt-oss/Kimi-K3/DeepSeek-V4-Pro) and int4
+	// (Kimi-K2.5). int8 has no catalog model yet, so it is not required here.
+	for _, d := range []model.DType{model.DTypeBF16, model.DTypeFP16, model.DTypeFP8,
+		model.DTypeNVFP4, model.DTypeMXFP4, model.DTypeINT4} {
+		if !weightDTypes[d] {
 			t.Errorf("no catalog family exercises weight dtype %s", d)
 		}
 	}
+	// The recurrent state is stored wider than the weights; every recurrent model keeps
+	// it in fp32.
+	for _, d := range []model.DType{model.DTypeFP32} {
+		if !stateDTypes[d] {
+			t.Errorf("no catalog family exercises recurrent state dtype %s", d)
+		}
+	}
 	if !sawShared {
-		t.Error("no family exercises shared experts, which four catalog models use")
+		t.Error("no family exercises shared experts, which several catalog models use")
 	}
 	if !sawLatentMoE {
-		t.Error("no family exercises latent MoE, which narrows the expert input")
+		t.Error("no family exercises latent MoE, which narrows the expert input below hidden size")
+	}
+	if !sawCompressRatio {
+		t.Error("no family exercises compress_ratio, the compressed sparse-MLA latent read (DeepSeek-V4-Pro)")
+	}
+	if !sawIndexTopK {
+		t.Error("no family exercises index_topk, the sparse-MLA top-k cache select")
 	}
 	if !sawSpeculator {
 		t.Error("no family exercises a speculator stack")
@@ -407,73 +360,40 @@ func TestEveryPrimitiveAndKindIsExercised(t *testing.T) {
 	if !sawMultiKind {
 		t.Error("no family exercises a multi-kind stack, which every hybrid needs")
 	}
-	// Three catalog models nest their text shapes beside a vision or audio tower. A
-	// graph for one of those must declare that it prices the decoder alone, or a
-	// reader has no way to know a multimodal request is under-predicted.
-	sawMultimodal := false
-	for _, g := range graphs {
-		if g.Modality == model.ModalityTextDecoderOfMultimodal {
-			sawMultimodal = true
-		}
-	}
 	if !sawMultimodal {
-		t.Error("no family declares itself the text decoder of a multimodal model, though three catalog models are")
+		t.Error("no family declares itself the text decoder of a multimodal model, though several catalog models are")
 	}
 }
 
-// TestLayerCountsMatchTheCommittedConfigurations pins each family's layer count
-// against the vendor configuration's own num_hidden_layers. Without this, a test
-// graph could pass validation while describing a model with the wrong depth — the
-// failure an earlier draft of this suite actually had, where three of the counts
-// were assumed rather than derived.
-func TestLayerCountsMatchTheCommittedConfigurations(t *testing.T) {
-	// Taken from blis-catalog's committed config.json files.
-	want := map[string]int{
-		"llama-3.1-70b-instruct":          80,
-		"qwen2.5-7b-instruct":             28,
-		"mixtral-8x7b-v0.1":               32,
-		"deepseek-v2-lite":                27,
-		"glm-5.3":                         78,
-		"kimi-k3":                         93,
-		"nemotron-3-ultra-550b-a55b-bf16": 108,
-		"inkling":                         66,
-		"deepseek-v4-pro":                 61,
-	}
-	for _, g := range []*model.Graph{dense(), slidingWindow(), routedMoE(),
-		latentMoE(), glm53(), kimiK3(), nemotronH(), inkling(), deepseekV4Pro()} {
-		exp, ok := want[g.Name]
-		if !ok {
-			t.Errorf("%s has no expected layer count", g.Name)
-			continue
-		}
-		if got := g.Stack.Layers(); got != exp {
-			t.Errorf("%s: layers = %d, the configuration declares %d", g.Name, got, exp)
-		}
-	}
-}
-
-// TestNemotronLayerVectorComposition checks the literal vector's make-up against the
-// committed configuration's counts, since a hand-built sequence is easy to get wrong.
-func TestNemotronLayerVectorComposition(t *testing.T) {
-	v := nemotronLayerVector()
-	if len(v) != 108 {
-		t.Fatalf("vector length = %d, want 108", len(v))
+// TestNemotronStackCompositionMatchesTheConfiguration expands the vendored Nemotron stack
+// and checks its layer mix. The hybrid's depth is a per-index layer vector, so a graph can
+// carry the right total with the wrong mix (a state-space layer re-derived as an attention
+// one). Validation does not catch that, and the layer-count assertion in the family table
+// above would not either, so the composition is pinned against the configuration's counts.
+func TestNemotronStackCompositionMatchesTheConfiguration(t *testing.T) {
+	const name = "nemotron-3-ultra-550b-a55b-bf16"
+	g, ok := loadCatalogGraphs(t)[name]
+	if !ok {
+		t.Fatalf("the vendored snapshot has no %s graph", name)
 	}
 	counts := map[string]int{}
-	for _, k := range v {
-		counts[k]++
+	for _, id := range g.Stack.Expand() {
+		counts[id]++
 	}
-	// The configuration declares 48 state-space, 48 MoE and 12 attention layers.
-	for kind, want := range map[string]int{"mamba": 48, "moe": 48, "attention": 12} {
-		if counts[kind] != want {
-			t.Errorf("%s layers = %d, the configuration declares %d",
-				kind, counts[kind], want)
+	// The configuration declares 48 state-space, 48 MoE and 12 attention layers in 108.
+	for id, want := range map[string]int{"mamba": 48, "moe": 48, "attention": 12} {
+		if counts[id] != want {
+			t.Errorf("%q layers = %d, the configuration declares %d", id, counts[id], want)
 		}
+	}
+	if total := g.Stack.Layers(); total != 108 {
+		t.Errorf("stack expands to %d layers, want 108", total)
 	}
 }
 
-// TestStackExpansionShapes covers the three stack forms the schema supports, since
-// each exists for a model the catalog holds.
+// TestStackExpansionShapes covers the three stack forms the schema supports, since each
+// exists for a model the catalog holds. It is a unit test of the Stack primitive and does
+// not read the snapshot.
 func TestStackExpansionShapes(t *testing.T) {
 	uniform := model.Stack{Pattern: []string{"a"}, Repeat: 4}
 	if got := uniform.Expand(); len(got) != 4 || got[0] != "a" {
