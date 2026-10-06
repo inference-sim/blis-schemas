@@ -303,6 +303,15 @@ type Node struct {
 	Window int `yaml:"window,omitempty"`
 	// SparseMLA top-k index count; zero for other kinds.
 	IndexTopK int `yaml:"index_topk,omitempty"`
+	// CompressRatio is the integer factor by which a compressed sparse-MLA layer shrinks
+	// its latent KV read -- DeepSeek-V4-Pro's csa4_moe reads 1/4 of the latent cache and
+	// csa128_moe 1/128. The catalog expresses it as a whole number (4 and 128), so it is
+	// an int rather than a float; how it combines with the layer's dimensions is a pricing
+	// concern for the simulator, not a cross-field invariant this field-level schema
+	// checks. Being omitempty, a zero is an unset value, the convention every optional
+	// shape field here follows, so a set (nonzero) ratio is what validation checks for
+	// positivity and sparse-MLA placement; zero for other kinds.
+	CompressRatio int `yaml:"compress_ratio,omitempty"`
 
 	// RecurrentUpdate.
 	RecurrentKind    RecurrentKind `yaml:"recurrent_kind,omitempty"`

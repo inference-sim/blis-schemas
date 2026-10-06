@@ -4,11 +4,15 @@ Go schemas and validators for the BLIS cost model: what a model is, what hardwar
 can do, what a coefficient claims, what a deployment specifies, what a measured run
 recorded, what a simulator run predicts, and the interface a cost model implements.
 
-This repository holds schemas and validation only. The data lives elsewhere —
+This repository holds schemas and validation. The canonical data lives elsewhere —
 [blis-catalog](https://github.com/inference-sim/blis-catalog) owns declared facts,
 [blis-registry](https://github.com/inference-sim/blis-registry) owns learned
 coefficients — and keeping the shapes separate from the contents is what lets either
-side be validated in CI without the other being vendored in.
+side evolve on its own. The one copy of catalog data that lives here is `testdata/`:
+a pinned, by-hand snapshot of the catalog, vendored as a read-only test fixture so CI
+validates the schema against a fixed point rather than a moving upstream `main`. It is
+test input, not a second source of truth, and is re-vendored only in a deliberate,
+reviewable commit.
 
 ## The two layers
 
@@ -53,19 +57,61 @@ those from real ones.
 
 ```
 vocab/              closed vocabularies: units, methods, scope keys, provenance
-spec/model/         a model as a DAG of cost primitives
+spec/model/         a model as a DAG of cost primitives, plus its model.yaml identity
 spec/hardware/      chip, fabric, storage device — three schemas, not one
 spec/coefficient/   coefficient sets, mirroring blis-registry's contract
 spec/scenario/      the immutable problem: model, cluster inventory, workload + refs
 spec/deployment/    the mutable config: pools, parallelism, engine knobs, offload, PD
-spec/workload/      traffic shape as a distribution
+spec/workload/      the "what traffic" binding: a distributional shape or a trace ref
 spec/evaluation/    a measured run, for scoring a prediction against
 spec/simresult/     a simulator run's predicted output (distinct from a measured run)
 kernel/             the interface a cost model implements
 rules/              the version-scoped rule mechanism
 rules/v0_29/        one release's rules and constants
 internal/validate/  the accumulating, located problem list every validator shares
+cmd/validate-catalog/  CLI: load and validate every artifact in a blis-catalog checkout
+testdata/           a pinned, by-hand copy of blis-catalog's data, used as test fixtures
 ```
+
+## A scenario's workload: a shape or a trace
+
+A `Scenario` names its traffic in one `workload` slot, which is a sum type: it binds
+**either** a distributional shape (by catalog name) **or** a reference to a concrete
+captured trace. Exactly one arm is set; a scenario that poses a capacity question with no
+traffic omits the slot entirely.
+
+```yaml
+# distributional arm — name a catalog workload shape
+workload:
+  shape: chatbot
+```
+
+```yaml
+# concrete arm — reference an external TraceV2 by path; the bulk per-request rows
+# (which can run to millions) stay in the file, never inlined in the document
+workload:
+  trace:
+    data: traces/agentic-run.csv   # path to the bulk per-request data CSV
+    sha256: <64-hex>               # optional integrity digest of that file
+    rows: 1048576                  # optional expected row COUNT (not the rows)
+    header:                        # the small, bounded trace header metadata
+      trace_version: 3
+      time_unit: microseconds      # one of a closed set (us/microseconds/ms/s/ns…)
+      mode: real                   # real | generated | replayed
+      workload_seed: 0             # workload RNG seed, when one was recorded
+      server:                      # provenance of the server that produced the trace
+        type: vllm
+        tensor_parallel: 8
+        gpu_memory_utilization: 0.9
+      goodput_slo_targets:         # per-class TTFT/ITL/E2E thresholds, in ms
+        critical: {ttft_ms: 500, itl_ms: 50, e2e_ms: 30000}
+```
+
+A shape's prefix is one scalar shared length; a trace's prefix is a per-request tree in
+the referenced rows, which is why the two are different fidelities of one question rather
+than one field. The operating point — the load level (`rate` XOR `concurrency`) — is
+deliberately **not** here: it is a run-level sweep axis recorded on a run's result, not a
+property of the immutable problem.
 
 ## Why the model schema is not a vendor configuration
 
@@ -98,6 +144,44 @@ The separation matters: cross-node collective cost turns on the ratio of
 intra-node to inter-node bandwidth, and that ratio belongs to a *pairing* rather than
 to either side. `hardware.IntraToInterRatio(chip, fabric)` is a function for that
 reason, and `blis-catalog` makes the same split.
+
+## Validating a catalog checkout
+
+`cmd/validate-catalog` loads and validates every committed artifact in a
+[blis-catalog](https://github.com/inference-sim/blis-catalog) checkout against these
+schemas — not only the model graphs. Point it at a catalog root:
+
+```sh
+go run ./cmd/validate-catalog /path/to/blis-catalog
+```
+
+It walks six artifact kinds, in one combined report:
+
+- `models/*/graph.yaml` — the derived cost graph (`model.Graph`)
+- `models/*/config.json` — the verbatim vendor file: a structural check (present,
+  parseable, a non-empty JSON object), no schema type, no interpretation of its keys
+- `models/*/model.yaml` — the entry's identity manifest (`model.Identity`): a `name`
+  that must match the directory, and a `source` provenance block
+- `hardware/*.yaml` — chips (`hardware.Chip`)
+- `networks/*.yaml` — fabrics (`hardware.Fabric`)
+- `devices/storage.yaml` — storage tiers (`hardware.StorageDevice`), optional
+- `workloads/*.yaml` — traffic shapes (`workload.Shape`)
+
+The two **model-entry** checks — the structural `config.json` check and the `model.Identity`
+rules — together reproduce blis-catalog's own `validate_models` in full (`config.json`
+present/parse/non-empty, plus `name`/directory and `source.{provider,repo,revision}`), so
+this binary can stand in for that gate when blis-catalog wires it into CI. The other kinds
+are blis-schemas' own typed `Validate()`s and are *complementary* to the Python gate rather
+than a reimplementation of it: the catalog's gate enforces a datasheet-unit vocabulary on
+hardware fields that these typed validators do not, and these validators check cost-model
+properties (an acyclic graph, a prefix no longer than its prompt) that the Python gate does
+not. The two gates are stronger together.
+
+A per-entry summary line goes to stdout for each artifact that validates and every
+problem to stderr, so the report reads cleanly and the exit code is scriptable: `0`
+when everything validates, `1` on any validation failure, and `2` for a usage error
+or a path that is not a catalog (none of the artifact namespaces present, or present but
+holding nothing to validate). It is the binary blis-catalog proposes to run in its own CI.
 
 ## Evolving this repository
 

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/inference-sim/blis-schemas/spec/model"
+	"github.com/inference-sim/blis-schemas/spec/workload"
 )
 
 // The yaml tags on every spec type are a contract with the files in blis-catalog and
@@ -29,7 +30,8 @@ name: granite-230b-h200-tp8
 model: granite-5-230b
 coefficients: [cost-model-primitives-h200]
 engine_version: "0.29.0"
-workload: chatbot
+workload:
+  shape: chatbot
 cluster:
   hardware: h200
   nodes: 1
@@ -45,8 +47,10 @@ cluster:
 	if s.Name != "granite-230b-h200-tp8" {
 		t.Errorf("name = %q", s.Name)
 	}
-	if s.Workload != "chatbot" {
-		t.Errorf("workload = %q, want chatbot", s.Workload)
+	// The workload is a sum-type binding now, not a bare name: the distributional arm
+	// names a catalog shape under `shape`.
+	if s.Workload == nil || s.Workload.Shape != "chatbot" || s.Workload.Trace != nil {
+		t.Errorf("workload binding did not parse as a shape ref: %+v", s.Workload)
 	}
 	// The hardware and fabric references and the storage inventory are folded into
 	// the cluster rather than sitting loose at the top level.
@@ -61,6 +65,248 @@ cluster:
 	}
 	if rep := Validate(Bundle{Scenario: s}); !rep.Field.OK() {
 		t.Errorf("a loaded scenario failed field validation:\n%s", rep.Field.Error())
+	}
+}
+
+// TestLoadScenarioWithTraceBinding exercises the trace arm of the workload binding end to
+// end: the data-file path, the integrity/provenance fields, and the small header metadata
+// (including the server sub-block and the per-class SLO targets) must all parse through
+// the strict loader, and the loaded scenario must validate. A tag error anywhere in the
+// nested trace reference would leave a zero value the type system cannot catch, which is
+// the one failure this package exists to rule out.
+func TestLoadScenarioWithTraceBinding(t *testing.T) {
+	path := write(t, "s.yaml", `
+kind: Scenario
+name: granite-230b-h200-replay
+model: granite-5-230b
+coefficients: [cost-model-primitives-h200]
+engine_version: "0.29.0"
+workload:
+  trace:
+    data: traces/agentic-run.csv
+    sha256: `+strings.Repeat("a", 64)+`
+    rows: 1048576
+    header:
+      trace_version: 3
+      time_unit: microseconds
+      mode: real
+      workload_seed: 0
+      server:
+        type: vllm
+        model: granite-5-230b
+        tensor_parallel: 8
+        max_num_seqs: 1024
+        block_size: 16
+        gpu_memory_utilization: 0.9
+        max_model_len: 131072
+      goodput_slo_targets:
+        critical:
+          ttft_ms: 500
+          itl_ms: 50
+          e2e_ms: 30000
+cluster:
+  hardware: h200
+  nodes: 1
+  gpus_per_node: 8
+`)
+	s, err := LoadScenario(path)
+	if err != nil {
+		t.Fatalf("LoadScenario: %v", err)
+	}
+	b := s.Workload
+	if b == nil || b.Shape != "" || b.Trace == nil {
+		t.Fatalf("workload binding did not parse as a trace ref: %+v", b)
+	}
+	tr := b.Trace
+	if tr.Data != "traces/agentic-run.csv" || tr.Rows != 1048576 || len(tr.SHA256) != 64 {
+		t.Errorf("trace reference fields did not parse: %+v", tr)
+	}
+	h := tr.Header
+	if h.Version != 3 || h.TimeUnit != "microseconds" || h.Mode != workload.ModeReal {
+		t.Errorf("trace header scalars did not parse: %+v", h)
+	}
+	// workload_seed: 0 is a recorded zero, which the pointer must preserve as distinct
+	// from absent.
+	if h.WorkloadSeed == nil || *h.WorkloadSeed != 0 {
+		t.Errorf("workload_seed did not parse as a recorded zero: %v", h.WorkloadSeed)
+	}
+	if h.Server == nil || h.Server.TensorParallel != 8 || h.Server.GPUMemoryUtilization != 0.9 {
+		t.Errorf("trace server block did not parse: %+v", h.Server)
+	}
+	crit, ok := h.GoodputSLOTargets["critical"]
+	if !ok || crit.TTFTMs != 500 || crit.ITLMs != 50 || crit.E2EMs != 30000 {
+		t.Errorf("goodput_slo_targets did not parse: %+v", h.GoodputSLOTargets)
+	}
+	if rep := Validate(Bundle{Scenario: s}); !rep.Field.OK() {
+		t.Errorf("a loaded trace-bound scenario failed field validation:\n%s", rep.Field.Error())
+	}
+}
+
+// TestLoadScenarioRejectsUnknownTraceField pins strict decoding through EVERY nesting
+// level the trace reference introduces: a misspelled sub-key must fail loudly rather than
+// leave a zero value, the same guarantee the top-level loaders give. The trace types are
+// plain structs — none implements a custom UnmarshalYAML, which is what would silently
+// drop the decoder's KnownFields setting (see internal/validate/strict.go) — so strict
+// decoding recurses through all of them for free. That is exactly the kind of property
+// that is assumed and then quietly lost, so each new level is pinned: at the
+// `workload` binding itself, directly under `trace`, under its `header`, under the
+// `header.server` sub-block, and inside a `header.goodput_slo_targets.<class>` map VALUE (the one
+// struct the feature reaches only through a map, where it is least obvious the strict
+// check still applies).
+func TestLoadScenarioRejectsUnknownTraceField(t *testing.T) {
+	// head is a valid scenario up to the workload block; each case supplies the workload
+	// subtree with an injection that must be rejected, naming the stray key.
+	cases := []struct {
+		name      string
+		traceYAML string
+		badKey    string
+	}{
+		{
+			name: "unknown key under the workload binding",
+			traceYAML: `  shape: chatbot
+  invalid_field: yes`,
+			badKey: "invalid_field",
+		},
+		{
+			name: "unknown key directly under trace",
+			traceYAML: `  trace:
+    data: traces/run.csv
+    rowz: 10
+    header:
+      trace_version: 3
+      time_unit: microseconds
+      mode: real`,
+			badKey: "rowz",
+		},
+		{
+			name: "unknown key under trace.header",
+			traceYAML: `  trace:
+    data: traces/run.csv
+    header:
+      trace_version: 3
+      time_unit: microseconds
+      mode: real
+      time_uint: microseconds`,
+			badKey: "time_uint",
+		},
+		{
+			name: "unknown key under trace.header.server",
+			traceYAML: `  trace:
+    data: traces/run.csv
+    header:
+      trace_version: 3
+      time_unit: microseconds
+      mode: real
+      server:
+        tensor_parallel: 8
+        tensor_paralel: 8`,
+			badKey: "tensor_paralel",
+		},
+		{
+			name: "unknown key inside a goodput_slo_targets map value",
+			traceYAML: `  trace:
+    data: traces/run.csv
+    header:
+      trace_version: 3
+      time_unit: microseconds
+      mode: real
+      goodput_slo_targets:
+        critical:
+          ttft_ms: 500
+          ttft_mss: 500`,
+			badKey: "ttft_mss",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := write(t, "s.yaml", `
+kind: Scenario
+name: typo
+model: granite-5-230b
+coefficients: [c]
+engine_version: "0.29.0"
+workload:
+`+tc.traceYAML+`
+cluster:
+  hardware: h200
+  nodes: 1
+  gpus_per_node: 8
+`)
+			_, err := LoadScenario(path)
+			if err == nil {
+				t.Fatalf("a misspelled %q was accepted; the trace would validate while silently dropping it", tc.badKey)
+			}
+			if !strings.Contains(err.Error(), tc.badKey) {
+				t.Errorf("the error should name the offending field %q, got: %v", tc.badKey, err)
+			}
+		})
+	}
+}
+
+// TestLoadWorkload is the by-filename identity contract for a workload Shape. The file
+// carries no name — exactly like a chip or a fabric — so a nameless document must load,
+// LoadWorkload must stamp Shape.Name from the path stem, and the loaded shape must then
+// validate clean (Validate requires a Name, now always loader-supplied). This is the
+// catalog's target form from issue #21: a chatbot.yaml that is prefix/prompt/output and
+// nothing else.
+func TestLoadWorkload(t *testing.T) {
+	path := write(t, "chatbot.yaml", `
+prefix_tokens: 0
+prompt:
+  tokens: 256
+  tokens_stdev: 100
+  tokens_min: 2
+  tokens_max: 800
+output:
+  tokens: 256
+  tokens_stdev: 100
+  tokens_min: 1
+  tokens_max: 1024
+`)
+	w, err := LoadWorkload(path)
+	if err != nil {
+		t.Fatalf("LoadWorkload: %v", err)
+	}
+	// Identity is the filename stem, as with LoadChip/LoadFabric.
+	if w.Name != "chatbot" {
+		t.Errorf("name = %q; it should come from the filename", w.Name)
+	}
+	// Spot-check a field from each nesting level: a tag error at any depth would leave a
+	// zero value the type system cannot catch.
+	if w.PrefixTokens != 0 {
+		t.Errorf("prefix_tokens = %d, want 0", w.PrefixTokens)
+	}
+	if w.Prompt.Mean != 256 || w.Prompt.StdDev != 100 || w.Prompt.Min != 2 || w.Prompt.Max != 800 {
+		t.Errorf("prompt distribution did not parse: %+v", w.Prompt)
+	}
+	if w.Output.Mean != 256 || w.Output.Max != 1024 {
+		t.Errorf("output distribution did not parse: %+v", w.Output)
+	}
+	// A loader-named shape validates: the Name requirement is satisfied by the stamp, not
+	// by a line in the file.
+	if p := w.Validate(); !p.OK() {
+		t.Errorf("a loaded workload failed validation:\n%s", p.Error())
+	}
+}
+
+// TestLoadWorkloadRejectsInFileName pins that identity is a filename fact, not a file
+// field: an in-file `name:` is no longer part of the contract, so under strict decoding
+// it is an unknown field and must fail loudly rather than quietly become a second source
+// of truth for the identity the filename already fixes. The Name field is tagged
+// `yaml:"-"`, so yaml.v3 maps no `name` key to it and KnownFields rejects the stray key.
+func TestLoadWorkloadRejectsInFileName(t *testing.T) {
+	path := write(t, "chatbot.yaml", `
+name: not-chatbot
+prefix_tokens: 0
+prompt:
+  tokens: 256
+output:
+  tokens: 256
+`)
+	if _, err := LoadWorkload(path); err == nil {
+		t.Fatal("an in-file name was accepted; the filename and the field could disagree")
+	} else if !strings.Contains(err.Error(), "name") {
+		t.Errorf("the error should name the offending field %q, got: %v", "name", err)
 	}
 }
 
@@ -203,6 +449,175 @@ stack:
 	if p := g.Validate(); !p.OK() {
 		t.Errorf("a loaded graph failed validation:\n%s", p.Error())
 	}
+}
+
+// TestLoadModelIdentity parses a model.yaml identity manifest end to end: the name and
+// every source provenance field must arrive through the strict loader, and the loaded
+// card must validate. A tag error at any depth would leave a zero value the type system
+// cannot catch — the one failure this package exists to rule out.
+func TestLoadModelIdentity(t *testing.T) {
+	path := write(t, "model.yaml", `
+name: deepseek-v4-pro
+source:
+  provider: huggingface
+  repo: deepseek-ai/DeepSeek-V4-Pro
+  revision: b5968e9190ef611bbf34a7229255be88a0e937c1
+  retrieved: 2026-10-02
+`)
+	id, err := LoadModelIdentity(path)
+	if err != nil {
+		t.Fatalf("LoadModelIdentity: %v", err)
+	}
+	// Unlike a chip or a workload, the name is a FILE field here, not the filename stem.
+	if id.Name != "deepseek-v4-pro" {
+		t.Errorf("name = %q; it is a file field for a model card", id.Name)
+	}
+	if id.Source == nil {
+		t.Fatal("source did not parse")
+	}
+	if id.Source.Provider != "huggingface" || id.Source.Repo != "deepseek-ai/DeepSeek-V4-Pro" {
+		t.Errorf("source identity did not parse: %+v", id.Source)
+	}
+	if id.Source.Revision != "b5968e9190ef611bbf34a7229255be88a0e937c1" || id.Source.Retrieved != "2026-10-02" {
+		t.Errorf("source provenance did not parse: %+v", id.Source)
+	}
+	if p := id.Validate(); !p.OK() {
+		t.Errorf("a loaded identity failed validation:\n%s", p.Error())
+	}
+}
+
+// TestLoadModelIdentityRejectsUnknownField pins strict decoding through the nested source
+// block: a misspelled sub-key must fail loudly rather than leave a zero value, the same
+// guarantee every other loader gives. Identity and Source are plain structs — neither
+// implements a custom UnmarshalYAML, which is what would silently drop the decoder's
+// KnownFields setting — so strict decoding recurses through the source block for free, and
+// this pins it at both levels.
+func TestLoadModelIdentityRejectsUnknownField(t *testing.T) {
+	cases := []struct {
+		name   string
+		body   string
+		badKey string
+	}{
+		{
+			name: "unknown key at the top level",
+			body: `
+name: m
+provdier: huggingface
+source:
+  provider: huggingface
+  repo: r
+  revision: v`,
+			badKey: "provdier",
+		},
+		{
+			name: "unknown key inside source",
+			body: `
+name: m
+source:
+  provider: huggingface
+  repo: r
+  revision: v
+  revison: v2`,
+			badKey: "revison",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := LoadModelIdentity(write(t, "model.yaml", tc.body))
+			if err == nil {
+				t.Fatalf("a misspelled %q was accepted; the card would validate while silently dropping it", tc.badKey)
+			}
+			if !strings.Contains(err.Error(), tc.badKey) {
+				t.Errorf("the error should name the offending field %q, got: %v", tc.badKey, err)
+			}
+		})
+	}
+}
+
+// catalogFixtures is a pinned, in-tree copy of blis-catalog's data, vendored once by hand
+// under testdata/ in the catalog's own layout: models/<name>/{config.json,model.yaml,
+// graph.yaml}, hardware/, networks/, devices/, workloads/. The source commit is recorded
+// in the vendoring commit message, not in a marker file, so testdata/ stays pure catalog
+// data. The committed-data tests resolve this snapshot rather than a BLIS_CATALOG env var
+// or a live checkout of the catalog's main: a laptop env var skips (a skip reads as a
+// pass), and a live main is a moving target that reddens unrelated builds. A pinned
+// snapshot only changes when someone deliberately re-vendors it in a reviewable commit.
+const catalogFixtures = "testdata"
+
+// TestLoadCatalogModels loads and VALIDATES the per-model artifacts in the vendored
+// catalog snapshot. It walks each models/<name>/ directory rather than globbing the two
+// YAML kinds independently: independent globs only notice a kind that has vanished from
+// the tree entirely, so a single directory missing one of its files would slip past them,
+// whereas walking the directory FAILS on it. The issue's layout gives every model entry
+// three files — config.json, model.yaml and graph.yaml — so each must be present
+// (config.json is checked for presence only; blis-schemas never parses it). model.yaml and
+// graph.yaml are then loaded and validated with the same Validate() cmd/validate-catalog
+// runs, and each must name itself what its directory is called. A MISSING fixture is a
+// FAILURE, not a skip: a skip is indistinguishable from a pass and would let the check
+// silently stop running. (The live validator treats a derived graph.yaml as optional,
+// because a live catalog entry may lack one; this is a pinned snapshot vendored in the
+// catalog's full layout, and re-vendoring is a deliberate, reviewable commit, so the
+// stronger per-entry completeness check belongs here.)
+func TestLoadCatalogModels(t *testing.T) {
+	modelsDir := filepath.Join(catalogFixtures, "models")
+	entries, err := os.ReadDir(modelsDir)
+	if err != nil {
+		t.Fatalf("reading %s: %v", modelsDir, err)
+	}
+	var names []string
+	for _, e := range entries {
+		// A model entry is a directory; skip hidden entries so a stray editor/VCS dir
+		// (a .foo) is never mistaken for a model and reported as missing its files.
+		if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
+			names = append(names, e.Name())
+		}
+	}
+	if len(names) == 0 {
+		t.Fatalf("no model directories under %s: the vendored catalog snapshot is missing",
+			modelsDir)
+	}
+	for _, name := range names {
+		dir := filepath.Join(modelsDir, name)
+		// config.json is part of the vendored layout but blis-schemas never parses it,
+		// so only its presence is checked; a missing one is a missing fixture and fails.
+		if _, err := os.Stat(filepath.Join(dir, "config.json")); err != nil {
+			t.Errorf("%s: missing config.json: %v", name, err)
+		}
+		// model.yaml and graph.yaml must be present, load, and validate. The load is
+		// gated on presence so a missing file reports once (the stat error) rather than
+		// a second, redundant open error from the loader.
+		modelPath := filepath.Join(dir, "model.yaml")
+		if _, err := os.Stat(modelPath); err != nil {
+			t.Errorf("%s: missing model.yaml: %v", name, err)
+		} else if id, err := LoadModelIdentity(modelPath); err != nil {
+			t.Errorf("LoadModelIdentity(%s/model.yaml): %v", name, err)
+		} else {
+			// The stated name must match the directory, and the source provenance must
+			// be whole: those are what make a card an identity rather than a note.
+			if id.Name != name {
+				t.Errorf("%s/model.yaml: name %q does not match directory %q", name, id.Name, name)
+			}
+			if p := id.Validate(); !p.OK() {
+				t.Errorf("%s/model.yaml failed validation:\n%s", name, p.Error())
+			}
+		}
+		graphPath := filepath.Join(dir, "graph.yaml")
+		if _, err := os.Stat(graphPath); err != nil {
+			t.Errorf("%s: missing graph.yaml: %v", name, err)
+		} else if g, err := LoadModelGraph(graphPath); err != nil {
+			t.Errorf("LoadModelGraph(%s/graph.yaml): %v", name, err)
+		} else {
+			// A graph, like an identity, names itself what its directory is called.
+			if g.Name != name {
+				t.Errorf("%s/graph.yaml: name %q does not match directory %q", name, g.Name, name)
+			}
+			if p := g.Validate(); !p.OK() {
+				t.Errorf("%s/graph.yaml failed validation:\n%s", name, p.Error())
+			}
+		}
+	}
+	t.Logf("validated model.yaml + graph.yaml and checked config.json presence for %d model(s) from the vendored catalog",
+		len(names))
 }
 
 func TestLoadCoefficientSet(t *testing.T) {
@@ -477,18 +892,20 @@ oops_unknown_root_key: true
 	}
 }
 
-// TestLoadCatalogFilesIfPresent parses the committed catalog files themselves. It is
-// the strongest check of the tags: a hand-written fixture agrees with whatever the
-// tags happen to say, where the real files do not.
-func TestLoadCatalogFilesIfPresent(t *testing.T) {
-	root := os.Getenv("BLIS_CATALOG")
-	if root == "" {
-		t.Skip("BLIS_CATALOG is unset: the yaml tags were NOT checked against the " +
-			"committed catalog files, only against fixtures in this package")
+// TestLoadCatalogFiles loads and VALIDATES every top-level catalog artifact in the
+// vendored snapshot: a chip, a fabric, a workload shape, and each storage tier. Like
+// TestLoadCatalogModels it is the strongest check of the tags — real files, not
+// hand-written fixtures — and it validates rather than merely loading (the gap #17 left),
+// calling the same Validate() cmd/validate-catalog runs. A MISSING namespace is a FAILURE,
+// not a skip, so the check cannot silently stop running against a snapshot that moved.
+func TestLoadCatalogFiles(t *testing.T) {
+	chips, err := filepath.Glob(filepath.Join(catalogFixtures, "hardware", "*.yaml"))
+	if err != nil {
+		t.Fatalf("globbing hardware/*.yaml: %v", err)
 	}
-	chips, _ := filepath.Glob(filepath.Join(root, "hardware", "*.yaml"))
 	if len(chips) == 0 {
-		t.Skipf("BLIS_CATALOG=%s has no hardware/*.yaml", root)
+		t.Fatalf("no hardware/*.yaml under %s: the vendored catalog snapshot is missing",
+			catalogFixtures)
 	}
 	for _, path := range chips {
 		c, err := LoadChip(path)
@@ -496,26 +913,76 @@ func TestLoadCatalogFilesIfPresent(t *testing.T) {
 			t.Errorf("LoadChip(%s): %v", filepath.Base(path), err)
 			continue
 		}
-		// Every field the schema declares required must have arrived.
-		if c.BF16Peak <= 0 || c.MemoryGiB <= 0 || c.IntraNodeBwGBps <= 0 {
-			t.Errorf("%s: a required field did not parse: %+v", filepath.Base(path), c)
+		if p := c.Validate(); !p.OK() {
+			t.Errorf("%s failed validation:\n%s", filepath.Base(path), p.Error())
 		}
 	}
-	fabrics, _ := filepath.Glob(filepath.Join(root, "networks", "*.yaml"))
+
+	fabrics, err := filepath.Glob(filepath.Join(catalogFixtures, "networks", "*.yaml"))
+	if err != nil {
+		t.Fatalf("globbing networks/*.yaml: %v", err)
+	}
+	if len(fabrics) == 0 {
+		t.Fatalf("no networks/*.yaml under %s: the vendored catalog snapshot is missing",
+			catalogFixtures)
+	}
 	for _, path := range fabrics {
 		f, err := LoadFabric(path)
 		if err != nil {
 			t.Errorf("LoadFabric(%s): %v", filepath.Base(path), err)
 			continue
 		}
-		if f.InterNodeBwGBps <= 0 {
-			t.Errorf("%s: InterNodeBwGBps did not parse", filepath.Base(path))
+		if p := f.Validate(); !p.OK() {
+			t.Errorf("%s failed validation:\n%s", filepath.Base(path), p.Error())
 		}
 	}
-	t.Logf("parsed %d chip and %d fabric files from the catalog", len(chips), len(fabrics))
+
+	workloads, err := filepath.Glob(filepath.Join(catalogFixtures, "workloads", "*.yaml"))
+	if err != nil {
+		t.Fatalf("globbing workloads/*.yaml: %v", err)
+	}
+	if len(workloads) == 0 {
+		t.Fatalf("no workloads/*.yaml under %s: the vendored catalog snapshot is missing",
+			catalogFixtures)
+	}
+	for _, path := range workloads {
+		w, err := LoadWorkload(path)
+		if err != nil {
+			t.Errorf("LoadWorkload(%s): %v", filepath.Base(path), err)
+			continue
+		}
+		if p := w.Validate(); !p.OK() {
+			t.Errorf("%s failed validation:\n%s", filepath.Base(path), p.Error())
+		}
+	}
+
+	// devices/storage.yaml is one mapping file of tier name to device facts, loaded as a
+	// list; it is a required part of the snapshot, so an absent or empty file fails.
+	devicesPath := filepath.Join(catalogFixtures, "devices", "storage.yaml")
+	devices, err := LoadStorageDevices(devicesPath)
+	if err != nil {
+		t.Fatalf("LoadStorageDevices(%s): %v", devicesPath, err)
+	}
+	if len(devices) == 0 {
+		t.Fatalf("%s declares no storage tier: the vendored catalog snapshot is missing",
+			devicesPath)
+	}
+	for _, d := range devices {
+		if p := d.Validate(); !p.OK() {
+			t.Errorf("devices/storage.yaml:%s failed validation:\n%s", d.Name, p.Error())
+		}
+	}
+
+	t.Logf("validated %d chip(s), %d fabric(s), %d workload(s), %d storage tier(s) from the vendored catalog",
+		len(chips), len(fabrics), len(workloads), len(devices))
 }
 
-// TestLoadRegistryFilesIfPresent does the same for coefficient sets.
+// TestLoadRegistryFilesIfPresent parses the committed coefficient sets from a BLIS_REGISTRY
+// checkout. Unlike the catalog tests above, the registry has no vendored in-tree snapshot
+// yet, so this one is still gated on an env var and SKIPS when it is unset, and it checks
+// the parsed entries' fields (a name, a unit, a method) rather than calling Set.Validate().
+// Pinning and fully validating the registry the way testdata/ now pins the catalog is a
+// separate change.
 func TestLoadRegistryFilesIfPresent(t *testing.T) {
 	root := os.Getenv("BLIS_REGISTRY")
 	if root == "" {

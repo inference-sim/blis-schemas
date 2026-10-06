@@ -1,0 +1,10 @@
+prompt:
+  tokens: 10240
+  tokens_stdev: 1200
+  tokens_min: 500
+  tokens_max: 20480
+output:
+  tokens: 1536
+  tokens_stdev: 300
+  tokens_min: 50
+  tokens_max: 4096

@@ -57,6 +57,19 @@ func LoadModelGraph(path string) (*model.Graph, error) {
 	return &g, nil
 }
 
+// LoadModelIdentity reads a model entry's identity manifest, blis-catalog's
+// models/<name>/model.yaml: the name the entry claims and the provenance of the vendor
+// config beside it. Unlike a chip, a fabric or a workload, this file carries its name IN
+// the document — the catalog requires that name to match the directory — so the loader
+// does not stamp it; the caller checks it against the directory, as it does for a graph.
+func LoadModelIdentity(path string) (*model.Identity, error) {
+	var id model.Identity
+	if err := decodeStrict(path, &id); err != nil {
+		return nil, err
+	}
+	return &id, nil
+}
+
 // LoadChip reads a chip descriptor from blis-catalog's hardware namespace. The file
 // carries no name — identity is the filename — so the loader supplies it.
 func LoadChip(path string) (*hardware.Chip, error) {
@@ -92,12 +105,20 @@ func LoadCoefficientSet(path string) (*coefficient.Set, error) {
 	return &s, nil
 }
 
-// LoadWorkload reads a traffic shape from blis-catalog's workloads namespace.
+// LoadWorkload reads a traffic shape from blis-catalog's workloads namespace. The file
+// carries no name — identity is the filename — so the loader stamps Shape.Name from the
+// path stem. The Shape type tags Name `yaml:"-"`, so the stamp is the field's only
+// source: there is no in-file name to prefer, hence no `if Name == ""` guard, and an
+// in-file `name` is rejected under strict decode. This TIGHTENS the by-filename rule that
+// LoadChip/LoadFabric only partly enforce — they keep a `yaml:"name"` tag and an empty-name
+// guard that still accept an in-file name — rather than matching them; aligning chips and
+// fabrics is tracked as #27.
 func LoadWorkload(path string) (*workload.Shape, error) {
 	var w workload.Shape
 	if err := decodeStrict(path, &w); err != nil {
 		return nil, err
 	}
+	w.Name = stem(path)
 	return &w, nil
 }
 

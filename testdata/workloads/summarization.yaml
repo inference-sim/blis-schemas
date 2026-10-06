@@ -1,0 +1,11 @@
+prefix_tokens: 0
+prompt:
+  tokens: 4096
+  tokens_stdev: 500
+  tokens_min: 100
+  tokens_max: 8192
+output:
+  tokens: 512
+  tokens_stdev: 150
+  tokens_min: 10
+  tokens_max: 2048

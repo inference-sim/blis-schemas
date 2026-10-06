@@ -5,3 +5,7 @@
 # Compiled command binaries, if a `go build` is run in the tree
 /cmd/*/[a-z]*
 !/cmd/*/*.go
+# testdata fixtures: the lowercase-dir glob above also matches cmd/*/testdata, so
+# re-include it (and its subtree) — a compiled binary never lives under testdata.
+!/cmd/*/testdata/
+!/cmd/*/testdata/**
