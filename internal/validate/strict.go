@@ -62,6 +62,30 @@ func IgnoreCatalogComments(key string) bool {
 	return key == "_comment" || strings.HasPrefix(key, "_comment_")
 }
 
+// StripCatalogComments removes the catalog's `_comment`-prefixed provenance keys from a
+// mapping node in place, before it is decoded, so no prose survives onto the struct. It is
+// the companion to RejectUnknownKeys: that call lets the comment keys past the unknown-field
+// check, this one drops them so Decode does not try to bind them to a field.
+//
+// It lives here rather than in spec/hardware because more than one catalog document type
+// carries the convention — a chip, a fabric and a storage device do, and a workload shape
+// does now too (#28) — and a nine-line node walk duplicated per package is the worse
+// outcome. The predicate it strips on is IgnoreCatalogComments, so the set of keys accepted
+// by RejectUnknownKeys and the set stripped here cannot drift apart.
+func StripCatalogComments(node *yaml.Node) {
+	if node.Kind != yaml.MappingNode {
+		return
+	}
+	kept := make([]*yaml.Node, 0, len(node.Content))
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if IgnoreCatalogComments(node.Content[i].Value) {
+			continue
+		}
+		kept = append(kept, node.Content[i], node.Content[i+1])
+	}
+	node.Content = kept
+}
+
 func yamlFieldNames(t reflect.Type) map[string]bool {
 	for t.Kind() == reflect.Pointer {
 		t = t.Elem()

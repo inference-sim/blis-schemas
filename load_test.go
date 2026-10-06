@@ -310,6 +310,57 @@ output:
 	}
 }
 
+// TestLoadWorkloadAcceptsCommentKeys is #28: a workload Shape now carries the catalog's
+// `_comment`-prefixed provenance narrative that Chip, Fabric and StorageDevice already
+// accept, so a workloads/*.yaml can document why its token figures are what they are —
+// following the pattern every hardware/*.yaml sets — rather than failing strict decoding on
+// the first `_comment`. The notes are accepted at both nesting levels (top-level and inside
+// a prompt/output distribution) and stripped before decoding, so no prose reaches the struct.
+func TestLoadWorkloadAcceptsCommentKeys(t *testing.T) {
+	path := write(t, "chatbot.yaml", `
+_comment: "token figures from the vLLM chat benchmark; see the issue that set them"
+prefix_tokens: 0
+prompt:
+  _comment_min: "min is p01 of the sampled trace, not an assumption"
+  tokens: 256
+  tokens_stdev: 100
+  tokens_min: 2
+output:
+  tokens: 256
+`)
+	w, err := LoadWorkload(path)
+	if err != nil {
+		t.Fatalf("comment keys were rejected: %v", err)
+	}
+	// The prose is stripped, and the real fields decode normally around it.
+	if w.Prompt.Mean != 256 || w.Prompt.StdDev != 100 || w.Prompt.Min != 2 {
+		t.Errorf("distribution did not parse around the comment: %+v", w.Prompt)
+	}
+}
+
+// TestLoadWorkloadStillRejectsNestedTypos guards the regression the #28 hook could have
+// introduced. Giving Shape a custom UnmarshalYAML means node.Decode runs, which does NOT
+// honour the decoder's KnownFields setting — so without Distribution's own hook a misspelled
+// key nested under prompt:/output: would silently decode to a zero value. Distribution
+// restores the check, so a typo at the inner level is still a loud error, as it was before
+// #28. A comment key is accepted; a typo is not — the distinction strict decoding exists for.
+func TestLoadWorkloadStillRejectsNestedTypos(t *testing.T) {
+	path := write(t, "chatbot.yaml", `
+prefix_tokens: 0
+prompt:
+  tokens: 256
+  tokens_minn: 2
+output:
+  tokens: 256
+`)
+	if _, err := LoadWorkload(path); err == nil {
+		t.Fatal("a nested misspelled field was accepted; the shape would decode with a wrong " +
+			"bound and nothing would report it")
+	} else if !strings.Contains(err.Error(), "tokens_minn") {
+		t.Errorf("the error should name the offending nested field, got: %v", err)
+	}
+}
+
 // TestLoadChipRejectsInFileName is the by-filename identity contract for a Chip, the same
 // one TestLoadWorkloadRejectsInFileName pins for a Shape. #27 made Chip.Name a filename
 // fact: the field is tagged `yaml:"-"`, so yaml.v3 binds no `name` key to it and the strict

@@ -50,19 +50,11 @@ import (
 // filename already fixes. A loader sets Name from the path stem (its only source), and
 // validation requires it, so a chip that reaches a cost model without one is an error
 // rather than an anonymous descriptor.
-func stripCatalogComments(node *yaml.Node) {
-	if node.Kind != yaml.MappingNode {
-		return
-	}
-	kept := make([]*yaml.Node, 0, len(node.Content))
-	for i := 0; i+1 < len(node.Content); i += 2 {
-		if validate.IgnoreCatalogComments(node.Content[i].Value) {
-			continue
-		}
-		kept = append(kept, node.Content[i], node.Content[i+1])
-	}
-	node.Content = kept
-}
+//
+// The strip itself is validate.StripCatalogComments, shared with spec/workload (#28) so the
+// one convention is implemented once; the hardware-specific policy above (what counts as a
+// comment, why a bare underscore does not) still lives here because it is where the catalog's
+// hardware/ namespace documents it.
 
 // Chip is what a GPU die can do. Every field is a vendor figure; nothing here is
 // fitted. A fitted quantity belongs in blis-registry, where it can carry a method
@@ -157,7 +149,7 @@ func (c *Chip) UnmarshalYAML(node *yaml.Node) error {
 	if err := validate.RejectUnknownKeys(node, Chip{}, validate.IgnoreCatalogComments); err != nil {
 		return err
 	}
-	stripCatalogComments(node)
+	validate.StripCatalogComments(node)
 	type shape Chip
 	var raw shape
 	if err := node.Decode(&raw); err != nil {
@@ -172,7 +164,7 @@ func (f *Fabric) UnmarshalYAML(node *yaml.Node) error {
 	if err := validate.RejectUnknownKeys(node, Fabric{}, validate.IgnoreCatalogComments); err != nil {
 		return err
 	}
-	stripCatalogComments(node)
+	validate.StripCatalogComments(node)
 	type shape Fabric
 	var raw shape
 	if err := node.Decode(&raw); err != nil {
@@ -187,7 +179,7 @@ func (d *StorageDevice) UnmarshalYAML(node *yaml.Node) error {
 	if err := validate.RejectUnknownKeys(node, StorageDevice{}, validate.IgnoreCatalogComments); err != nil {
 		return err
 	}
-	stripCatalogComments(node)
+	validate.StripCatalogComments(node)
 	type shape StorageDevice
 	var raw shape
 	if err := node.Decode(&raw); err != nil {
