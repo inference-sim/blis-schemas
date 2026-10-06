@@ -176,6 +176,29 @@ hardware fields that these typed validators do not, and these validators check c
 properties (an acyclic graph, a prefix no longer than its prompt) that the Python gate does
 not. The two gates are stronger together.
 
+As this binary becomes the *sole* gate for `blis-catalog` (its 620-line
+`validate_catalog.py` is being deleted in favour of it), the `hardware`/`networks`
+validators enforce the schema-structural invariants that gate had, so a malformed edit
+cannot become a green merge after the migration:
+
+- **Every numeric datasheet field must be finite.** A `NaN` or `Inf` is rejected before
+  its magnitude check, since the magnitude checks miss them: a `NaN` compares false to
+  every bound, and a `+Inf` reads as positive — so either would otherwise reach a cost
+  model and poison its arithmetic.
+- **`SMCount` is required and positive.** The field has no `omitempty`, so a missing count
+  decodes to zero and is rejected: every chip must declare how many SMs it ships.
+- **`hardware/` carries only dimensioned physical quantities.** The strict decoder rejects
+  any unknown field, and the comment convention is narrowed to `_comment`-prefixed keys —
+  so a fitted or dimensionless factor cannot slip in behind an underscore (`_mfu: 0.85`
+  fails as an unknown field, as a bare `mfu` already did).
+
+One invariant from the deleted gate is deliberately **not** reproduced here: the
+requirement that each `SMCount` cite a chaseable source URL in its `_comment_sm` prose.
+That is a catalog-provenance *policy* (does the prose cite a source), not a
+schema-structural *invariant* (is the value a sane datasheet figure), and the schema
+strips comment prose before decoding, so a struct validator cannot see it. It belongs in a
+catalog-side lint over the raw files; see `spec/hardware/hardware.go` and issue #32.
+
 A per-entry summary line goes to stdout for each artifact that validates and every
 problem to stderr, so the report reads cleanly and the exit code is scriptable: `0`
 when everything validates, `1` on any validation failure, and `2` for a usage error

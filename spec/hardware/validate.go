@@ -1,6 +1,23 @@
 package hardware
 
-import "github.com/inference-sim/blis-schemas/internal/validate"
+import (
+	"math"
+
+	"github.com/inference-sim/blis-schemas/internal/validate"
+)
+
+// rejectNonFinite records a problem if x is NaN or ±Inf. Every numeric datasheet field
+// needs this before its magnitude check, because neither non-finite value is caught by
+// the magnitude checks alone: a NaN compares false to every bound (NaN <= 0 and NaN > 0
+// are both false), so it slips past both a positivity check and a presence guard; and a
+// +Inf passes a positivity check outright (+Inf <= 0 is false, i.e. it reads as "> 0").
+// Either reaches a cost model and poisons every arithmetic it touches. The deleted
+// blis-catalog validate_catalog.py rejected non-finite numerics for the same reason.
+func rejectNonFinite(p *validate.Problems, field string, x float64) {
+	if math.IsNaN(x) || math.IsInf(x, 0) {
+		p.Field(field, "must be a finite number")
+	}
+}
 
 // Validate performs field-level validation of a chip: required positives,
 // recognized provenance, and internal consistency between the packaging fields.
@@ -12,6 +29,15 @@ func (c *Chip) Validate() *validate.Problems {
 	if !c.Provenance.Valid() {
 		p.Field("Provenance", "%q is not a recognized provenance", c.Provenance)
 	}
+	// Every numeric field must be finite before its magnitude check runs, so a NaN or
+	// Inf is caught rather than slipping past a comparison that is false either way.
+	rejectNonFinite(p, "TFlopsPeak", c.BF16Peak)
+	rejectNonFinite(p, "TFlopsFP8", c.FP8Peak)
+	rejectNonFinite(p, "TFlopsNVFP4", c.NVFP4Peak)
+	rejectNonFinite(p, "BwPeakTBs", c.MemoryBandwidthTBs)
+	rejectNonFinite(p, "MemoryGiB", c.MemoryGiB)
+	rejectNonFinite(p, "IntraNodeBwGBps", c.IntraNodeBwGBps)
+	rejectNonFinite(p, "IntraRackBwGBps", c.IntraRackBwGBps)
 	if c.BF16Peak <= 0 {
 		p.Field("TFlopsPeak", "must be positive")
 	}
@@ -37,8 +63,12 @@ func (c *Chip) Validate() *validate.Problems {
 			"FP8 peak %.1f does not exceed BF16 peak %.1f; check the transcription",
 			c.FP8Peak, c.BF16Peak)
 	}
-	if c.SMCount < 0 {
-		p.Field("SMCount", "must not be negative")
+	// SMCount is required and positive. The field has no omitempty, so a missing count
+	// decodes to zero and is rejected here alongside a negative one: every chip must
+	// declare how many SMs it ships, since a model sizes a withheld-SM derate as a
+	// fraction of it.
+	if c.SMCount <= 0 {
+		p.Field("SMCount", "must be positive; every chip must declare its SM count")
 	}
 	if c.GPUsPerRack > 0 && c.GPUsPerNode > 0 && c.GPUsPerRack%c.GPUsPerNode != 0 {
 		p.Field("GPUsPerRack", "%d is not a multiple of GPUsPerNode %d",
@@ -60,6 +90,7 @@ func (f *Fabric) Validate() *validate.Problems {
 	if !f.Provenance.Valid() {
 		p.Field("Provenance", "%q is not a recognized provenance", f.Provenance)
 	}
+	rejectNonFinite(p, "InterNodeBwGBps", f.InterNodeBwGBps)
 	if f.InterNodeBwGBps <= 0 {
 		p.Field("InterNodeBwGBps", "must be positive")
 	}
@@ -72,6 +103,9 @@ func (d *StorageDevice) Validate() *validate.Problems {
 	if d.Name == "" {
 		p.Field("name", "required")
 	}
+	rejectNonFinite(p, "read_bandwidth", d.ReadBandwidthMBs)
+	rejectNonFinite(p, "write_bandwidth", d.WriteBandwidthMBs)
+	rejectNonFinite(p, "base_latency", d.BaseLatencyUs)
 	if d.ReadBandwidthMBs <= 0 {
 		p.Field("read_bandwidth", "must be positive")
 	}

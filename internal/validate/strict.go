@@ -20,7 +20,7 @@ import (
 
 // RejectUnknownKeys reports an error naming any key in node that target does not
 // declare. Keys matching an ignore predicate are skipped, which is how the catalog's
-// underscore-prefixed provenance narrative is allowed through.
+// `_comment`-prefixed provenance narrative is allowed through.
 func RejectUnknownKeys(node *yaml.Node, target any, ignore func(string) bool) error {
 	if node.Kind != yaml.MappingNode {
 		return nil
@@ -49,9 +49,14 @@ func RejectUnknownKeys(node *yaml.Node, target any, ignore func(string) bool) er
 		unknown, allowed)
 }
 
-// IgnoreUnderscored reports whether a key is one of the catalog's provenance
-// narrative keys, which are deliberate content rather than stray fields.
-func IgnoreUnderscored(key string) bool { return strings.HasPrefix(key, "_") }
+// IgnoreCatalogComments reports whether a key is one of the catalog's provenance
+// narrative keys, which are deliberate content rather than stray fields. Only keys
+// prefixed "_comment" qualify: those are the catalog's documented prose convention
+// (_comment, _comment_sm, _comment_interconnect). Every other key — including any
+// other underscore-prefixed one — is treated as a data field, so a dimensionless or
+// misspelled value cannot hide behind an underscore (a "_mfu" still fails the
+// unknown-field check, matching blis-catalog's deleted validate_catalog.py).
+func IgnoreCatalogComments(key string) bool { return strings.HasPrefix(key, "_comment") }
 
 func yamlFieldNames(t reflect.Type) map[string]bool {
 	for t.Kind() == reflect.Pointer {
