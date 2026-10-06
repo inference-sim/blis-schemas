@@ -23,7 +23,8 @@ import (
 )
 
 // The catalog's files carry free-text keys prefixed with "_comment" — _comment,
-// _comment_interconnect, _comment_sm — holding the provenance narrative for each number.
+// _comment_interconnect, _comment_sm, _comment_pd_transfer — holding the provenance
+// narrative for each number.
 // They are deliberate content rather than stray fields, so a strict decoder must accept
 // them while still rejecting a misspelled real field.
 //

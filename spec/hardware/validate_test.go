@@ -92,6 +92,33 @@ func TestChipRejects(t *testing.T) {
 	}
 }
 
+// TestNonFiniteFieldReportsOnce pins that a non-finite field is reported exactly once, at
+// the field that is wrong, rather than also tripping a dependent check. A +Inf BF16 peak
+// must not make the FP8-vs-BF16 transcription check complain about the FP8 field, and a
+// -Inf must not also fire the positivity check — both would misdirect the fix.
+func TestNonFiniteFieldReportsOnce(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*Chip)
+	}{
+		{"+Inf bf16 peak", func(c *Chip) { c.BF16Peak = math.Inf(1) }},
+		{"-Inf bf16 peak", func(c *Chip) { c.BF16Peak = math.Inf(-1) }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := h200()
+			tc.mutate(c)
+			errs := c.Validate().Errors()
+			if len(errs) != 1 {
+				t.Fatalf("want exactly one error, got %d:\n%s", len(errs), c.Validate().Error())
+			}
+			if errs[0].Path != "TFlopsPeak" {
+				t.Errorf("the single error should be at TFlopsPeak, got %q", errs[0].Path)
+			}
+		})
+	}
+}
+
 func TestFabricAndDeviceRejects(t *testing.T) {
 	bad := []*Fabric{
 		{Provenance: vocab.ProvenanceVendorSpec, InterNodeBwGBps: 50}, // no name
@@ -129,9 +156,13 @@ func TestFabricAndDeviceRejects(t *testing.T) {
 }
 
 // cleanChipYAML is a minimal well-formed chip document, used as the base a decode test
-// mutates one key at a time so each case isolates the key it adds.
+// mutates one key at a time so each case isolates the key it adds. It is kept consistent
+// with cleanChip in cmd/validate-catalog/main_test.go (the end-to-end counterpart); the
+// two live in different packages so they cannot share one literal, and both must gain any
+// field this schema makes newly required — SMCount was the last such change.
 const cleanChipYAML = `Provenance: vendor_spec
 TFlopsPeak: 989.5
+TFlopsFP8: 1979.0
 BwPeakTBs: 3.35
 MemoryGiB: 80.0
 IntraNodeBwGBps: 450

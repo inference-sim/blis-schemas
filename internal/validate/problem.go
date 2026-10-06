@@ -97,7 +97,14 @@ func (p *Problems) Field(name, format string, args ...any) {
 // coefficients — rejects a non-finite value identically rather than re-deriving the
 // check, or forgetting it. A non-finite number that reaches a cost model poisons every
 // arithmetic it touches.
-func (p *Problems) FiniteField(name string, x float64) {
+//
+// It returns whether x is finite, so a caller can gate the field's magnitude and
+// relational checks on it: once a field is flagged non-finite, re-running those checks
+// is at best a duplicate error (a -Inf also trips "must be positive") and at worst a
+// misattribution (a +Inf BF16 makes an FP8-vs-BF16 check complain about the FP8 field).
+// Reporting the fault once, at the field that is actually wrong, keeps the diagnostic
+// honest.
+func (p *Problems) FiniteField(name string, x float64) bool {
 	// Name which non-finite value it is: NaN points at a missing or corrupted input,
 	// an infinity at an unbounded or divide-by-zero scale, and the two call for
 	// different fixes in the raw catalog data.
@@ -108,7 +115,10 @@ func (p *Problems) FiniteField(name string, x float64) {
 		p.Field(name, "must be a finite number, got +Inf")
 	case math.IsInf(x, -1):
 		p.Field(name, "must be a finite number, got -Inf")
+	default:
+		return true
 	}
+	return false
 }
 
 func (p *Problems) add(sev Severity, rule, msg string) {

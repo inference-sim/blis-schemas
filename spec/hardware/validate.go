@@ -13,35 +13,42 @@ func (c *Chip) Validate() *validate.Problems {
 		p.Field("Provenance", "%q is not a recognized provenance", c.Provenance)
 	}
 	// Every numeric field must be finite before its magnitude check runs, so a NaN or
-	// Inf is caught rather than slipping past a comparison that is false either way.
-	p.FiniteField("TFlopsPeak", c.BF16Peak)
-	p.FiniteField("TFlopsFP8", c.FP8Peak)
-	p.FiniteField("TFlopsNVFP4", c.NVFP4Peak)
-	p.FiniteField("BwPeakTBs", c.MemoryBandwidthTBs)
-	p.FiniteField("MemoryGiB", c.MemoryGiB)
-	p.FiniteField("IntraNodeBwGBps", c.IntraNodeBwGBps)
-	p.FiniteField("IntraRackBwGBps", c.IntraRackBwGBps)
-	if c.BF16Peak <= 0 {
+	// Inf is caught rather than slipping past a comparison that is false either way. Each
+	// FiniteField reports whether the field is finite; the magnitude and relational
+	// checks below are gated on that, so a non-finite field is reported once — at the
+	// field that is wrong — rather than also tripping its positivity check (a -Inf) or a
+	// relational check that would misname a different field (a +Inf BF16 peak making the
+	// FP8-vs-BF16 check complain about FP8).
+	bf16Finite := p.FiniteField("TFlopsPeak", c.BF16Peak)
+	fp8Finite := p.FiniteField("TFlopsFP8", c.FP8Peak)
+	nvfp4Finite := p.FiniteField("TFlopsNVFP4", c.NVFP4Peak)
+	bwFinite := p.FiniteField("BwPeakTBs", c.MemoryBandwidthTBs)
+	memFinite := p.FiniteField("MemoryGiB", c.MemoryGiB)
+	intraNodeFinite := p.FiniteField("IntraNodeBwGBps", c.IntraNodeBwGBps)
+	intraRackFinite := p.FiniteField("IntraRackBwGBps", c.IntraRackBwGBps)
+	if bf16Finite && c.BF16Peak <= 0 {
 		p.Field("TFlopsPeak", "must be positive")
 	}
-	if c.MemoryBandwidthTBs <= 0 {
+	if bwFinite && c.MemoryBandwidthTBs <= 0 {
 		p.Field("BwPeakTBs", "must be positive")
 	}
-	if c.MemoryGiB <= 0 {
+	if memFinite && c.MemoryGiB <= 0 {
 		p.Field("MemoryGiB", "must be positive")
 	}
-	if c.IntraNodeBwGBps <= 0 {
+	if intraNodeFinite && c.IntraNodeBwGBps <= 0 {
 		p.Field("IntraNodeBwGBps", "must be positive")
 	}
-	if c.FP8Peak < 0 {
+	if fp8Finite && c.FP8Peak < 0 {
 		p.Field("TFlopsFP8", "must not be negative; omit it on parts without native FP8")
 	}
-	if c.NVFP4Peak < 0 {
+	if nvfp4Finite && c.NVFP4Peak < 0 {
 		p.Field("TFlopsNVFP4", "must not be negative; omit it where the format is emulated")
 	}
 	// FP8 at or below BF16 would mean the narrower format buys nothing, which is not
-	// a property any shipped part has. It is far more likely a transcription slip.
-	if c.FP8Peak > 0 && c.FP8Peak <= c.BF16Peak {
+	// a property any shipped part has. It is far more likely a transcription slip. Only
+	// meaningful when both peaks are finite — a non-finite one is already reported, and
+	// comparing against it would misattribute the fault to FP8.
+	if fp8Finite && bf16Finite && c.FP8Peak > 0 && c.FP8Peak <= c.BF16Peak {
 		p.Field("TFlopsFP8",
 			"FP8 peak %.1f does not exceed BF16 peak %.1f; check the transcription",
 			c.FP8Peak, c.BF16Peak)
@@ -57,7 +64,7 @@ func (c *Chip) Validate() *validate.Problems {
 		p.Field("GPUsPerRack", "%d is not a multiple of GPUsPerNode %d",
 			c.GPUsPerRack, c.GPUsPerNode)
 	}
-	if c.IntraRackBwGBps > 0 && c.GPUsPerRack == 0 {
+	if intraRackFinite && c.IntraRackBwGBps > 0 && c.GPUsPerRack == 0 {
 		p.Field("IntraRackBwGBps",
 			"an intra-rack bandwidth without GPUsPerRack describes a tier with no extent")
 	}
@@ -73,8 +80,7 @@ func (f *Fabric) Validate() *validate.Problems {
 	if !f.Provenance.Valid() {
 		p.Field("Provenance", "%q is not a recognized provenance", f.Provenance)
 	}
-	p.FiniteField("InterNodeBwGBps", f.InterNodeBwGBps)
-	if f.InterNodeBwGBps <= 0 {
+	if p.FiniteField("InterNodeBwGBps", f.InterNodeBwGBps) && f.InterNodeBwGBps <= 0 {
 		p.Field("InterNodeBwGBps", "must be positive")
 	}
 	return p
@@ -86,18 +92,15 @@ func (d *StorageDevice) Validate() *validate.Problems {
 	if d.Name == "" {
 		p.Field("name", "required")
 	}
-	p.FiniteField("read_bandwidth", d.ReadBandwidthMBs)
-	p.FiniteField("write_bandwidth", d.WriteBandwidthMBs)
-	p.FiniteField("base_latency", d.BaseLatencyUs)
-	if d.ReadBandwidthMBs <= 0 {
+	if p.FiniteField("read_bandwidth", d.ReadBandwidthMBs) && d.ReadBandwidthMBs <= 0 {
 		p.Field("read_bandwidth", "must be positive")
 	}
-	if d.WriteBandwidthMBs <= 0 {
+	if p.FiniteField("write_bandwidth", d.WriteBandwidthMBs) && d.WriteBandwidthMBs <= 0 {
 		p.Field("write_bandwidth", "must be positive")
 	}
 	// Zero base latency would make an arbitrarily small transfer free, which no
 	// device is. It is the term that dominates small transfers.
-	if d.BaseLatencyUs <= 0 {
+	if p.FiniteField("base_latency", d.BaseLatencyUs) && d.BaseLatencyUs <= 0 {
 		p.Field("base_latency", "must be positive; it dominates small transfers")
 	}
 	return p

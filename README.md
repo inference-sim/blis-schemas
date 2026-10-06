@@ -196,10 +196,12 @@ cannot become a green merge after the migration:
 
 One invariant from the deleted gate is deliberately **not** reproduced here: the
 requirement that each `SMCount` cite a chaseable source URL in its `_comment_sm` prose.
-That is a catalog-provenance *policy* (does the prose cite a source), not a
-schema-structural *invariant* (is the value a sane datasheet figure), and the schema
-strips comment prose before decoding, so a struct validator cannot see it. It belongs in a
-catalog-side lint over the raw files; see `spec/hardware/hardware.go` and issue #32.
+It is a catalog-provenance policy rather than a schema-structural invariant, and the
+schema strips comment prose before decoding, so a struct validator cannot see it — the
+full rationale, and the note that it belongs in a catalog-side lint, live at the one
+source of truth in [`spec/hardware/hardware.go`](spec/hardware/hardware.go) (see also
+issue #32). It is enforced nowhere today; tracking where it should live is the open
+follow-up.
 
 A per-entry summary line goes to stdout for each artifact that validates and every
 problem to stderr, so the report reads cleanly and the exit code is scriptable: `0`

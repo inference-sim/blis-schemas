@@ -61,8 +61,10 @@ func (e Entry) validate(p *validate.Problems, at string) {
 	// A coefficient feeds the latency model directly, so a non-finite value poisons it
 	// exactly as a non-finite hardware figure poisons the cost model. The registry
 	// loads these through this schema, so the check belongs here. A NaN would also
-	// escape the interval bounds check below (NaN compares false to both < and >).
-	p.FiniteField(at+".value", e.Value)
+	// escape the interval bounds check below (NaN compares false to both < and >), so
+	// gate the not_charged and containment checks on finiteness to avoid a misleading
+	// second complaint about a value already reported non-finite.
+	valueFinite := p.FiniteField(at+".value", e.Value)
 	if !e.Units.Valid() {
 		p.Field(at+".units", "%q is not one of %v", e.Units, vocab.AllUnits())
 	}
@@ -75,7 +77,7 @@ func (e Entry) validate(p *validate.Problems, at string) {
 		p.Field(at+".scope",
 			"at least one dimension is required; an empty scope states no applicability rather than universal applicability")
 	}
-	if e.Method == vocab.MethodNotCharged && e.Value != 0 {
+	if valueFinite && e.Method == vocab.MethodNotCharged && e.Value != 0 {
 		p.Field(at+".value",
 			"method not_charged declares a deliberate zero, but value is %v", e.Value)
 	}
@@ -109,15 +111,18 @@ func (e Entry) validate(p *validate.Problems, at string) {
 	if e.CI95 != nil {
 		// A non-finite interval endpoint would silently defeat the ordering and
 		// containment checks below (every comparison with NaN is false), so reject it
-		// first, as the value itself is.
-		p.FiniteField(at+".ci95.low", e.CI95.Low)
-		p.FiniteField(at+".ci95.high", e.CI95.High)
-	}
-	if e.CI95 != nil && e.CI95.Low > e.CI95.High {
-		p.Field(at+".ci95", "low %v exceeds high %v", e.CI95.Low, e.CI95.High)
-	}
-	if e.CI95 != nil && (e.Value < e.CI95.Low || e.Value > e.CI95.High) {
-		p.Field(at+".value", "%v lies outside its own interval [%v, %v]",
-			e.Value, e.CI95.Low, e.CI95.High)
+		// first, as the value itself is, and gate those checks on finiteness so a
+		// non-finite endpoint is reported once rather than also as a spurious ordering
+		// or containment failure.
+		lowFinite := p.FiniteField(at+".ci95.low", e.CI95.Low)
+		highFinite := p.FiniteField(at+".ci95.high", e.CI95.High)
+		if lowFinite && highFinite && e.CI95.Low > e.CI95.High {
+			p.Field(at+".ci95", "low %v exceeds high %v", e.CI95.Low, e.CI95.High)
+		}
+		if valueFinite && lowFinite && highFinite &&
+			(e.Value < e.CI95.Low || e.Value > e.CI95.High) {
+			p.Field(at+".value", "%v lies outside its own interval [%v, %v]",
+				e.Value, e.CI95.Low, e.CI95.High)
+		}
 	}
 }

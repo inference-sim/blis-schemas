@@ -253,7 +253,10 @@ IntraNodeBwGBps: 450
 // an otherwise-clean chip or fabric and asserts the run fails (exit 1) and names the
 // offending field.
 func TestRunHardwareInvariants(t *testing.T) {
-	// cleanChip is a well-formed h100 the cases mutate one line at a time.
+	// cleanChip is a well-formed h100 the cases mutate one line at a time. Kept consistent
+	// with cleanChipYAML in spec/hardware/validate_test.go (its unit-level counterpart);
+	// the two are in different packages and so cannot share one literal, and both must
+	// gain any field this schema makes newly required.
 	const cleanChip = `Provenance: vendor_spec
 TFlopsPeak: 989.5
 TFlopsFP8: 1979.0
