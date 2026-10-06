@@ -153,18 +153,27 @@ It walks six artifact kinds, in one combined report:
 
 - `models/*/graph.yaml` — the derived cost graph (`model.Graph`)
 - `models/*/model.yaml` — the entry's identity manifest (`model.Identity`): a `name`
-  that must match the directory, and a `source` provenance block; the checks mirror
-  the catalog's own `validate_models` so the two gates agree rather than diverge
+  that must match the directory, and a `source` provenance block
 - `hardware/*.yaml` — chips (`hardware.Chip`)
 - `networks/*.yaml` — fabrics (`hardware.Fabric`)
 - `devices/storage.yaml` — storage tiers (`hardware.StorageDevice`), optional
 - `workloads/*.yaml` — traffic shapes (`workload.Shape`)
 
+These checks are blis-schemas' own typed `Validate()`s, and they are meant to be
+*complementary* to blis-catalog's Python gate, not a reimplementation of it. The one
+place the two deliberately overlap is `model.yaml`: `model.Identity` mirrors the
+**model.yaml portion** of the catalog's `validate_models` (the `name`/directory match and
+the `source.{provider,repo,revision}` fields), so those identity rules agree. The rest do
+*not* claim parity — the catalog's gate also checks each `config.json` and enforces a
+datasheet-unit vocabulary on hardware fields that these typed validators do not, and these
+validators check cost-model properties (an acyclic graph, a prefix no longer than its
+prompt) that the Python gate does not. The two gates are stronger together.
+
 A per-entry summary line goes to stdout for each artifact that validates and every
 problem to stderr, so the report reads cleanly and the exit code is scriptable: `0`
 when everything validates, `1` on any validation failure, and `2` for a usage error
-or a path that is not a catalog (none of the artifact namespaces present). It is the
-binary blis-catalog proposes to run in its own CI.
+or a path that is not a catalog (none of the artifact namespaces present, or present but
+holding nothing to validate). It is the binary blis-catalog proposes to run in its own CI.
 
 ## Evolving this repository
 

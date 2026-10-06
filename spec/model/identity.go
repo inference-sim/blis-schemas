@@ -13,15 +13,25 @@ import "github.com/inference-sim/blis-schemas/internal/validate"
 // directory it sits in, and the validate-catalog command checks that, as it does for a
 // graph. Validate here checks only what the document can know about itself.
 //
-// The checks mirror blis-catalog's own validate_models exactly, so the Go gate and the
-// Python gate agree rather than diverge: name must be a non-empty string (its match against
-// the directory is the caller's check), and source must be present with a non-empty
-// provider, repo and revision. validate_models applies NO further restriction — no pattern
-// on provider (it is any non-empty string, "huggingface" in practice) and no date-format
-// check on retrieved. retrieved is therefore declared here only so a strict decoder accepts
-// the key every real card carries; it is neither required nor format-checked, because a Go
-// gate stricter than the Python one would reject a card the catalog accepts and so become a
-// second, disagreeing source of truth for the same rule.
+// The checks mirror the MODEL.YAML portion of blis-catalog's own validate_models: name must
+// be a non-empty string (its match against the directory is the caller's check), and source
+// must be present with a non-empty provider, repo and revision. validate_models applies no
+// further restriction to those fields — no pattern on provider (any non-empty string,
+// "huggingface" in practice) and no date-format check on retrieved — so retrieved is declared
+// here only to name the key every real card carries, and is neither required nor
+// format-checked. The catalog's gate also checks the sibling config.json (present, parseable,
+// a non-empty object), and that is deliberately NOT mirrored here: config.json is a verbatim
+// vendor file the catalog owns, and these schemas do not read it (#23). So this is the
+// model.yaml half of a two-gate split, not a reimplementation of the whole catalog gate.
+//
+// Field values aside, the loader (LoadModelIdentity) decodes strict: an unknown key is
+// rejected, where the catalog's Python gate reads model.yaml leniently and ignores extra
+// keys. That is intentional and NOT a claim of leniency-parity — an unknown key is a probable
+// typo that would otherwise silently drop the setting its author meant, and rejecting it is
+// the same filename-identity direction #27/#25 take. One consequence: unlike Chip and Fabric,
+// Identity does not strip the catalog's underscore-prefixed _comment* keys (the same gap #28
+// tracks for workload Shape), so such a key would be rejected rather than ignored; no
+// committed model.yaml carries one today.
 type Identity struct {
 	Name   string  `yaml:"name"`
 	Source *Source `yaml:"source"`
