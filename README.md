@@ -53,7 +53,7 @@ those from real ones.
 
 ```
 vocab/              closed vocabularies: units, methods, scope keys, provenance
-spec/model/         a model as a DAG of cost primitives
+spec/model/         a model as a DAG of cost primitives, plus its model.yaml identity
 spec/hardware/      chip, fabric, storage device — three schemas, not one
 spec/coefficient/   coefficient sets, mirroring blis-registry's contract
 spec/scenario/      the immutable problem: model, cluster inventory, workload + refs
@@ -64,6 +64,7 @@ kernel/             the interface a cost model implements
 rules/              the version-scoped rule mechanism
 rules/v0_29/        one release's rules and constants
 internal/validate/  the accumulating, located problem list every validator shares
+cmd/validate-catalog/  CLI: load and validate every artifact in a blis-catalog checkout
 ```
 
 ## A scenario's workload: a shape or a trace
@@ -137,6 +138,44 @@ The separation matters: cross-node collective cost turns on the ratio of
 intra-node to inter-node bandwidth, and that ratio belongs to a *pairing* rather than
 to either side. `hardware.IntraToInterRatio(chip, fabric)` is a function for that
 reason, and `blis-catalog` makes the same split.
+
+## Validating a catalog checkout
+
+`cmd/validate-catalog` loads and validates every committed artifact in a
+[blis-catalog](https://github.com/inference-sim/blis-catalog) checkout against these
+schemas — not only the model graphs. Point it at a catalog root:
+
+```sh
+go run ./cmd/validate-catalog /path/to/blis-catalog
+```
+
+It walks six artifact kinds, in one combined report:
+
+- `models/*/graph.yaml` — the derived cost graph (`model.Graph`)
+- `models/*/config.json` — the verbatim vendor file: a structural check (present,
+  parseable, a non-empty JSON object), no schema type, no interpretation of its keys
+- `models/*/model.yaml` — the entry's identity manifest (`model.Identity`): a `name`
+  that must match the directory, and a `source` provenance block
+- `hardware/*.yaml` — chips (`hardware.Chip`)
+- `networks/*.yaml` — fabrics (`hardware.Fabric`)
+- `devices/storage.yaml` — storage tiers (`hardware.StorageDevice`), optional
+- `workloads/*.yaml` — traffic shapes (`workload.Shape`)
+
+The two **model-entry** checks — the structural `config.json` check and the `model.Identity`
+rules — together reproduce blis-catalog's own `validate_models` in full (`config.json`
+present/parse/non-empty, plus `name`/directory and `source.{provider,repo,revision}`), so
+this binary can stand in for that gate when blis-catalog wires it into CI. The other kinds
+are blis-schemas' own typed `Validate()`s and are *complementary* to the Python gate rather
+than a reimplementation of it: the catalog's gate enforces a datasheet-unit vocabulary on
+hardware fields that these typed validators do not, and these validators check cost-model
+properties (an acyclic graph, a prefix no longer than its prompt) that the Python gate does
+not. The two gates are stronger together.
+
+A per-entry summary line goes to stdout for each artifact that validates and every
+problem to stderr, so the report reads cleanly and the exit code is scriptable: `0`
+when everything validates, `1` on any validation failure, and `2` for a usage error
+or a path that is not a catalog (none of the artifact namespaces present, or present but
+holding nothing to validate). It is the binary blis-catalog proposes to run in its own CI.
 
 ## Evolving this repository
 

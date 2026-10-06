@@ -56,6 +56,19 @@ func LoadModelGraph(path string) (*model.Graph, error) {
 	return &g, nil
 }
 
+// LoadModelIdentity reads a model entry's identity manifest, blis-catalog's
+// models/<name>/model.yaml: the name the entry claims and the provenance of the vendor
+// config beside it. Unlike a chip, a fabric or a workload, this file carries its name IN
+// the document — the catalog requires that name to match the directory — so the loader
+// does not stamp it; the caller checks it against the directory, as it does for a graph.
+func LoadModelIdentity(path string) (*model.Identity, error) {
+	var id model.Identity
+	if err := decodeStrict(path, &id); err != nil {
+		return nil, err
+	}
+	return &id, nil
+}
+
 // LoadChip reads a chip descriptor from blis-catalog's hardware namespace. The file
 // carries no name — identity is the filename — so the loader supplies it.
 func LoadChip(path string) (*hardware.Chip, error) {

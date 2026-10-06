@@ -451,6 +451,122 @@ stack:
 	}
 }
 
+// TestLoadModelIdentity parses a model.yaml identity manifest end to end: the name and
+// every source provenance field must arrive through the strict loader, and the loaded
+// card must validate. A tag error at any depth would leave a zero value the type system
+// cannot catch — the one failure this package exists to rule out.
+func TestLoadModelIdentity(t *testing.T) {
+	path := write(t, "model.yaml", `
+name: deepseek-v4-pro
+source:
+  provider: huggingface
+  repo: deepseek-ai/DeepSeek-V4-Pro
+  revision: b5968e9190ef611bbf34a7229255be88a0e937c1
+  retrieved: 2026-10-02
+`)
+	id, err := LoadModelIdentity(path)
+	if err != nil {
+		t.Fatalf("LoadModelIdentity: %v", err)
+	}
+	// Unlike a chip or a workload, the name is a FILE field here, not the filename stem.
+	if id.Name != "deepseek-v4-pro" {
+		t.Errorf("name = %q; it is a file field for a model card", id.Name)
+	}
+	if id.Source == nil {
+		t.Fatal("source did not parse")
+	}
+	if id.Source.Provider != "huggingface" || id.Source.Repo != "deepseek-ai/DeepSeek-V4-Pro" {
+		t.Errorf("source identity did not parse: %+v", id.Source)
+	}
+	if id.Source.Revision != "b5968e9190ef611bbf34a7229255be88a0e937c1" || id.Source.Retrieved != "2026-10-02" {
+		t.Errorf("source provenance did not parse: %+v", id.Source)
+	}
+	if p := id.Validate(); !p.OK() {
+		t.Errorf("a loaded identity failed validation:\n%s", p.Error())
+	}
+}
+
+// TestLoadModelIdentityRejectsUnknownField pins strict decoding through the nested source
+// block: a misspelled sub-key must fail loudly rather than leave a zero value, the same
+// guarantee every other loader gives. Identity and Source are plain structs — neither
+// implements a custom UnmarshalYAML, which is what would silently drop the decoder's
+// KnownFields setting — so strict decoding recurses through the source block for free, and
+// this pins it at both levels.
+func TestLoadModelIdentityRejectsUnknownField(t *testing.T) {
+	cases := []struct {
+		name   string
+		body   string
+		badKey string
+	}{
+		{
+			name: "unknown key at the top level",
+			body: `
+name: m
+provdier: huggingface
+source:
+  provider: huggingface
+  repo: r
+  revision: v`,
+			badKey: "provdier",
+		},
+		{
+			name: "unknown key inside source",
+			body: `
+name: m
+source:
+  provider: huggingface
+  repo: r
+  revision: v
+  revison: v2`,
+			badKey: "revison",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := LoadModelIdentity(write(t, "model.yaml", tc.body))
+			if err == nil {
+				t.Fatalf("a misspelled %q was accepted; the card would validate while silently dropping it", tc.badKey)
+			}
+			if !strings.Contains(err.Error(), tc.badKey) {
+				t.Errorf("the error should name the offending field %q, got: %v", tc.badKey, err)
+			}
+		})
+	}
+}
+
+// TestLoadCatalogModelIdentitiesIfPresent parses the committed model.yaml files
+// themselves — the strongest check of the tags, since a hand-written fixture agrees with
+// whatever the tags happen to say where the real files do not. Gated on BLIS_CATALOG, and
+// named to run under CI's parse-committed-data job (the LoadCatalog filter).
+func TestLoadCatalogModelIdentitiesIfPresent(t *testing.T) {
+	root := os.Getenv("BLIS_CATALOG")
+	if root == "" {
+		t.Skip("BLIS_CATALOG is unset: the model.yaml tags were NOT checked against the " +
+			"committed catalog files, only against fixtures in this package")
+	}
+	cards, _ := filepath.Glob(filepath.Join(root, "models", "*", "model.yaml"))
+	if len(cards) == 0 {
+		t.Skipf("BLIS_CATALOG=%s has no models/*/model.yaml", root)
+	}
+	for _, path := range cards {
+		id, err := LoadModelIdentity(path)
+		if err != nil {
+			t.Errorf("LoadModelIdentity(%s): %v", path, err)
+			continue
+		}
+		// The stated name must match the directory, and the source provenance must be
+		// whole: those are what make a card an identity rather than a note.
+		dir := filepath.Base(filepath.Dir(path))
+		if id.Name != dir {
+			t.Errorf("%s: name %q does not match directory %q", path, id.Name, dir)
+		}
+		if p := id.Validate(); !p.OK() {
+			t.Errorf("%s failed validation:\n%s", path, p.Error())
+		}
+	}
+	t.Logf("parsed %d model.yaml identity files from the catalog", len(cards))
+}
+
 func TestLoadCoefficientSet(t *testing.T) {
 	path := write(t, "c.yaml", `
 kind: CoefficientSet
