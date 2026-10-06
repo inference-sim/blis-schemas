@@ -908,17 +908,23 @@ func TestLoadCatalogFiles(t *testing.T) {
 		len(chips), len(fabrics), len(workloads), len(devices))
 }
 
-// TestLoadRegistryFilesIfPresent parses the committed coefficient sets from a BLIS_REGISTRY
-// checkout. Unlike the catalog tests above, the registry has no vendored in-tree snapshot
-// yet, so this one is still gated on an env var and SKIPS when it is unset, and it checks
-// the parsed entries' fields (a name, a unit, a method) rather than calling Set.Validate().
-// Pinning and fully validating the registry the way testdata/ now pins the catalog is a
-// separate change.
+// TestLoadRegistryFilesIfPresent loads and VALIDATES the committed coefficient sets from a
+// BLIS_REGISTRY checkout. Unlike the catalog tests above, the registry has no vendored
+// in-tree snapshot yet, so this one is still gated on an env var and SKIPS when it is unset.
+//
+// It calls Set.Validate() rather than only spot-checking parsed fields (#17): CI proving the
+// committed artifacts PARSE is not the same as proving they are VALID, and the gap was that
+// the registry's own checks — the intra-set duplicate-(name,scope) check whose comment notes
+// a resolver would otherwise keep whichever came last — ran against committed data nowhere.
+// The catalog half of #17 is already covered by TestLoadCatalogFiles, which validates every
+// vendored artifact; this closes the registry half the same way, short of a vendored
+// snapshot. Pinning the registry the way testdata/ pins the catalog is still a separate
+// change.
 func TestLoadRegistryFilesIfPresent(t *testing.T) {
 	root := os.Getenv("BLIS_REGISTRY")
 	if root == "" {
-		t.Skip("BLIS_REGISTRY is unset: the coefficient tags were NOT checked " +
-			"against the committed registry files")
+		t.Skip("BLIS_REGISTRY is unset: the committed coefficient sets were NOT loaded " +
+			"or validated")
 	}
 	sets, _ := filepath.Glob(filepath.Join(root, "coefficients", "*.yaml"))
 	if len(sets) == 0 {
@@ -935,19 +941,16 @@ func TestLoadRegistryFilesIfPresent(t *testing.T) {
 			t.Errorf("%s: parsed no entries", filepath.Base(path))
 			continue
 		}
-		// Every entry must have taken its name from the key it was nested under, and
-		// must carry a unit and a method: those are what make a number usable.
-		for i, e := range s.Coefficients {
-			if e.Name == "" {
-				t.Errorf("%s: coefficients[%d] parsed without a name", filepath.Base(path), i)
-			}
-			if e.Units == "" || e.Method == "" {
-				t.Errorf("%s: %s parsed without units or method", filepath.Base(path), e.Name)
-			}
+		// Validate the set, running the same checks blisschemas.Validate would — the
+		// duplicate-(name,scope) check among them — against the committed file. This is the
+		// coverage #17 found missing: a set that parsed but was invalid landed green.
+		if p := s.Validate(); !p.OK() {
+			t.Errorf("%s failed validation:\n%s", filepath.Base(path), p.Error())
 		}
 		total += len(s.Coefficients)
 	}
-	t.Logf("parsed %d sets holding %d coefficients from the registry", len(sets), total)
+	t.Logf("loaded and validated %d sets holding %d coefficients from the registry",
+		len(sets), total)
 }
 
 // TestCoefficientEntryFormIsEnforced covers the nested wire form's failure modes. The
