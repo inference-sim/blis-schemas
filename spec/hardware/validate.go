@@ -1,23 +1,6 @@
 package hardware
 
-import (
-	"math"
-
-	"github.com/inference-sim/blis-schemas/internal/validate"
-)
-
-// rejectNonFinite records a problem if x is NaN or ±Inf. Every numeric datasheet field
-// needs this before its magnitude check, because neither non-finite value is caught by
-// the magnitude checks alone: a NaN compares false to every bound (NaN <= 0 and NaN > 0
-// are both false), so it slips past both a positivity check and a presence guard; and a
-// +Inf passes a positivity check outright (+Inf <= 0 is false, i.e. it reads as "> 0").
-// Either reaches a cost model and poisons every arithmetic it touches. The deleted
-// blis-catalog validate_catalog.py rejected non-finite numerics for the same reason.
-func rejectNonFinite(p *validate.Problems, field string, x float64) {
-	if math.IsNaN(x) || math.IsInf(x, 0) {
-		p.Field(field, "must be a finite number")
-	}
-}
+import "github.com/inference-sim/blis-schemas/internal/validate"
 
 // Validate performs field-level validation of a chip: required positives,
 // recognized provenance, and internal consistency between the packaging fields.
@@ -31,13 +14,13 @@ func (c *Chip) Validate() *validate.Problems {
 	}
 	// Every numeric field must be finite before its magnitude check runs, so a NaN or
 	// Inf is caught rather than slipping past a comparison that is false either way.
-	rejectNonFinite(p, "TFlopsPeak", c.BF16Peak)
-	rejectNonFinite(p, "TFlopsFP8", c.FP8Peak)
-	rejectNonFinite(p, "TFlopsNVFP4", c.NVFP4Peak)
-	rejectNonFinite(p, "BwPeakTBs", c.MemoryBandwidthTBs)
-	rejectNonFinite(p, "MemoryGiB", c.MemoryGiB)
-	rejectNonFinite(p, "IntraNodeBwGBps", c.IntraNodeBwGBps)
-	rejectNonFinite(p, "IntraRackBwGBps", c.IntraRackBwGBps)
+	p.FiniteField("TFlopsPeak", c.BF16Peak)
+	p.FiniteField("TFlopsFP8", c.FP8Peak)
+	p.FiniteField("TFlopsNVFP4", c.NVFP4Peak)
+	p.FiniteField("BwPeakTBs", c.MemoryBandwidthTBs)
+	p.FiniteField("MemoryGiB", c.MemoryGiB)
+	p.FiniteField("IntraNodeBwGBps", c.IntraNodeBwGBps)
+	p.FiniteField("IntraRackBwGBps", c.IntraRackBwGBps)
 	if c.BF16Peak <= 0 {
 		p.Field("TFlopsPeak", "must be positive")
 	}
@@ -90,7 +73,7 @@ func (f *Fabric) Validate() *validate.Problems {
 	if !f.Provenance.Valid() {
 		p.Field("Provenance", "%q is not a recognized provenance", f.Provenance)
 	}
-	rejectNonFinite(p, "InterNodeBwGBps", f.InterNodeBwGBps)
+	p.FiniteField("InterNodeBwGBps", f.InterNodeBwGBps)
 	if f.InterNodeBwGBps <= 0 {
 		p.Field("InterNodeBwGBps", "must be positive")
 	}
@@ -103,9 +86,9 @@ func (d *StorageDevice) Validate() *validate.Problems {
 	if d.Name == "" {
 		p.Field("name", "required")
 	}
-	rejectNonFinite(p, "read_bandwidth", d.ReadBandwidthMBs)
-	rejectNonFinite(p, "write_bandwidth", d.WriteBandwidthMBs)
-	rejectNonFinite(p, "base_latency", d.BaseLatencyUs)
+	p.FiniteField("read_bandwidth", d.ReadBandwidthMBs)
+	p.FiniteField("write_bandwidth", d.WriteBandwidthMBs)
+	p.FiniteField("base_latency", d.BaseLatencyUs)
 	if d.ReadBandwidthMBs <= 0 {
 		p.Field("read_bandwidth", "must be positive")
 	}

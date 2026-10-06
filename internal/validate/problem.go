@@ -8,6 +8,7 @@ package validate
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 )
@@ -85,6 +86,21 @@ func (p *Problems) Field(name, format string, args ...any) {
 		Message:  fmt.Sprintf(format, args...),
 		Severity: SeverityError,
 	})
+}
+
+// FiniteField records a problem at a named field if x is NaN or ±Inf. Every numeric
+// schema field needs this before its magnitude check, because the magnitude checks
+// alone do not catch a non-finite value: IEEE-754 makes every ordered comparison with
+// NaN false, so a `x <= 0` / `x < 0` guard returns false for NaN *and* for +Inf and
+// lets both through (only -Inf is incidentally caught). It belongs here as a shared
+// primitive so every validator reading a float — hardware datasheet figures, registry
+// coefficients — rejects a non-finite value identically rather than re-deriving the
+// check, or forgetting it. A non-finite number that reaches a cost model poisons every
+// arithmetic it touches.
+func (p *Problems) FiniteField(name string, x float64) {
+	if math.IsNaN(x) || math.IsInf(x, 0) {
+		p.Field(name, "must be a finite number")
+	}
 }
 
 func (p *Problems) add(sev Severity, rule, msg string) {

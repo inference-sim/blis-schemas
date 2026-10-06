@@ -58,6 +58,11 @@ func (s *Set) Validate() *validate.Problems {
 }
 
 func (e Entry) validate(p *validate.Problems, at string) {
+	// A coefficient feeds the latency model directly, so a non-finite value poisons it
+	// exactly as a non-finite hardware figure poisons the cost model. The registry
+	// loads these through this schema, so the check belongs here. A NaN would also
+	// escape the interval bounds check below (NaN compares false to both < and >).
+	p.FiniteField(at+".value", e.Value)
 	if !e.Units.Valid() {
 		p.Field(at+".units", "%q is not one of %v", e.Units, vocab.AllUnits())
 	}
@@ -100,6 +105,13 @@ func (e Entry) validate(p *validate.Problems, at string) {
 		if src.Cite == "" {
 			p.Field(sat+".cite", "required")
 		}
+	}
+	if e.CI95 != nil {
+		// A non-finite interval endpoint would silently defeat the ordering and
+		// containment checks below (every comparison with NaN is false), so reject it
+		// first, as the value itself is.
+		p.FiniteField(at+".ci95.low", e.CI95.Low)
+		p.FiniteField(at+".ci95.high", e.CI95.High)
 	}
 	if e.CI95 != nil && e.CI95.Low > e.CI95.High {
 		p.Field(at+".ci95", "low %v exceeds high %v", e.CI95.Low, e.CI95.High)

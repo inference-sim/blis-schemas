@@ -181,10 +181,12 @@ As this binary becomes the *sole* gate for `blis-catalog` (its 620-line
 validators enforce the schema-structural invariants that gate had, so a malformed edit
 cannot become a green merge after the migration:
 
-- **Every numeric datasheet field must be finite.** A `NaN` or `Inf` is rejected before
-  its magnitude check, since the magnitude checks miss them: a `NaN` compares false to
-  every bound, and a `+Inf` reads as positive — so either would otherwise reach a cost
-  model and poison its arithmetic.
+- **Every numeric field must be finite.** A `NaN` or `Inf` is rejected before its
+  magnitude check, since the magnitude checks miss them: a `NaN` compares false to every
+  bound, and a `+Inf` reads as positive — so either would otherwise reach a cost model and
+  poison its arithmetic. The check is a shared `validate.Problems.FiniteField` primitive,
+  applied to the `hardware`/`networks` datasheet figures *and* to `blis-registry`'s
+  coefficient values and `ci95` endpoints, which load through this same schema.
 - **`SMCount` is required and positive.** The field has no `omitempty`, so a missing count
   decodes to zero and is rejected: every chip must declare how many SMs it ships.
 - **`hardware/` carries only dimensioned physical quantities.** The strict decoder rejects

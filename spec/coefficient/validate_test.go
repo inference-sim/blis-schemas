@@ -1,7 +1,11 @@
 package coefficient
 
 import (
+	"fmt"
+	"math"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/inference-sim/blis-schemas/vocab"
 )
@@ -66,6 +70,13 @@ func TestRejects(t *testing.T) {
 		{"value outside its interval", func(s *Set) {
 			s.Coefficients[0].CI95 = &Interval{Low: 0.8, High: 0.9}
 		}},
+		// A non-finite coefficient value poisons the latency model, and a NaN would also
+		// escape the interval checks, so it is rejected like a non-finite hardware figure.
+		{"NaN value", func(s *Set) { s.Coefficients[0].Value = math.NaN() }},
+		{"Inf value", func(s *Set) { s.Coefficients[0].Value = math.Inf(1) }},
+		{"non-finite interval endpoint", func(s *Set) {
+			s.Coefficients[0].CI95 = &Interval{Low: math.Inf(-1), High: math.Inf(1)}
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -110,5 +121,37 @@ func TestScopeEmpty(t *testing.T) {
 	}
 	if (Scope{TP: []int{8}}).Empty() {
 		t.Error("a scope with one dimension should not report empty")
+	}
+}
+
+// TestNonFiniteCoefficientRejectedFromYAML pins the non-finite check end-to-end from the
+// wire form the registry actually writes: YAML's own `.nan`, `.inf` and `-.inf` literals
+// decode to the IEEE-754 values and must be rejected by Validate, since a non-finite
+// coefficient poisons the latency model the registry feeds. The value parses — this is a
+// validation failure, not a decode error — so the test asserts on Validate, not Unmarshal.
+func TestNonFiniteCoefficientRejectedFromYAML(t *testing.T) {
+	const tmpl = `kind: CoefficientSet
+name: cost-model-primitives-h200
+coefficients:
+  - gemm_eps_max_bf16:
+      value: %s
+      units: dimensionless
+      method: measured
+      fitted: true
+      scope:
+        hardware: [h200]
+      sources:
+        - {kind: model, cite: operator table, role: primary}
+`
+	for _, lit := range []string{".nan", ".inf", "-.inf"} {
+		t.Run(lit, func(t *testing.T) {
+			var s Set
+			if err := yaml.Unmarshal([]byte(fmt.Sprintf(tmpl, lit)), &s); err != nil {
+				t.Fatalf("YAML %s should decode to a float, got decode error: %v", lit, err)
+			}
+			if p := s.Validate(); p.OK() {
+				t.Fatalf("a %s coefficient value should be rejected as non-finite, but Validate passed", lit)
+			}
+		})
 	}
 }
