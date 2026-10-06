@@ -53,6 +53,26 @@ Rules do not run when field validation fails. A rule reading a malformed documen
 produces findings that are artifacts of the malformation, and a reader cannot tell
 those from real ones.
 
+`Validate` is pure: it checks the documents it is handed and resolves nothing against
+the catalog on disk, because this repository deliberately does not vendor the catalog —
+that separation is what lets either side be validated in CI without the other. A
+by-name reference a scenario makes (`cluster.hardware: h200`, `model: deepseek-v3`) is
+therefore *not* checked by `Validate`: `hardware: nvidia-h200` is structurally fine and
+fails only later, elsewhere, as a missing file. A caller that does have a catalog
+checked out resolves those references through a second entry point:
+
+```go
+rep := blisschemas.ValidateAgainstCatalog(bundle, catalogRoot, registryRoot)
+// references.hardware: "nvidia-h200": looked for hardware/nvidia-h200.yaml;
+//   the catalog has [a100-80 a100-sxm b200 h100 h200 l40s ...]
+```
+
+It checks that every name resolves to a file or directory the catalog has, and each
+error names the path it looked for and lists the real entries, so a generator that
+guessed a name is corrected in one turn. It is separate from `Validate` rather than
+folded in precisely to keep `Validate` free of any dependency on where the catalog
+lives.
+
 ## Units are part of the contract
 
 A numeric field carries its unit in the thing the producer writes — the YAML key — or

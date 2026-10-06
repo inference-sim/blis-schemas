@@ -70,6 +70,31 @@ func TestSmallVocabularies(t *testing.T) {
 		[]string{"fcfs", "priority"})
 	assertSet(t, "OffloadSpecs", p.OffloadSpecs,
 		[]string{"CPUOffloadingSpec", "TieringOffloadingSpec"})
+	// Thirty quantization methods and sixteen connectors. As with the cache dtypes the
+	// count is the guard: a narrower set warns on an in-tree method or connector the
+	// engine ships, which trains a reader to ignore the warning. The members spot-checked
+	// are the ones the report corpus and offload paths exercise.
+	if len(p.Quantizations) != 30 {
+		t.Errorf("Quantizations: size = %d, want 30", len(p.Quantizations))
+	}
+	for _, want := range []string{"fp8", "compressed-tensors", "gptq_marlin",
+		"deepseek_v4_fp8", "mxfp4"} {
+		if !p.Quantizations[want] {
+			t.Errorf("Quantizations: missing %q", want)
+		}
+	}
+	if len(p.Connectors) != 16 {
+		t.Errorf("Connectors: size = %d, want 16", len(p.Connectors))
+	}
+	for _, want := range []string{"NixlConnector", "LMCacheConnectorV1",
+		"OffloadingConnector", "MultiConnector"} {
+		if !p.Connectors[want] {
+			t.Errorf("Connectors: missing %q", want)
+		}
+	}
+	// Two in-tree eviction policies (lru, arc). The engine extends the registry out of
+	// tree, so the set is small and the rule warns; the count still guards a silent drop.
+	assertSet(t, "EvictionPolicies", p.EvictionPolicies, []string{"arc", "lru"})
 }
 
 func TestNumericConstants(t *testing.T) {

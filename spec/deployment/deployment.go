@@ -239,7 +239,16 @@ type Speculative struct {
 
 // Offload is the KV tier hierarchy below HBM.
 type Offload struct {
-	Tiers          []Tier `yaml:"tiers"`
+	Tiers []Tier `yaml:"tiers"`
+	// EvictionPolicy names the KV-offload cache policy. The engine registers its in-tree
+	// policies with a CachePolicyFactory (lru, arc in v0.29.0) and admits out-of-tree ones
+	// through a module path — the same extensible-registry shape as the connector and
+	// quantization vocabularies. "lru" is the default only when the field is ABSENT; a
+	// SUPPLIED name the factory does not know raises at launch rather than falling back. So
+	// the v0_29 rules pack enumerates the in-tree set and the `eviction-policy-known` rule
+	// WARNS on an unknown value (a probable typo, caught before launch) rather than erroring
+	// (it may be a valid out-of-tree policy). It is validated by a rule, not here, because the
+	// legal set is a version fact that belongs with the engine's.
 	EvictionPolicy string `yaml:"eviction_policy,omitempty"`
 	// PrefetchDepth is how many steps ahead a fetch is issued. It decides whether a
 	// tier hit is hidden or exposed, and it is a scheduler property rather than a

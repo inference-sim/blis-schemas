@@ -77,6 +77,20 @@ type Pack struct {
 	// OffloadSpecs are the registered offloading spec names.
 	OffloadSpecs map[string]bool
 
+	// Quantizations are the weight-format names the engine serves, from its
+	// QuantizationMethods literal. A name outside the set is priced against the wrong
+	// weight width, compute peak and GEMM efficiency at once. Connectors are the KV
+	// connector names registered with the engine's KVConnectorFactory, naming the
+	// offload/PD-transfer implementation; an unknown one leaves the transfer on no
+	// resource. EvictionPolicies are the KV-offload cache-policy names registered with the
+	// engine's CachePolicyFactory (lru, arc), naming how an offload tier evicts. All three
+	// are version facts, verified against the engine source like the sets above (#19), and
+	// all three are registries the engine extends out of tree — so an unknown value warns
+	// (probable typo) rather than errors (it might be a valid out-of-tree name).
+	Quantizations    map[string]bool
+	Connectors       map[string]bool
+	EvictionPolicies map[string]bool
+
 	// CustomAllReduceWorldSizes are the rank counts the SM-consuming all-reduce
 	// kernel supports. A width outside the set falls back whatever was requested.
 	CustomAllReduceWorldSizes map[int]bool
