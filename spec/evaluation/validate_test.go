@@ -1,6 +1,9 @@
 package evaluation
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
 
 // run mirrors a published serving sweep: per-concurrency rows carrying the two
 // latency metrics, throughput, KV utilization and cache hit rate.
@@ -46,6 +49,10 @@ func TestRejects(t *testing.T) {
 		{"utilization above one", func(r *Run) { r.Points[0].KVUtilization = 1.5 }},
 		{"hit rate below zero", func(r *Run) { r.Points[0].PrefixCacheHitRate = -0.1 }},
 		{"negative preemptions", func(r *Run) { r.Points[0].Preemptions = -1 }},
+		{"NaN throughput", func(r *Run) { r.Points[0].OutputTokensPerSec = math.NaN() }},
+		{"Inf ttft", func(r *Run) { r.Points[0].TTFTms = math.Inf(1) }},
+		{"NaN utilization", func(r *Run) { r.Points[0].KVUtilization = math.NaN() }},
+		{"NaN e2e", func(r *Run) { r.Points[0].EndToEndms = math.NaN() }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -244,6 +244,73 @@ IntraNodeBwGBps: 450
 	}
 }
 
+// TestRunHardwareInvariants pins the schema-structural hardware/networks invariants
+// restored in #32 — the dimensionless-field ban, required/positive SMCount, and the
+// non-finite check on chips and fabrics — each a malformed edit the deleted blis-catalog
+// validate_catalog.py rejected and the Go gate once silently accepted. (The fourth gap in
+// #32, the SM-count citation, is a catalog-provenance policy deliberately not enforced
+// here; see spec/hardware/hardware.go and the README.) Each case applies one mutation to
+// an otherwise-clean chip or fabric and asserts the run fails (exit 1) and names the
+// offending field.
+func TestRunHardwareInvariants(t *testing.T) {
+	// cleanChip is a well-formed h100 the cases mutate one line at a time. Kept consistent
+	// with cleanChipYAML in spec/hardware/validate_test.go (its unit-level counterpart);
+	// the two are in different packages and so cannot share one literal, and both must
+	// gain any field this schema makes newly required.
+	const cleanChip = `Provenance: vendor_spec
+TFlopsPeak: 989.5
+TFlopsFP8: 1979.0
+BwPeakTBs: 3.35
+MemoryGiB: 80.0
+IntraNodeBwGBps: 450
+SMCount: 132
+`
+	cases := []struct {
+		name string
+		file string // "hardware/h100.yaml" or "networks/ib-400g.yaml"
+		body string
+		want string // a substring the stderr report must contain
+	}{
+		// A dimensionless factor hidden under an underscore must fail as an unknown
+		// field, not be stripped as a comment. (A bare `mfu` already failed; the gap was
+		// specifically the underscore-hidden form.)
+		{"underscore-hidden dimensionless field", "hardware/h100.yaml",
+			cleanChip + "_mfu: 0.85\n", "_mfu"},
+		// A chip with no SMCount at all is rejected: the field is required and positive.
+		{"missing SMCount", "hardware/h100.yaml", `Provenance: vendor_spec
+TFlopsPeak: 989.5
+TFlopsFP8: 1979.0
+BwPeakTBs: 3.35
+MemoryGiB: 80.0
+IntraNodeBwGBps: 450
+`, "SMCount"},
+		// A non-finite datasheet figure on a chip is rejected.
+		{"NaN chip bandwidth", "hardware/h100.yaml", `Provenance: vendor_spec
+TFlopsPeak: 989.5
+TFlopsFP8: 1979.0
+BwPeakTBs: .nan
+MemoryGiB: 80.0
+IntraNodeBwGBps: 450
+SMCount: 132
+`, "BwPeakTBs"},
+		// A non-finite inter-node bandwidth on a fabric is rejected.
+		{"NaN fabric bandwidth", "networks/ib-400g.yaml",
+			"Provenance: vendor_spec\nInterNodeBwGBps: .nan\n", "InterNodeBwGBps"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			root := catalogWith(t, map[string]string{c.file: c.body})
+			code, _, errb := exercise(t, root)
+			if code != 1 {
+				t.Fatalf("exit = %d, want 1\nstderr:\n%s", code, errb)
+			}
+			if !strings.Contains(errb, c.want) {
+				t.Errorf("stderr should name %q, got: %s", c.want, errb)
+			}
+		})
+	}
+}
+
 // TestRunMalformedFabric: a fabric that loads but fails validation (a non-positive
 // inter-node bandwidth) must be reported with its field and exit 1 — the networks path is
 // new coverage, so a negative test pins that its failures bubble up.

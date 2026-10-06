@@ -1,6 +1,9 @@
 package workload
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
 
 func chatbot() *Shape {
 	return &Shape{Name: "chatbot",
@@ -128,6 +131,12 @@ func TestTraceRefRejects(t *testing.T) {
 		}},
 		{"negative slo target", func(tr *TraceRef) {
 			tr.Header.GoodputSLOTargets = map[string]SLODimTargets{"critical": {TTFTMs: -1}}
+		}},
+		{"non-finite gpu util", func(tr *TraceRef) {
+			tr.Header.Server.GPUMemoryUtilization = math.NaN()
+		}},
+		{"non-finite slo target", func(tr *TraceRef) {
+			tr.Header.GoodputSLOTargets = map[string]SLODimTargets{"critical": {TTFTMs: math.Inf(1)}}
 		}},
 	}
 	for _, tc := range cases {

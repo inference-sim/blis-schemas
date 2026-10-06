@@ -16,18 +16,33 @@
 package hardware
 
 import (
-	"strings"
-
 	"gopkg.in/yaml.v3"
 
 	"github.com/inference-sim/blis-schemas/internal/validate"
 	"github.com/inference-sim/blis-schemas/vocab"
 )
 
-// The catalog's files carry free-text keys prefixed with an underscore — _comment,
-// _comment_interconnect — holding the provenance narrative for each number. They are
-// deliberate content rather than stray fields, so a strict decoder must accept them
-// while still rejecting a misspelled real field.
+// The catalog's files carry free-text keys prefixed with "_comment" — _comment,
+// _comment_interconnect, _comment_sm, _comment_pd_transfer — holding the provenance
+// narrative for each number.
+// They are deliberate content rather than stray fields, so a strict decoder must accept
+// them while still rejecting a misspelled real field.
+//
+// The prefix is "_comment" specifically, not any underscore: hardware/ carries only
+// dimensioned physical quantities, and a fitted or dimensionless factor must not enter —
+// not even disguised under an underscore. A "_mfu: 0.85" is therefore an unknown field,
+// not a comment, and fails like any other, matching the rule blis-catalog's deleted
+// validate_catalog.py enforced.
+//
+// A consequence worth stating: these comment keys are STRIPPED here, before decoding, so
+// no provenance prose survives onto the struct. The deleted gate's SM-count citation rule
+// (#32, item 4) — every SMCount must carry a chaseable source URL — therefore cannot live
+// in Chip.Validate(), which never sees the prose. That rule is a catalog-provenance policy
+// (does the prose cite a source), not a schema-structural invariant (is the value a sane
+// datasheet figure), so it belongs in a catalog-side lint over the raw files rather than
+// here. It is deliberately NOT enforced by this package and nowhere else today; issue #32
+// is the tracked home for the decision on where that lint lives, and stays open until it
+// exists. This is the explicit tracking #32 asks for in lieu of a silent drop.
 //
 // The files also carry no name: identity is the filename. A loader sets Name from the
 // path, and validation requires it, so a chip that reaches a cost model without one is
@@ -38,7 +53,7 @@ func stripCatalogComments(node *yaml.Node) {
 	}
 	kept := make([]*yaml.Node, 0, len(node.Content))
 	for i := 0; i+1 < len(node.Content); i += 2 {
-		if strings.HasPrefix(node.Content[i].Value, "_") {
+		if validate.IgnoreCatalogComments(node.Content[i].Value) {
 			continue
 		}
 		kept = append(kept, node.Content[i], node.Content[i+1])
@@ -72,8 +87,10 @@ type Chip struct {
 
 	// SMCount is the streaming-multiprocessor count. A model needs it to size a
 	// withheld-SM derate as a fraction rather than an absolute, and an engine reads
-	// it from the driver rather than hardcoding it per part.
-	SMCount int `yaml:"SMCount,omitempty"`
+	// it from the driver rather than hardcoding it per part. It is REQUIRED and must
+	// be positive: no shipped chip has zero SMs, so a missing or zero count is an
+	// omission, not a legitimate value — hence no omitempty, and Validate rejects it.
+	SMCount int `yaml:"SMCount"`
 
 	// GPUsPerNode and GPUsPerRack describe packaging. GPUsPerRack is non-zero only
 	// where a rack boundary is a distinct link from a node boundary, which is the
@@ -116,10 +133,10 @@ type StorageDevice struct {
 	BaseLatencyUs float64 `yaml:"base_latency"`
 }
 
-// UnmarshalYAML accepts the catalog's underscore-prefixed comment keys while leaving
-// every other unknown field an error.
+// UnmarshalYAML accepts the catalog's `_comment`-prefixed comment keys while leaving
+// every other unknown field — including any other underscore-prefixed one — an error.
 func (c *Chip) UnmarshalYAML(node *yaml.Node) error {
-	if err := validate.RejectUnknownKeys(node, Chip{}, validate.IgnoreUnderscored); err != nil {
+	if err := validate.RejectUnknownKeys(node, Chip{}, validate.IgnoreCatalogComments); err != nil {
 		return err
 	}
 	stripCatalogComments(node)
@@ -134,7 +151,7 @@ func (c *Chip) UnmarshalYAML(node *yaml.Node) error {
 
 // UnmarshalYAML accepts the catalog's comment keys, as Chip does.
 func (f *Fabric) UnmarshalYAML(node *yaml.Node) error {
-	if err := validate.RejectUnknownKeys(node, Fabric{}, validate.IgnoreUnderscored); err != nil {
+	if err := validate.RejectUnknownKeys(node, Fabric{}, validate.IgnoreCatalogComments); err != nil {
 		return err
 	}
 	stripCatalogComments(node)
@@ -149,7 +166,7 @@ func (f *Fabric) UnmarshalYAML(node *yaml.Node) error {
 
 // UnmarshalYAML accepts the catalog's comment keys, as Chip does.
 func (d *StorageDevice) UnmarshalYAML(node *yaml.Node) error {
-	if err := validate.RejectUnknownKeys(node, StorageDevice{}, validate.IgnoreUnderscored); err != nil {
+	if err := validate.RejectUnknownKeys(node, StorageDevice{}, validate.IgnoreCatalogComments); err != nil {
 		return err
 	}
 	stripCatalogComments(node)

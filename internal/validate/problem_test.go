@@ -1,6 +1,48 @@
 package validate
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
+
+// TestFiniteFieldRejectsNonFinite pins the shared non-finite primitive every numeric
+// schema relies on. The cases are chosen for the IEEE-754 subtlety that motivates the
+// helper: NaN and +Inf both pass a `<= 0` guard, so a sign check alone would let them
+// through; a finite value (including a legitimate negative or zero) must not be flagged
+// here, since finiteness and sign are separate checks.
+func TestFiniteFieldRejectsNonFinite(t *testing.T) {
+	nonFinite := map[string]float64{
+		"NaN":  math.NaN(),
+		"+Inf": math.Inf(1),
+		"-Inf": math.Inf(-1),
+	}
+	for name, x := range nonFinite {
+		p := &Problems{}
+		if p.FiniteField("f", x) {
+			t.Errorf("%s: FiniteField should report not-finite (return false)", name)
+		}
+		if p.OK() {
+			t.Errorf("%s should be rejected as non-finite", name)
+		}
+	}
+	finite := map[string]float64{"zero": 0, "negative": -3.5, "positive": 7.2, "neg zero": negZero()}
+	for name, x := range finite {
+		p := &Problems{}
+		if !p.FiniteField("f", x) {
+			t.Errorf("%s: FiniteField should report finite (return true)", name)
+		}
+		if !p.OK() {
+			t.Errorf("a finite %s value should not be flagged by the finiteness check", name)
+		}
+	}
+}
+
+// negZero returns -0.0, which is finite and must pass FiniteField, without a literal the
+// compiler would fold to +0.0.
+func negZero() float64 {
+	z := 0.0
+	return -z
+}
 
 func TestSeveritySeparatesFailureFromNotice(t *testing.T) {
 	p := &Problems{}

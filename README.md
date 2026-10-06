@@ -176,6 +176,35 @@ hardware fields that these typed validators do not, and these validators check c
 properties (an acyclic graph, a prefix no longer than its prompt) that the Python gate does
 not. The two gates are stronger together.
 
+As this binary becomes the *sole* gate for `blis-catalog` (its 620-line
+`validate_catalog.py` is being deleted in favour of it), the `hardware`/`networks`
+validators enforce the schema-structural invariants that gate had, so a malformed edit
+cannot become a green merge after the migration:
+
+- **Every numeric field must be finite.** A `NaN` or `Inf` is rejected before its
+  magnitude check, since the magnitude checks miss them: a `NaN` compares false to every
+  bound, and a `+Inf` reads as positive — so either would otherwise reach a cost model and
+  poison its arithmetic. The check is a shared `validate.Problems.FiniteField` primitive,
+  applied to the `hardware`/`networks` datasheet figures *and* to `blis-registry`'s
+  coefficient values and `ci95` endpoints, which load through this same schema.
+- **`SMCount` is required and positive.** The field has no `omitempty`, so a missing count
+  decodes to zero and is rejected: every chip must declare how many SMs it ships.
+- **`hardware/` carries only dimensioned physical quantities.** The strict decoder rejects
+  any unknown field, and the comment convention is narrowed to `_comment`-prefixed keys —
+  so a fitted or dimensionless factor cannot slip in behind an underscore (`_mfu: 0.85`
+  fails as an unknown field, as a bare `mfu` already did).
+
+One invariant from the deleted gate is deliberately **not** reproduced here: the
+requirement that each `SMCount` cite a chaseable source URL in its `_comment_sm` prose.
+It is a catalog-provenance policy rather than a schema-structural invariant, and the
+schema strips comment prose before decoding, so a struct validator cannot see it — the
+full rationale, and the note that it belongs in a catalog-side lint, live at the one
+source of truth in [`spec/hardware/hardware.go`](spec/hardware/hardware.go). It is
+enforced nowhere today; **[issue #32](https://github.com/inference-sim/blis-schemas/issues/32)
+is the tracking home** for the decision on where the lint should live, and stays open
+until that lint exists catalog-side. This is the explicit tracking #32 calls for rather
+than a silent drop.
+
 A per-entry summary line goes to stdout for each artifact that validates and every
 problem to stderr, so the report reads cleanly and the exit code is scriptable: `0`
 when everything validates, `1` on any validation failure, and `2` for a usage error

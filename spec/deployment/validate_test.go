@@ -1,6 +1,9 @@
 package deployment
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
 
 // pdDeployment is a prefill/decode-disaggregated deployment of the kind the design
 // documents work through: two pools, different backends, expert parallelism. Its pool
@@ -93,6 +96,9 @@ func TestRejects(t *testing.T) {
 		}},
 		{"utilization above one", func(d *Deployment) {
 			d.Pools[0].Engine.GPUMemoryUtilization = 1.5
+		}},
+		{"non-finite utilization", func(d *Deployment) {
+			d.Pools[0].Engine.GPUMemoryUtilization = math.NaN()
 		}},
 		{"negative block size", func(d *Deployment) { d.Pools[0].Engine.BlockSize = -1 }},
 		{"prefill without decode", func(d *Deployment) {

@@ -8,6 +8,7 @@ package validate
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 )
@@ -85,6 +86,39 @@ func (p *Problems) Field(name, format string, args ...any) {
 		Message:  fmt.Sprintf(format, args...),
 		Severity: SeverityError,
 	})
+}
+
+// FiniteField records a problem at a named field if x is NaN or ±Inf. Every numeric
+// schema field needs this before its magnitude check, because the magnitude checks
+// alone do not catch a non-finite value: IEEE-754 makes every ordered comparison with
+// NaN false, so a `x <= 0` / `x < 0` guard returns false for NaN *and* for +Inf and
+// lets both through (only -Inf is incidentally caught). It belongs here as a shared
+// primitive so every validator reading a float — hardware datasheet figures, registry
+// coefficients — rejects a non-finite value identically rather than re-deriving the
+// check, or forgetting it. A non-finite number that reaches a cost model poisons every
+// arithmetic it touches.
+//
+// It returns whether x is finite, so a caller can gate the field's magnitude and
+// relational checks on it: once a field is flagged non-finite, re-running those checks
+// is at best a duplicate error (a -Inf also trips "must be positive") and at worst a
+// misattribution (a +Inf BF16 makes an FP8-vs-BF16 check complain about the FP8 field).
+// Reporting the fault once, at the field that is actually wrong, keeps the diagnostic
+// honest.
+func (p *Problems) FiniteField(name string, x float64) bool {
+	// Name which non-finite value it is: NaN points at a missing or corrupted input,
+	// an infinity at an unbounded or divide-by-zero scale, and the two call for
+	// different fixes in the raw catalog data.
+	switch {
+	case math.IsNaN(x):
+		p.Field(name, "must be a finite number, got NaN")
+	case math.IsInf(x, 1):
+		p.Field(name, "must be a finite number, got +Inf")
+	case math.IsInf(x, -1):
+		p.Field(name, "must be a finite number, got -Inf")
+	default:
+		return true
+	}
+	return false
 }
 
 func (p *Problems) add(sev Severity, rule, msg string) {
