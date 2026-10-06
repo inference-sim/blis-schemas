@@ -15,6 +15,7 @@ import (
 	"github.com/inference-sim/blis-schemas/spec/hardware"
 	"github.com/inference-sim/blis-schemas/spec/model"
 	"github.com/inference-sim/blis-schemas/spec/scenario"
+	"github.com/inference-sim/blis-schemas/spec/simresult"
 	"github.com/inference-sim/blis-schemas/spec/workload"
 )
 
@@ -124,6 +125,16 @@ func LoadWorkload(path string) (*workload.Shape, error) {
 // LoadEvaluationRun reads a measured run.
 func LoadEvaluationRun(path string) (*evaluation.Run, error) {
 	var r evaluation.Run
+	if err := decodeStrict(path, &r); err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+// LoadSimResult reads a predicted sim-result document — one run's output, distinct from a
+// measured EvaluationRun. It does not validate; call Validate.
+func LoadSimResult(path string) (*simresult.SimResult, error) {
+	var r simresult.SimResult
 	if err := decodeStrict(path, &r); err != nil {
 		return nil, err
 	}

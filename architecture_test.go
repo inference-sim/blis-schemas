@@ -19,7 +19,7 @@ func TestSpecDoesNotDependOnRules(t *testing.T) {
 	for _, pkg := range []string{
 		"./spec/model", "./spec/hardware", "./spec/coefficient",
 		"./spec/scenario", "./spec/deployment", "./spec/workload",
-		"./spec/evaluation", "./vocab", "./internal/validate",
+		"./spec/evaluation", "./spec/simresult", "./vocab", "./internal/validate",
 	} {
 		out, err := exec.Command("go", "list", "-deps", pkg).Output()
 		if err != nil {
