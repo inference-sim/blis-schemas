@@ -534,37 +534,90 @@ source:
 	}
 }
 
-// TestLoadCatalogModelIdentitiesIfPresent parses the committed model.yaml files
-// themselves — the strongest check of the tags, since a hand-written fixture agrees with
-// whatever the tags happen to say where the real files do not. Gated on BLIS_CATALOG, and
-// named to run under CI's parse-committed-data job (the LoadCatalog filter).
-func TestLoadCatalogModelIdentitiesIfPresent(t *testing.T) {
-	root := os.Getenv("BLIS_CATALOG")
-	if root == "" {
-		t.Skip("BLIS_CATALOG is unset: the model.yaml tags were NOT checked against the " +
-			"committed catalog files, only against fixtures in this package")
+// catalogFixtures is a pinned, in-tree copy of blis-catalog's data, vendored once by hand
+// under testdata/ in the catalog's own layout: models/<name>/{config.json,model.yaml,
+// graph.yaml}, hardware/, networks/, devices/, workloads/. The source commit is recorded
+// in the vendoring commit message, not in a marker file, so testdata/ stays pure catalog
+// data. The committed-data tests resolve this snapshot rather than a BLIS_CATALOG env var
+// or a live checkout of the catalog's main: a laptop env var skips (a skip reads as a
+// pass), and a live main is a moving target that reddens unrelated builds. A pinned
+// snapshot only changes when someone deliberately re-vendors it in a reviewable commit.
+const catalogFixtures = "testdata"
+
+// TestLoadCatalogModels loads and VALIDATES the per-model artifacts in the vendored
+// catalog snapshot. It walks each models/<name>/ directory rather than globbing the two
+// YAML kinds independently: independent globs only notice a kind that has vanished from
+// the tree entirely, so a single directory missing one of its files would slip past them,
+// whereas walking the directory FAILS on it. The issue's layout gives every model entry
+// three files — config.json, model.yaml and graph.yaml — so each must be present
+// (config.json is checked for presence only; blis-schemas never parses it). model.yaml and
+// graph.yaml are then loaded and validated with the same Validate() cmd/validate-catalog
+// runs, and each must name itself what its directory is called. A MISSING fixture is a
+// FAILURE, not a skip: a skip is indistinguishable from a pass and would let the check
+// silently stop running. (The live validator treats a derived graph.yaml as optional,
+// because a live catalog entry may lack one; this is a pinned snapshot vendored in the
+// catalog's full layout, and re-vendoring is a deliberate, reviewable commit, so the
+// stronger per-entry completeness check belongs here.)
+func TestLoadCatalogModels(t *testing.T) {
+	modelsDir := filepath.Join(catalogFixtures, "models")
+	entries, err := os.ReadDir(modelsDir)
+	if err != nil {
+		t.Fatalf("reading %s: %v", modelsDir, err)
 	}
-	cards, _ := filepath.Glob(filepath.Join(root, "models", "*", "model.yaml"))
-	if len(cards) == 0 {
-		t.Skipf("BLIS_CATALOG=%s has no models/*/model.yaml", root)
-	}
-	for _, path := range cards {
-		id, err := LoadModelIdentity(path)
-		if err != nil {
-			t.Errorf("LoadModelIdentity(%s): %v", path, err)
-			continue
-		}
-		// The stated name must match the directory, and the source provenance must be
-		// whole: those are what make a card an identity rather than a note.
-		dir := filepath.Base(filepath.Dir(path))
-		if id.Name != dir {
-			t.Errorf("%s: name %q does not match directory %q", path, id.Name, dir)
-		}
-		if p := id.Validate(); !p.OK() {
-			t.Errorf("%s failed validation:\n%s", path, p.Error())
+	var names []string
+	for _, e := range entries {
+		// A model entry is a directory; skip hidden entries so a stray editor/VCS dir
+		// (a .foo) is never mistaken for a model and reported as missing its files.
+		if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
+			names = append(names, e.Name())
 		}
 	}
-	t.Logf("parsed %d model.yaml identity files from the catalog", len(cards))
+	if len(names) == 0 {
+		t.Fatalf("no model directories under %s: the vendored catalog snapshot is missing",
+			modelsDir)
+	}
+	for _, name := range names {
+		dir := filepath.Join(modelsDir, name)
+		// config.json is part of the vendored layout but blis-schemas never parses it,
+		// so only its presence is checked; a missing one is a missing fixture and fails.
+		if _, err := os.Stat(filepath.Join(dir, "config.json")); err != nil {
+			t.Errorf("%s: missing config.json: %v", name, err)
+		}
+		// model.yaml and graph.yaml must be present, load, and validate. The load is
+		// gated on presence so a missing file reports once (the stat error) rather than
+		// a second, redundant open error from the loader.
+		modelPath := filepath.Join(dir, "model.yaml")
+		if _, err := os.Stat(modelPath); err != nil {
+			t.Errorf("%s: missing model.yaml: %v", name, err)
+		} else if id, err := LoadModelIdentity(modelPath); err != nil {
+			t.Errorf("LoadModelIdentity(%s/model.yaml): %v", name, err)
+		} else {
+			// The stated name must match the directory, and the source provenance must
+			// be whole: those are what make a card an identity rather than a note.
+			if id.Name != name {
+				t.Errorf("%s/model.yaml: name %q does not match directory %q", name, id.Name, name)
+			}
+			if p := id.Validate(); !p.OK() {
+				t.Errorf("%s/model.yaml failed validation:\n%s", name, p.Error())
+			}
+		}
+		graphPath := filepath.Join(dir, "graph.yaml")
+		if _, err := os.Stat(graphPath); err != nil {
+			t.Errorf("%s: missing graph.yaml: %v", name, err)
+		} else if g, err := LoadModelGraph(graphPath); err != nil {
+			t.Errorf("LoadModelGraph(%s/graph.yaml): %v", name, err)
+		} else {
+			// A graph, like an identity, names itself what its directory is called.
+			if g.Name != name {
+				t.Errorf("%s/graph.yaml: name %q does not match directory %q", name, g.Name, name)
+			}
+			if p := g.Validate(); !p.OK() {
+				t.Errorf("%s/graph.yaml failed validation:\n%s", name, p.Error())
+			}
+		}
+	}
+	t.Logf("validated model.yaml + graph.yaml and checked config.json presence for %d model(s) from the vendored catalog",
+		len(names))
 }
 
 func TestLoadCoefficientSet(t *testing.T) {
@@ -621,18 +674,20 @@ coefficients:
 	}
 }
 
-// TestLoadCatalogFilesIfPresent parses the committed catalog files themselves. It is
-// the strongest check of the tags: a hand-written fixture agrees with whatever the
-// tags happen to say, where the real files do not.
-func TestLoadCatalogFilesIfPresent(t *testing.T) {
-	root := os.Getenv("BLIS_CATALOG")
-	if root == "" {
-		t.Skip("BLIS_CATALOG is unset: the yaml tags were NOT checked against the " +
-			"committed catalog files, only against fixtures in this package")
+// TestLoadCatalogFiles loads and VALIDATES every top-level catalog artifact in the
+// vendored snapshot: a chip, a fabric, a workload shape, and each storage tier. Like
+// TestLoadCatalogModels it is the strongest check of the tags — real files, not
+// hand-written fixtures — and it validates rather than merely loading (the gap #17 left),
+// calling the same Validate() cmd/validate-catalog runs. A MISSING namespace is a FAILURE,
+// not a skip, so the check cannot silently stop running against a snapshot that moved.
+func TestLoadCatalogFiles(t *testing.T) {
+	chips, err := filepath.Glob(filepath.Join(catalogFixtures, "hardware", "*.yaml"))
+	if err != nil {
+		t.Fatalf("globbing hardware/*.yaml: %v", err)
 	}
-	chips, _ := filepath.Glob(filepath.Join(root, "hardware", "*.yaml"))
 	if len(chips) == 0 {
-		t.Skipf("BLIS_CATALOG=%s has no hardware/*.yaml", root)
+		t.Fatalf("no hardware/*.yaml under %s: the vendored catalog snapshot is missing",
+			catalogFixtures)
 	}
 	for _, path := range chips {
 		c, err := LoadChip(path)
@@ -640,26 +695,76 @@ func TestLoadCatalogFilesIfPresent(t *testing.T) {
 			t.Errorf("LoadChip(%s): %v", filepath.Base(path), err)
 			continue
 		}
-		// Every field the schema declares required must have arrived.
-		if c.BF16Peak <= 0 || c.MemoryGiB <= 0 || c.IntraNodeBwGBps <= 0 {
-			t.Errorf("%s: a required field did not parse: %+v", filepath.Base(path), c)
+		if p := c.Validate(); !p.OK() {
+			t.Errorf("%s failed validation:\n%s", filepath.Base(path), p.Error())
 		}
 	}
-	fabrics, _ := filepath.Glob(filepath.Join(root, "networks", "*.yaml"))
+
+	fabrics, err := filepath.Glob(filepath.Join(catalogFixtures, "networks", "*.yaml"))
+	if err != nil {
+		t.Fatalf("globbing networks/*.yaml: %v", err)
+	}
+	if len(fabrics) == 0 {
+		t.Fatalf("no networks/*.yaml under %s: the vendored catalog snapshot is missing",
+			catalogFixtures)
+	}
 	for _, path := range fabrics {
 		f, err := LoadFabric(path)
 		if err != nil {
 			t.Errorf("LoadFabric(%s): %v", filepath.Base(path), err)
 			continue
 		}
-		if f.InterNodeBwGBps <= 0 {
-			t.Errorf("%s: InterNodeBwGBps did not parse", filepath.Base(path))
+		if p := f.Validate(); !p.OK() {
+			t.Errorf("%s failed validation:\n%s", filepath.Base(path), p.Error())
 		}
 	}
-	t.Logf("parsed %d chip and %d fabric files from the catalog", len(chips), len(fabrics))
+
+	workloads, err := filepath.Glob(filepath.Join(catalogFixtures, "workloads", "*.yaml"))
+	if err != nil {
+		t.Fatalf("globbing workloads/*.yaml: %v", err)
+	}
+	if len(workloads) == 0 {
+		t.Fatalf("no workloads/*.yaml under %s: the vendored catalog snapshot is missing",
+			catalogFixtures)
+	}
+	for _, path := range workloads {
+		w, err := LoadWorkload(path)
+		if err != nil {
+			t.Errorf("LoadWorkload(%s): %v", filepath.Base(path), err)
+			continue
+		}
+		if p := w.Validate(); !p.OK() {
+			t.Errorf("%s failed validation:\n%s", filepath.Base(path), p.Error())
+		}
+	}
+
+	// devices/storage.yaml is one mapping file of tier name to device facts, loaded as a
+	// list; it is a required part of the snapshot, so an absent or empty file fails.
+	devicesPath := filepath.Join(catalogFixtures, "devices", "storage.yaml")
+	devices, err := LoadStorageDevices(devicesPath)
+	if err != nil {
+		t.Fatalf("LoadStorageDevices(%s): %v", devicesPath, err)
+	}
+	if len(devices) == 0 {
+		t.Fatalf("%s declares no storage tier: the vendored catalog snapshot is missing",
+			devicesPath)
+	}
+	for _, d := range devices {
+		if p := d.Validate(); !p.OK() {
+			t.Errorf("devices/storage.yaml:%s failed validation:\n%s", d.Name, p.Error())
+		}
+	}
+
+	t.Logf("validated %d chip(s), %d fabric(s), %d workload(s), %d storage tier(s) from the vendored catalog",
+		len(chips), len(fabrics), len(workloads), len(devices))
 }
 
-// TestLoadRegistryFilesIfPresent does the same for coefficient sets.
+// TestLoadRegistryFilesIfPresent parses the committed coefficient sets from a BLIS_REGISTRY
+// checkout. Unlike the catalog tests above, the registry has no vendored in-tree snapshot
+// yet, so this one is still gated on an env var and SKIPS when it is unset, and it checks
+// the parsed entries' fields (a name, a unit, a method) rather than calling Set.Validate().
+// Pinning and fully validating the registry the way testdata/ now pins the catalog is a
+// separate change.
 func TestLoadRegistryFilesIfPresent(t *testing.T) {
 	root := os.Getenv("BLIS_REGISTRY")
 	if root == "" {
