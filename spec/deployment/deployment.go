@@ -1,8 +1,11 @@
 // Package deployment describes the mutable configuration a user — or an optimizer
 // sweeping a configuration space — chooses against a fixed Scenario: how a model is
 // laid out across the available hardware (pools, each a role at a parallelism layout
-// with its own engine settings), the KV offload hierarchy below HBM, and
-// prefill-to-decode KV transfer.
+// with its own engine settings), the KV offload hierarchy below HBM, prefill-to-decode
+// KV transfer, and the control-plane policy surface that decides how requests are
+// admitted, routed, scheduled, preempted, watched for saturation, and served against
+// LoRA adapters (admission, routing, scheduler, preemption, saturation, LoRA — defined
+// in policy.go).
 //
 // It is the tunable half of what a single `blis run` consumes. The immutable problem
 // — the model, the workload (a distributional shape or a concrete trace reference), the
@@ -32,7 +35,9 @@
 package deployment
 
 // Deployment is the tunable configuration applied to a Scenario: the pools that lay
-// the model out, the offload hierarchy, and prefill-to-decode transfer.
+// the model out, the offload hierarchy, prefill-to-decode transfer, and the
+// control-plane policy surface (admission, routing, scheduler, preemption, saturation,
+// LoRA — see policy.go).
 type Deployment struct {
 	Kind string `yaml:"kind"` // "Deployment"
 	Name string `yaml:"name"`
@@ -41,6 +46,18 @@ type Deployment struct {
 
 	Offload    *Offload    `yaml:"offload,omitempty"`
 	PDTransfer *PDTransfer `yaml:"pd_transfer,omitempty"`
+
+	// The control-plane policy surface: operator choices for how requests are admitted,
+	// routed, scheduled, preempted, watched for saturation, and served against LoRA
+	// adapters. Each is optional and defined in policy.go. Scheduler is the BLIS-native
+	// instance-queue ordering, a scalar as the policy bundle has it, and is distinct from
+	// the per-pool Engine.SchedulingPolicy that mirrors vLLM for trace reproduction.
+	Admission  *Admission      `yaml:"admission,omitempty"`
+	Routing    *Routing        `yaml:"routing,omitempty"`
+	Scheduler  SchedulerPolicy `yaml:"scheduler,omitempty"`
+	Preemption *Preemption     `yaml:"preemption,omitempty"`
+	Saturation *Saturation     `yaml:"saturation,omitempty"`
+	LoRA       *LoRA           `yaml:"lora,omitempty"`
 }
 
 // Role distinguishes the engines of a disaggregated deployment.
