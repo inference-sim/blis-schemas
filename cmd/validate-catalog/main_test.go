@@ -1,0 +1,321 @@
+package main
+
+import (
+	"bytes"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// exercise runs the validator against a root and returns its exit code and the two
+// streams, so a test can assert both the scriptable code and the human-readable report.
+func exercise(t *testing.T, root string) (int, string, string) {
+	t.Helper()
+	var out, errb bytes.Buffer
+	code := run([]string{root}, &out, &errb)
+	return code, out.String(), errb.String()
+}
+
+// catalogWith builds a throwaway catalog from a path->contents map and returns its root.
+// An empty contents string creates the directory alone, which is how a test sets up a
+// model entry that is missing its model.yaml.
+func catalogWith(t *testing.T, files map[string]string) string {
+	t.Helper()
+	root := t.TempDir()
+	for rel, body := range files {
+		full := filepath.Join(root, rel)
+		if body == "" {
+			if err := os.MkdirAll(full, 0o700); err != nil {
+				t.Fatalf("mkdir %s: %v", rel, err)
+			}
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
+			t.Fatalf("mkdir for %s: %v", rel, err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o600); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+	return root
+}
+
+// TestRunValidCatalogValidatesEveryKind is the headline: the committed fixture catalog
+// holds one of every artifact kind — a graph, a model.yaml, a chip, a fabric, two storage
+// tiers, and a NESTED workload shape — and all of them must validate, with a zero exit and
+// nothing on stderr. The workload fixture is deliberately the nested form; the live
+// catalog's workloads are still flat (catalog #16), so this path is covered by a local
+// fixture rather than the live tree.
+func TestRunValidCatalogValidatesEveryKind(t *testing.T) {
+	code, out, errb := exercise(t, filepath.Join("testdata", "catalog-ok"))
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout:\n%s\nstderr:\n%s", code, out, errb)
+	}
+	if errb != "" {
+		t.Errorf("a clean catalog wrote to stderr:\n%s", errb)
+	}
+	// Every artifact kind must appear in the report, named, so a kind silently dropped
+	// from the walk is caught here rather than by its absence going unnoticed.
+	for _, want := range []string{
+		"tiny-llm", "h100", "ib-400g", "cpu_dram", "nvme_gen4", "chatbot",
+		"all 7 artifact(s) validate",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("report does not mention %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestRunMissingArgument: the CLI takes exactly one root. No argument (or more than one)
+// is a usage error, exit 2, distinct from a validation failure.
+func TestRunMissingArgument(t *testing.T) {
+	var out, errb bytes.Buffer
+	if code := run(nil, &out, &errb); code != 2 {
+		t.Fatalf("exit = %d, want 2", code)
+	}
+	if !strings.Contains(errb.String(), "usage") {
+		t.Errorf("stderr should carry usage, got: %s", errb.String())
+	}
+}
+
+// TestRunRootDoesNotExist: a mistyped path is a usage-level error (exit 2), not a report
+// that zero artifacts validated.
+func TestRunRootDoesNotExist(t *testing.T) {
+	code, _, errb := exercise(t, filepath.Join(t.TempDir(), "nope"))
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2", code)
+	}
+	if !strings.Contains(errb, "does not exist") {
+		t.Errorf("stderr should explain the missing root, got: %s", errb)
+	}
+}
+
+// TestRunNotACatalog: an existing directory with none of the catalog namespaces must fail
+// loudly (exit 2) rather than report "all 0 artifacts validate" — the hole a mistyped but
+// existing root would otherwise open.
+func TestRunNotACatalog(t *testing.T) {
+	code, _, errb := exercise(t, t.TempDir())
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2", code)
+	}
+	if !strings.Contains(errb, "not a catalog") {
+		t.Errorf("stderr should say it is not a catalog, got: %s", errb)
+	}
+}
+
+// TestRunNamespacePresentButNoArtifacts: a directory that satisfies the namespace gate
+// with only an empty (or optional) namespace — here an empty devices/ — validates nothing,
+// and reporting "all 0 validate" with exit 0 would pass a non-catalog. A run that finds no
+// artifact at all is a structural error (exit 2), not a success.
+func TestRunNamespacePresentButNoArtifacts(t *testing.T) {
+	root := catalogWith(t, map[string]string{
+		"devices": "", // an empty devices/ directory: catalog-shaped, holds nothing
+	})
+	code, out, errb := exercise(t, root)
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2\nstdout:\n%s\nstderr:\n%s", code, out, errb)
+	}
+	if !strings.Contains(errb, "no catalog artifacts") {
+		t.Errorf("stderr should say nothing was found to validate, got: %s", errb)
+	}
+	if strings.Contains(out, "validate") {
+		t.Errorf("stdout must not claim anything validated:\n%s", out)
+	}
+}
+
+// TestRunModelNameMismatch: a model.yaml whose name disagrees with its directory is the
+// identity failure the Python gate catches too; the Go gate must report it and exit 1.
+func TestRunModelNameMismatch(t *testing.T) {
+	root := catalogWith(t, map[string]string{
+		"models/tiny-llm/model.yaml": `name: not-tiny
+source:
+  provider: huggingface
+  repo: example/Tiny-LLM
+  revision: deadbeef
+`,
+	})
+	code, _, errb := exercise(t, root)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1\nstderr:\n%s", code, errb)
+	}
+	if !strings.Contains(errb, "not-tiny") || !strings.Contains(errb, "tiny-llm") {
+		t.Errorf("stderr should name both the claimed name and the directory, got: %s", errb)
+	}
+}
+
+// TestRunMissingModelYaml: a model directory without a model.yaml is an incomplete entry;
+// the walk must report the absence and exit 1, mirroring validate_models.
+func TestRunMissingModelYaml(t *testing.T) {
+	root := catalogWith(t, map[string]string{
+		"models/orphan": "", // a model directory with no model.yaml
+	})
+	code, _, errb := exercise(t, root)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1\nstderr:\n%s", code, errb)
+	}
+	if !strings.Contains(errb, "orphan") || !strings.Contains(errb, "model.yaml") {
+		t.Errorf("stderr should report the missing model.yaml, got: %s", errb)
+	}
+}
+
+// TestRunMalformedChip: a chip that loads but fails validation (a non-positive datasheet
+// figure) must be reported with its field and exit 1 — the coverage this CLI adds over a
+// graph-only gate.
+func TestRunMalformedChip(t *testing.T) {
+	root := catalogWith(t, map[string]string{
+		"hardware/h100.yaml": `Provenance: vendor_spec
+TFlopsPeak: 0
+BwPeakTBs: 3.35
+MemoryGiB: 80.0
+IntraNodeBwGBps: 450
+`,
+	})
+	code, _, errb := exercise(t, root)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1\nstderr:\n%s", code, errb)
+	}
+	if !strings.Contains(errb, "TFlopsPeak") {
+		t.Errorf("stderr should name the offending field, got: %s", errb)
+	}
+}
+
+// TestRunMalformedFabric: a fabric that loads but fails validation (a non-positive
+// inter-node bandwidth) must be reported with its field and exit 1 — the networks path is
+// new coverage, so a negative test pins that its failures bubble up.
+func TestRunMalformedFabric(t *testing.T) {
+	root := catalogWith(t, map[string]string{
+		"networks/ib-400g.yaml": `Provenance: vendor_spec
+InterNodeBwGBps: 0
+`,
+	})
+	code, _, errb := exercise(t, root)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1\nstderr:\n%s", code, errb)
+	}
+	if !strings.Contains(errb, "InterNodeBwGBps") {
+		t.Errorf("stderr should name the offending field, got: %s", errb)
+	}
+}
+
+// TestRunMalformedStorageDevice: a storage tier that loads but fails validation (a
+// non-positive bandwidth) must be reported, named by tier, and exit 1 — the devices path
+// is new coverage, so a negative test pins that a per-tier failure bubbles up.
+func TestRunMalformedStorageDevice(t *testing.T) {
+	root := catalogWith(t, map[string]string{
+		"devices/storage.yaml": `cpu_dram: {read_bandwidth: -1, write_bandwidth: 2.0e4, base_latency: 1.0}
+`,
+	})
+	code, _, errb := exercise(t, root)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1\nstderr:\n%s", code, errb)
+	}
+	if !strings.Contains(errb, "read_bandwidth") || !strings.Contains(errb, "cpu_dram") {
+		t.Errorf("stderr should name the tier and the offending field, got: %s", errb)
+	}
+}
+
+// TestRunFlatWorkloadIsRejected pins the behaviour the task calls out: the live catalog's
+// workloads are still FLAT, and a flat file is not a Shape, so the strict loader rejects
+// it and the run exits 1. This is EXPECTED until catalog #16 migrates the workloads to the
+// nested form; it is pinned so the rejection is a known, tested state rather than a
+// surprise.
+//
+// Cross-repo ordering (this schema-side change does not and cannot enforce it; issue #22's
+// scope note leaves wiring to blis-catalog): the nested-workload migration (catalog #16)
+// must land BEFORE this binary is wired into blis-catalog's CI (blis-catalog #14), so the
+// gate never runs against the flat workloads it is designed to reject. Running the
+// validator over today's live catalog therefore exits 1 on exactly these four workload
+// files and nothing else — the expected pre-#16 state.
+func TestRunFlatWorkloadIsRejected(t *testing.T) {
+	root := catalogWith(t, map[string]string{
+		"workloads/chatbot.yaml": `prefix_tokens: 0
+prompt_tokens: 256
+output_tokens: 256
+`,
+	})
+	code, _, errb := exercise(t, root)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1\nstderr:\n%s", code, errb)
+	}
+	if !strings.Contains(errb, "chatbot") {
+		t.Errorf("stderr should name the rejected workload file, got: %s", errb)
+	}
+}
+
+// TestRunUnreadableNamespaceIsReported: an existing but unreadable namespace directory
+// must not pass silently. filepath.Glob swallows a directory read error and returns no
+// paths, which would let the run report "all N validate" with the namespace unchecked; the
+// os.ReadDir-based discovery surfaces the error as a failure and exits 1.
+func TestRunUnreadableNamespaceIsReported(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root bypasses directory permissions, so an unreadable dir cannot be exercised")
+	}
+	root := catalogWith(t, map[string]string{
+		"hardware/h100.yaml": `Provenance: vendor_spec
+TFlopsPeak: 989.5
+BwPeakTBs: 3.35
+MemoryGiB: 80.0
+IntraNodeBwGBps: 450
+`,
+		"networks/ib-400g.yaml": `Provenance: vendor_spec
+InterNodeBwGBps: 50
+`,
+	})
+	nsdir := filepath.Join(root, "networks")
+	if err := os.Chmod(nsdir, 0o000); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	// Restore read/exec before TempDir's RemoveAll runs (LIFO: this fires first).
+	t.Cleanup(func() { _ = os.Chmod(nsdir, 0o700) })
+
+	code, out, errb := exercise(t, root)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1 (an unreadable namespace must not pass)\nstdout:\n%s\nstderr:\n%s", code, out, errb)
+	}
+	if !strings.Contains(errb, "networks") {
+		t.Errorf("stderr should report the unreadable namespace, got: %s", errb)
+	}
+}
+
+// TestRunInvalidGraph: a graph that parses but fails schema validation (here, a cyclic
+// layer DAG) must be reported and exit 1 — the original coverage, still working after the
+// walk was broadened.
+func TestRunInvalidGraph(t *testing.T) {
+	root := catalogWith(t, map[string]string{
+		"models/tiny-llm/model.yaml": `name: tiny-llm
+source:
+  provider: huggingface
+  repo: example/Tiny-LLM
+  revision: deadbeef
+`,
+		"models/tiny-llm/graph.yaml": `kind: ModelGraph
+name: tiny-llm
+derived_from:
+  format: hf_config_json
+  path: config.json
+  sha256: dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+  deriver_version: 1
+global:
+  hidden_size: 2048
+  vocab_size: 32000
+  weight_dtype: bf16
+layer_kinds:
+  - id: dense
+    nodes:
+      - {op: Elementwise, role: a}
+      - {op: Elementwise, role: b}
+    edges: [[0, 1], [1, 0]]
+stack:
+  pattern: [dense]
+  repeat: 1
+`,
+	})
+	code, _, errb := exercise(t, root)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1\nstderr:\n%s", code, errb)
+	}
+	if !strings.Contains(errb, "cyclic") {
+		t.Errorf("stderr should report the cycle, got: %s", errb)
+	}
+}
