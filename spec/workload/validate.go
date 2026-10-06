@@ -134,6 +134,11 @@ func (t SLODimTargets) Validate() *validate.Problems {
 // Validate performs field-level validation of a traffic shape.
 func (s *Shape) Validate() *validate.Problems {
 	p := &validate.Problems{}
+	// Name is required. It can no longer come from the file (the field is tagged
+	// yaml:"-"), so the loader always supplies it and this check is unreachable through
+	// LoadWorkload — but it still guards a Shape built directly in code or a
+	// hand-populated Bundle.Workload, so it stays: a later cleanup must not read it as
+	// dead.
 	if s.Name == "" {
 		p.Field("name", "required")
 	}

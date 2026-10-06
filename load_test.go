@@ -243,6 +243,73 @@ cluster:
 	}
 }
 
+// TestLoadWorkload is the by-filename identity contract for a workload Shape. The file
+// carries no name — exactly like a chip or a fabric — so a nameless document must load,
+// LoadWorkload must stamp Shape.Name from the path stem, and the loaded shape must then
+// validate clean (Validate requires a Name, now always loader-supplied). This is the
+// catalog's target form from issue #21: a chatbot.yaml that is prefix/prompt/output and
+// nothing else.
+func TestLoadWorkload(t *testing.T) {
+	path := write(t, "chatbot.yaml", `
+prefix_tokens: 0
+prompt:
+  tokens: 256
+  tokens_stdev: 100
+  tokens_min: 2
+  tokens_max: 800
+output:
+  tokens: 256
+  tokens_stdev: 100
+  tokens_min: 1
+  tokens_max: 1024
+`)
+	w, err := LoadWorkload(path)
+	if err != nil {
+		t.Fatalf("LoadWorkload: %v", err)
+	}
+	// Identity is the filename stem, as with LoadChip/LoadFabric.
+	if w.Name != "chatbot" {
+		t.Errorf("name = %q; it should come from the filename", w.Name)
+	}
+	// Spot-check a field from each nesting level: a tag error at any depth would leave a
+	// zero value the type system cannot catch.
+	if w.PrefixTokens != 0 {
+		t.Errorf("prefix_tokens = %d, want 0", w.PrefixTokens)
+	}
+	if w.Prompt.Mean != 256 || w.Prompt.StdDev != 100 || w.Prompt.Min != 2 || w.Prompt.Max != 800 {
+		t.Errorf("prompt distribution did not parse: %+v", w.Prompt)
+	}
+	if w.Output.Mean != 256 || w.Output.Max != 1024 {
+		t.Errorf("output distribution did not parse: %+v", w.Output)
+	}
+	// A loader-named shape validates: the Name requirement is satisfied by the stamp, not
+	// by a line in the file.
+	if p := w.Validate(); !p.OK() {
+		t.Errorf("a loaded workload failed validation:\n%s", p.Error())
+	}
+}
+
+// TestLoadWorkloadRejectsInFileName pins that identity is a filename fact, not a file
+// field: an in-file `name:` is no longer part of the contract, so under strict decoding
+// it is an unknown field and must fail loudly rather than quietly become a second source
+// of truth for the identity the filename already fixes. The Name field is tagged
+// `yaml:"-"`, so yaml.v3 maps no `name` key to it and KnownFields rejects the stray key.
+func TestLoadWorkloadRejectsInFileName(t *testing.T) {
+	path := write(t, "chatbot.yaml", `
+name: not-chatbot
+prefix_tokens: 0
+prompt:
+  tokens: 256
+output:
+  tokens: 256
+`)
+	if _, err := LoadWorkload(path); err == nil {
+		t.Fatal("an in-file name was accepted; the filename and the field could disagree")
+	} else if !strings.Contains(err.Error(), "name") {
+		t.Errorf("the error should name the offending field %q, got: %v", "name", err)
+	}
+}
+
 func TestLoadDeployment(t *testing.T) {
 	path := write(t, "d.yaml", `
 kind: Deployment
