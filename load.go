@@ -70,28 +70,28 @@ func LoadModelIdentity(path string) (*model.Identity, error) {
 }
 
 // LoadChip reads a chip descriptor from blis-catalog's hardware namespace. The file
-// carries no name — identity is the filename — so the loader supplies it.
+// carries no name — identity is the filename — so the loader stamps Chip.Name from the
+// path stem. The Chip type tags Name `yaml:"-"`, so the stamp is the field's only source:
+// there is no in-file name to prefer, hence no `if Name == ""` guard, and an in-file
+// `name` is rejected under strict decode (#27).
 func LoadChip(path string) (*hardware.Chip, error) {
 	var c hardware.Chip
 	if err := decodeStrict(path, &c); err != nil {
 		return nil, err
 	}
-	if c.Name == "" {
-		c.Name = stem(path)
-	}
+	c.Name = stem(path)
 	return &c, nil
 }
 
-// LoadFabric reads a fabric descriptor from blis-catalog's networks namespace, naming
-// it from the filename as LoadChip does.
+// LoadFabric reads a fabric descriptor from blis-catalog's networks namespace, naming it
+// from the filename as LoadChip does: the stamp is Fabric.Name's only source, and an
+// in-file `name` is a rejected unknown field (#27).
 func LoadFabric(path string) (*hardware.Fabric, error) {
 	var f hardware.Fabric
 	if err := decodeStrict(path, &f); err != nil {
 		return nil, err
 	}
-	if f.Name == "" {
-		f.Name = stem(path)
-	}
+	f.Name = stem(path)
 	return &f, nil
 }
 
@@ -108,10 +108,8 @@ func LoadCoefficientSet(path string) (*coefficient.Set, error) {
 // carries no name — identity is the filename — so the loader stamps Shape.Name from the
 // path stem. The Shape type tags Name `yaml:"-"`, so the stamp is the field's only
 // source: there is no in-file name to prefer, hence no `if Name == ""` guard, and an
-// in-file `name` is rejected under strict decode. This TIGHTENS the by-filename rule that
-// LoadChip/LoadFabric only partly enforce — they keep a `yaml:"name"` tag and an empty-name
-// guard that still accept an in-file name — rather than matching them; aligning chips and
-// fabrics is tracked as #27.
+// in-file `name` is rejected under strict decode. Chip and Fabric now follow this same
+// rule (#27), so the three by-filename entities are single-sourced identically.
 func LoadWorkload(path string) (*workload.Shape, error) {
 	var w workload.Shape
 	if err := decodeStrict(path, &w); err != nil {

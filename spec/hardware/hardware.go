@@ -44,9 +44,12 @@ import (
 // is the tracked home for the decision on where that lint lives, and stays open until it
 // exists. This is the explicit tracking #32 asks for in lieu of a silent drop.
 //
-// The files also carry no name: identity is the filename. A loader sets Name from the
-// path, and validation requires it, so a chip that reaches a cost model without one is
-// an error rather than an anonymous descriptor.
+// The files also carry no name: identity is the filename. Chip.Name and Fabric.Name are
+// tagged `yaml:"-"`, so yaml.v3 binds no `name` key to them and the strict decoder rejects
+// a stray one — an in-file name cannot become a second source of truth for an identity the
+// filename already fixes. A loader sets Name from the path stem (its only source), and
+// validation requires it, so a chip that reaches a cost model without one is an error
+// rather than an anonymous descriptor.
 func stripCatalogComments(node *yaml.Node) {
 	if node.Kind != yaml.MappingNode {
 		return
@@ -65,7 +68,12 @@ func stripCatalogComments(node *yaml.Node) {
 // fitted. A fitted quantity belongs in blis-registry, where it can carry a method
 // and a scope.
 type Chip struct {
-	Name       string           `yaml:"name"`
+	// Name is the chip's identity, and it is a filename fact, not a file field. The
+	// `yaml:"-"` tag means yaml.v3 binds no `name:` key to it, so under the strict decoder
+	// an in-file `name` is an unknown field and is rejected; LoadChip stamps the field from
+	// the path stem as its only source. This matches workload.Shape (#25) and the package
+	// doc above, which the field previously contradicted by carrying `yaml:"name"` (#27).
+	Name       string           `yaml:"-"`
 	Provenance vocab.Provenance `yaml:"Provenance"`
 
 	// Peak dense rates, in TFLOP/s. FP8Peak is zero on parts without native FP8.
@@ -105,7 +113,10 @@ type Chip struct {
 
 // Fabric is an inter-node network class, reusable across chips.
 type Fabric struct {
-	Name       string           `yaml:"name"`
+	// Name is a filename fact, tagged `yaml:"-"` for the same reason as Chip.Name: identity
+	// is the file's stem, LoadFabric stamps it, and an in-file `name` is a rejected unknown
+	// field rather than a competing source of truth.
+	Name       string           `yaml:"-"`
 	Provenance vocab.Provenance `yaml:"Provenance"`
 
 	// InterNodeBwGBps is per-GPU unidirectional, and NOMINAL: a line rate divided
@@ -125,6 +136,13 @@ type Fabric struct {
 // store. Read and write bandwidths are separate because they differ materially on
 // flash, and pricing an eviction at read bandwidth understates it.
 type StorageDevice struct {
+	// Name is NOT tagged `yaml:"-"` like Chip.Name and Fabric.Name, and that is deliberate
+	// (#27): a storage tier has no per-device file whose stem could supply an identity. It
+	// is loaded from a mapping of tier name to facts (LoadStorageDevices), where the map KEY
+	// is the identity and the loader stamps Name from it, overwriting whatever the value
+	// held. So the enforcement differs from a chip's: an in-file `name` here is accepted and
+	// then clobbered by the key rather than rejected, which is harmless because the key — not
+	// the field — always wins. There is no second-source-of-truth risk to reject.
 	Name              string  `yaml:"name"`
 	ReadBandwidthMBs  float64 `yaml:"read_bandwidth"`
 	WriteBandwidthMBs float64 `yaml:"write_bandwidth"`

@@ -310,6 +310,104 @@ output:
 	}
 }
 
+// TestLoadChipRejectsInFileName is the by-filename identity contract for a Chip, the same
+// one TestLoadWorkloadRejectsInFileName pins for a Shape. #27 made Chip.Name a filename
+// fact: the field is tagged `yaml:"-"`, so yaml.v3 binds no `name` key to it and the strict
+// decoder rejects a stray one rather than letting an in-file name become a second source of
+// truth for an identity the filename already fixes.
+func TestLoadChipRejectsInFileName(t *testing.T) {
+	// A valid chip body — but written to h100.yaml with an in-file name that disagrees.
+	path := write(t, "h100.yaml", `
+name: not-h100
+Provenance: vendor_spec
+TFlopsPeak: 989.5
+BwPeakTBs: 4.8
+MemoryGiB: 141.0
+IntraNodeBwGBps: 450
+SMCount: 132
+`)
+	if _, err := LoadChip(path); err == nil {
+		t.Fatal("an in-file name was accepted; the filename and the field could disagree")
+	} else if !strings.Contains(err.Error(), "name") {
+		t.Errorf("the error should name the offending field %q, got: %v", "name", err)
+	}
+
+	// An in-file name that AGREES with the filename is still rejected: the strict decoder
+	// keys off the field, not the value, so a human author mirroring the stem into the body
+	// — the most likely real-world mistake — fails loudly rather than being tolerated as a
+	// harmless-looking special case that would re-admit the second source of truth.
+	agreeing := write(t, "h100.yaml", `
+name: h100
+Provenance: vendor_spec
+TFlopsPeak: 989.5
+BwPeakTBs: 4.8
+MemoryGiB: 141.0
+IntraNodeBwGBps: 450
+SMCount: 132
+`)
+	if _, err := LoadChip(agreeing); err == nil {
+		t.Fatal("an in-file name matching the filename was accepted; identity must have one source")
+	}
+}
+
+// TestLoadFabricRejectsInFileName is TestLoadChipRejectsInFileName for a Fabric: identity is
+// the filename, Fabric.Name is tagged `yaml:"-"`, and an in-file `name` is a rejected
+// unknown field (#27).
+func TestLoadFabricRejectsInFileName(t *testing.T) {
+	path := write(t, "ib-400g.yaml", `
+name: not-ib-400g
+Provenance: vendor_spec
+InterNodeBwGBps: 50
+RDMA: true
+`)
+	if _, err := LoadFabric(path); err == nil {
+		t.Fatal("an in-file name was accepted; the filename and the field could disagree")
+	} else if !strings.Contains(err.Error(), "name") {
+		t.Errorf("the error should name the offending field %q, got: %v", "name", err)
+	}
+}
+
+// TestLoadChipAndFabricStampNameFromFilename is the positive half of the identity contract:
+// a nameless file (as every catalog chip and fabric is) loads, and Name is stamped from the
+// path stem as its only source — exactly as TestLoadWorkload checks for a Shape. A stamped
+// value then validates, since Validate requires a Name it can no longer get from the file.
+func TestLoadChipAndFabricStampNameFromFilename(t *testing.T) {
+	chipPath := write(t, "h100.yaml", `
+Provenance: vendor_spec
+TFlopsPeak: 989.5
+BwPeakTBs: 4.8
+MemoryGiB: 141.0
+IntraNodeBwGBps: 450
+SMCount: 132
+`)
+	c, err := LoadChip(chipPath)
+	if err != nil {
+		t.Fatalf("LoadChip: %v", err)
+	}
+	if c.Name != "h100" {
+		t.Errorf("name = %q; it should come from the filename", c.Name)
+	}
+	if p := c.Validate(); !p.OK() {
+		t.Errorf("a loader-named chip failed validation:\n%s", p.Error())
+	}
+
+	fabPath := write(t, "ib-400g.yaml", `
+Provenance: vendor_spec
+InterNodeBwGBps: 50
+RDMA: true
+`)
+	f, err := LoadFabric(fabPath)
+	if err != nil {
+		t.Fatalf("LoadFabric: %v", err)
+	}
+	if f.Name != "ib-400g" {
+		t.Errorf("name = %q; it should come from the filename", f.Name)
+	}
+	if p := f.Validate(); !p.OK() {
+		t.Errorf("a loader-named fabric failed validation:\n%s", p.Error())
+	}
+}
+
 func TestLoadDeployment(t *testing.T) {
 	path := write(t, "d.yaml", `
 kind: Deployment
