@@ -106,7 +106,8 @@ func (s *TraceServer) Validate() *validate.Problems {
 	// the unset sentinel and a stated fraction lies in (0, 1], so the accepted range is
 	// [0, 1]; the message states [0, 1] rather than (0, 1] so it does not read as
 	// rejecting the zero the check deliberately allows. Mirrors deployment.Engine.
-	if s.GPUMemoryUtilization < 0 || s.GPUMemoryUtilization > 1 {
+	if p.FiniteField("gpu_memory_utilization", s.GPUMemoryUtilization) &&
+		(s.GPUMemoryUtilization < 0 || s.GPUMemoryUtilization > 1) {
 		p.Field("gpu_memory_utilization",
 			"must lie in [0, 1] (0 means unset), got %v", s.GPUMemoryUtilization)
 	}
@@ -119,7 +120,9 @@ func (t SLODimTargets) Validate() *validate.Problems {
 	for field, v := range map[string]float64{
 		"ttft_ms": t.TTFTMs, "itl_ms": t.ITLMs, "e2e_ms": t.E2EMs,
 	} {
-		if v < 0 {
+		// A non-finite target would pass both the sign check and the all-zero emptiness
+		// check below (NaN != 0), reading as a set target with a garbage value.
+		if p.FiniteField(field, v) && v < 0 {
 			p.Field(field, "must not be negative")
 		}
 	}

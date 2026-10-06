@@ -182,8 +182,11 @@ func validateEngine(p *validate.Problems, at string, e Engine) {
 	// gpu_memory_utilization is a non-pointer float, so an omitted one is zero. Zero is
 	// the unset sentinel — the engine picks its default — and a stated fraction lies in
 	// (0, 1], so the accepted range is [0, 1]. The message states that range rather than
-	// (0, 1] so it does not read as rejecting the zero the check deliberately allows.
-	if e.GPUMemoryUtilization < 0 || e.GPUMemoryUtilization > 1 {
+	// (0, 1] so it does not read as rejecting the zero the check deliberately allows. The
+	// finite check runs first: a NaN would pass the range comparison (NaN < 0 and NaN > 1
+	// are both false) and reach the engine as a garbage fraction.
+	if p.FiniteField(at+".engine.gpu_memory_utilization", e.GPUMemoryUtilization) &&
+		(e.GPUMemoryUtilization < 0 || e.GPUMemoryUtilization > 1) {
 		p.Field(at+".engine.gpu_memory_utilization",
 			"must lie in [0, 1] (0 means unset), got %v", e.GPUMemoryUtilization)
 	}

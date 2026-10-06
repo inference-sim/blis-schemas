@@ -40,7 +40,9 @@ import (
 // in Chip.Validate(), which never sees the prose. That rule is a catalog-provenance policy
 // (does the prose cite a source), not a schema-structural invariant (is the value a sane
 // datasheet figure), so it belongs in a catalog-side lint over the raw files rather than
-// here. It is deliberately NOT enforced by this package; see README and issue #32.
+// here. It is deliberately NOT enforced by this package and nowhere else today; issue #32
+// is the tracked home for the decision on where that lint lives, and stays open until it
+// exists. This is the explicit tracking #32 asks for in lieu of a silent drop.
 //
 // The files also carry no name: identity is the filename. A loader sets Name from the
 // path, and validation requires it, so a chip that reaches a cost model without one is

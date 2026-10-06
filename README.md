@@ -199,9 +199,11 @@ requirement that each `SMCount` cite a chaseable source URL in its `_comment_sm`
 It is a catalog-provenance policy rather than a schema-structural invariant, and the
 schema strips comment prose before decoding, so a struct validator cannot see it — the
 full rationale, and the note that it belongs in a catalog-side lint, live at the one
-source of truth in [`spec/hardware/hardware.go`](spec/hardware/hardware.go) (see also
-issue #32). It is enforced nowhere today; tracking where it should live is the open
-follow-up.
+source of truth in [`spec/hardware/hardware.go`](spec/hardware/hardware.go). It is
+enforced nowhere today; **[issue #32](https://github.com/inference-sim/blis-schemas/issues/32)
+is the tracking home** for the decision on where the lint should live, and stays open
+until that lint exists catalog-side. This is the explicit tracking #32 calls for rather
+than a silent drop.
 
 A per-entry summary line goes to stdout for each artifact that validates and every
 problem to stderr, so the report reads cleanly and the exit code is scriptable: `0`

@@ -33,19 +33,26 @@ func (r *Run) Validate() *validate.Problems {
 		}
 		seen[pt.Concurrency] = true
 
-		if pt.OutputTokensPerSec < 0 {
+		// Each measured float is checked finite before its range check: a NaN or Inf
+		// would pass every ordered comparison and reach a consumer as a garbage metric.
+		if p.FiniteField(at+".output_tokens_per_sec", pt.OutputTokensPerSec) &&
+			pt.OutputTokensPerSec < 0 {
 			p.Field(at+".output_tokens_per_sec", "must not be negative")
 		}
-		if pt.TTFTms < 0 {
+		if p.FiniteField(at+".ttft_ms", pt.TTFTms) && pt.TTFTms < 0 {
 			p.Field(at+".ttft_ms", "must not be negative")
 		}
-		if pt.ITLms < 0 {
+		if p.FiniteField(at+".itl_ms", pt.ITLms) && pt.ITLms < 0 {
 			p.Field(at+".itl_ms", "must not be negative")
 		}
+		// The optional throughput/latency metrics carry no range check of their own, but
+		// a non-finite one is still garbage that must not reach a prediction.
+		p.FiniteField(at+".input_tokens_per_sec", pt.InputTokensPerSec)
+		p.FiniteField(at+".e2e_ms", pt.EndToEndms)
 		for field, v := range map[string]float64{
 			"kv_utilization": pt.KVUtilization, "prefix_cache_hit_rate": pt.PrefixCacheHitRate,
 		} {
-			if v < 0 || v > 1 {
+			if p.FiniteField(at+"."+field, v) && (v < 0 || v > 1) {
 				p.Field(at+"."+field, "must lie in [0, 1], got %v", v)
 			}
 		}
