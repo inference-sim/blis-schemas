@@ -4,11 +4,15 @@ Go schemas and validators for the BLIS cost model: what a model is, what hardwar
 can do, what a coefficient claims, what a deployment specifies, what a measured run
 recorded, and the interface a cost model implements.
 
-This repository holds schemas and validation only. The data lives elsewhere —
+This repository holds schemas and validation. The canonical data lives elsewhere —
 [blis-catalog](https://github.com/inference-sim/blis-catalog) owns declared facts,
 [blis-registry](https://github.com/inference-sim/blis-registry) owns learned
 coefficients — and keeping the shapes separate from the contents is what lets either
-side be validated in CI without the other being vendored in.
+side evolve on its own. The one copy of catalog data that lives here is `testdata/`:
+a pinned, by-hand snapshot of the catalog, vendored as a read-only test fixture so CI
+validates the schema against a fixed point rather than a moving upstream `main`. It is
+test input, not a second source of truth, and is re-vendored only in a deliberate,
+reviewable commit.
 
 ## The two layers
 
@@ -65,6 +69,7 @@ rules/              the version-scoped rule mechanism
 rules/v0_29/        one release's rules and constants
 internal/validate/  the accumulating, located problem list every validator shares
 cmd/validate-catalog/  CLI: load and validate every artifact in a blis-catalog checkout
+testdata/           a pinned, by-hand copy of blis-catalog's data, used as test fixtures
 ```
 
 ## A scenario's workload: a shape or a trace

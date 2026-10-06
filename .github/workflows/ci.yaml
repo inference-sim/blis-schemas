@@ -28,8 +28,15 @@ jobs:
 
   # The yaml tags are a contract with the files in blis-catalog and blis-registry.
   # Until something parses those files the tags are untested: a misspelled tag
-  # compiles, validates, and silently drops the field it was meant to read. Every
-  # committed file in both repositories failed to parse when this job was first added.
+  # compiles, validates, and silently drops the field it was meant to read.
+  #
+  # The catalog half of that contract is now checked against a pinned, in-tree snapshot
+  # (testdata/, vendored by hand) in the main test job above: the LoadCatalog tests load
+  # AND validate every committed artifact there, and a missing fixture fails rather than
+  # skips. That removes the moving-target this job used to have for the catalog — it
+  # checked out inference-sim/blis-catalog at live main, so an unrelated catalog change
+  # could redden this repo's build. The registry has no vendored snapshot yet, so it is
+  # still parsed from a live checkout here (its own pinning is a separate change).
   parse-committed-data:
     runs-on: ubuntu-latest
     steps:
@@ -39,19 +46,13 @@ jobs:
           go-version: '1.24'
       - uses: actions/checkout@v4
         with:
-          repository: inference-sim/blis-catalog
-          path: blis-catalog
-          fetch-depth: 1
-      - uses: actions/checkout@v4
-        with:
           repository: inference-sim/blis-registry
           path: blis-registry
           fetch-depth: 1
-      - name: parse every committed catalog and registry file
+      - name: parse every committed registry file
         env:
-          BLIS_CATALOG: ${{ github.workspace }}/blis-catalog
           BLIS_REGISTRY: ${{ github.workspace }}/blis-registry
-        run: go test -v -run 'LoadCatalog|LoadRegistry' .
+        run: go test -v -run 'LoadRegistry' .
 
   # The rules packs transcribe one engine release's configuration surface by hand.
   # These tests re-derive those constants from a checkout and fail on any divergence:
