@@ -53,6 +53,29 @@ Rules do not run when field validation fails. A rule reading a malformed documen
 produces findings that are artifacts of the malformation, and a reader cannot tell
 those from real ones.
 
+## Units are part of the contract
+
+A numeric field carries its unit in the thing the producer writes — the YAML key — or
+is a self-describing type. A unit stated only in a Go field name, or only in a file
+comment, is not a contract: the producer and consumer agree by coincidence, and a
+contributor entering a datasheet figure in the wrong unit passes every validator while
+making a value wrong by orders of magnitude.
+
+Three conventions satisfy this, and each is right in its place:
+
+- **A self-describing type in process.** `kernel.Kernel`'s durations are `time.Duration`,
+  unambiguous to the compiler.
+- **A unit-suffixed key on the wire.** `evaluation.Point` writes `ttft_ms`; a storage
+  device writes `read_bandwidth_mb_s`, `base_latency_us`. The key an author types names
+  the unit, so there is nowhere for a silent disagreement to live.
+- **A declared unit field, only where producers genuinely vary.** `workload.TraceHeader`
+  has a `time_unit` because its producers disagree on spelling (`us` vs `microseconds`).
+
+What this rules out is a unit that lives only in a Go field name (`BaseLatencyUs` →
+`base_latency`) or only in a line-1 comment no validator reads. Adding a redundant unit
+field beside an already-unambiguous value (`ttft_unit: ms` next to `ttft_ms`) is equally
+wrong: it creates two sources that can disagree.
+
 ## Layout
 
 ```

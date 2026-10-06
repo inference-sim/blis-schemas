@@ -1,3 +1,3 @@
-# Storage tiers for KV-cache offload. Read/write bandwidth in MB/s; base_latency in us.
-cpu_dram:  {read_bandwidth: 2.0e4, write_bandwidth: 2.0e4, base_latency: 1.0}
-nvme_gen4: {read_bandwidth: 7.0e3, write_bandwidth: 5.0e3, base_latency: 80.0}
+# Storage tiers for KV-cache offload.
+cpu_dram:  {read_bandwidth_mb_s: 2.0e4, write_bandwidth_mb_s: 2.0e4, base_latency_us: 1.0}
+nvme_gen4: {read_bandwidth_mb_s: 7.0e3, write_bandwidth_mb_s: 5.0e3, base_latency_us: 80.0}

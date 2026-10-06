@@ -92,16 +92,16 @@ func (d *StorageDevice) Validate() *validate.Problems {
 	if d.Name == "" {
 		p.Field("name", "required")
 	}
-	if p.FiniteField("read_bandwidth", d.ReadBandwidthMBs) && d.ReadBandwidthMBs <= 0 {
-		p.Field("read_bandwidth", "must be positive")
+	if p.FiniteField("read_bandwidth_mb_s", d.ReadBandwidthMBs) && d.ReadBandwidthMBs <= 0 {
+		p.Field("read_bandwidth_mb_s", "must be positive")
 	}
-	if p.FiniteField("write_bandwidth", d.WriteBandwidthMBs) && d.WriteBandwidthMBs <= 0 {
-		p.Field("write_bandwidth", "must be positive")
+	if p.FiniteField("write_bandwidth_mb_s", d.WriteBandwidthMBs) && d.WriteBandwidthMBs <= 0 {
+		p.Field("write_bandwidth_mb_s", "must be positive")
 	}
 	// Zero base latency would make an arbitrarily small transfer free, which no
 	// device is. It is the term that dominates small transfers.
-	if p.FiniteField("base_latency", d.BaseLatencyUs) && d.BaseLatencyUs <= 0 {
-		p.Field("base_latency", "must be positive; it dominates small transfers")
+	if p.FiniteField("base_latency_us", d.BaseLatencyUs) && d.BaseLatencyUs <= 0 {
+		p.Field("base_latency_us", "must be positive; it dominates small transfers")
 	}
 	return p
 }

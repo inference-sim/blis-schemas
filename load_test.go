@@ -1051,3 +1051,35 @@ MemorGiB: 999
 			"wrong capacity and nothing would report it")
 	}
 }
+
+// TestStorageDeviceKeysCarryUnits is #18: the StorageDevice wire keys now carry their units
+// (read_bandwidth_mb_s, write_bandwidth_mb_s, base_latency_us), because a unit stated only in
+// the Go field name or a file comment is not a contract. The rename flows through
+// RejectUnknownKeys by reflection, so the OLD unit-less spelling is now an unknown-field
+// error rather than a silently-ignored field — the desired behaviour, since a file written
+// to the old contract must fail loudly rather than decode to zeros. The new spelling loads.
+func TestStorageDeviceKeysCarryUnits(t *testing.T) {
+	// New spelling: loads, and the facts land on the right fields.
+	okPath := write(t, "storage.yaml", `
+nvme_gen4: {read_bandwidth_mb_s: 7.0e3, write_bandwidth_mb_s: 5.0e3, base_latency_us: 80.0}
+`)
+	devices, err := LoadStorageDevices(okPath)
+	if err != nil {
+		t.Fatalf("unit-suffixed keys were rejected: %v", err)
+	}
+	if len(devices) != 1 || devices[0].ReadBandwidthMBs != 7000 ||
+		devices[0].WriteBandwidthMBs != 5000 || devices[0].BaseLatencyUs != 80 {
+		t.Fatalf("facts did not land on the renamed keys: %+v", devices)
+	}
+
+	// Old spelling: each unit-less key is now an unknown field. A file written to the old
+	// contract fails rather than loading a tier whose numbers all read as zero.
+	oldPath := write(t, "storage.yaml", `
+nvme_gen4: {read_bandwidth: 7.0e3, write_bandwidth: 5.0e3, base_latency: 80.0}
+`)
+	if _, err := LoadStorageDevices(oldPath); err == nil {
+		t.Fatal("the old unit-less keys were accepted; a stale file would load as zeros")
+	} else if !strings.Contains(err.Error(), "read_bandwidth") {
+		t.Errorf("the error should name an offending old key, got: %v", err)
+	}
+}
