@@ -50,13 +50,17 @@ func RejectUnknownKeys(node *yaml.Node, target any, ignore func(string) bool) er
 }
 
 // IgnoreCatalogComments reports whether a key is one of the catalog's provenance
-// narrative keys, which are deliberate content rather than stray fields. Only keys
-// prefixed "_comment" qualify: those are the catalog's documented prose convention
-// (_comment, _comment_sm, _comment_interconnect). Every other key — including any
-// other underscore-prefixed one — is treated as a data field, so a dimensionless or
-// misspelled value cannot hide behind an underscore (a "_mfu" still fails the
-// unknown-field check, matching blis-catalog's deleted validate_catalog.py).
-func IgnoreCatalogComments(key string) bool { return strings.HasPrefix(key, "_comment") }
+// narrative keys, which are deliberate content rather than stray fields. A key qualifies
+// only if it is exactly "_comment" or a "_comment_"-prefixed suffix form (_comment_sm,
+// _comment_interconnect) — the catalog's documented prose convention. The separator is
+// required: a bare "_comment" prefix would also swallow "_commentary" or "_commentmfu",
+// reopening the very loophole this check closes, so a key like "_commentmfu: 0.85" is a
+// data field and fails the unknown-field check. Every other key — including any other
+// underscore-prefixed one — is a data field too (a "_mfu" still fails), matching
+// blis-catalog's deleted validate_catalog.py.
+func IgnoreCatalogComments(key string) bool {
+	return key == "_comment" || strings.HasPrefix(key, "_comment_")
+}
 
 func yamlFieldNames(t reflect.Type) map[string]bool {
 	for t.Kind() == reflect.Pointer {

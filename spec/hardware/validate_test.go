@@ -173,6 +173,12 @@ func TestChipCommentConventionIsNarrow(t *testing.T) {
 		{"underscore-hidden dimensionless field", `_mfu: 0.85` + "\n"},
 		// A misspelled real field was and stays an unknown field.
 		{"misspelled real field", `TFlopsPeakk: 1.0` + "\n"},
+		// The separator matters: a bare "_comment" prefix without the "_" boundary would
+		// swallow these, so a dimensionless factor could hide as "_commentmfu". The
+		// predicate requires exactly "_comment" or a "_comment_" suffix form, so these
+		// fail like any unknown field.
+		{"_comment prefix without separator (fitted factor)", `_commentmfu: 0.85` + "\n"},
+		{"_comment-ish word", `_commentary: 1.0` + "\n"},
 	}
 	for _, c := range rejected {
 		t.Run("reject "+c.name, func(t *testing.T) {

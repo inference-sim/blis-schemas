@@ -98,8 +98,16 @@ func (p *Problems) Field(name, format string, args ...any) {
 // check, or forgetting it. A non-finite number that reaches a cost model poisons every
 // arithmetic it touches.
 func (p *Problems) FiniteField(name string, x float64) {
-	if math.IsNaN(x) || math.IsInf(x, 0) {
-		p.Field(name, "must be a finite number")
+	// Name which non-finite value it is: NaN points at a missing or corrupted input,
+	// an infinity at an unbounded or divide-by-zero scale, and the two call for
+	// different fixes in the raw catalog data.
+	switch {
+	case math.IsNaN(x):
+		p.Field(name, "must be a finite number, got NaN")
+	case math.IsInf(x, 1):
+		p.Field(name, "must be a finite number, got +Inf")
+	case math.IsInf(x, -1):
+		p.Field(name, "must be a finite number, got -Inf")
 	}
 }
 

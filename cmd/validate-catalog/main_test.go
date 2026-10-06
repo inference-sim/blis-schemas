@@ -244,10 +244,14 @@ IntraNodeBwGBps: 450
 	}
 }
 
-// TestRunHardwareInvariants pins the four hardware/networks invariants restored in #32,
-// each a malformed edit the deleted blis-catalog validate_catalog.py rejected and the Go
-// gate once silently accepted. Each case applies one mutation to an otherwise-clean
-// chip or fabric and asserts the run fails (exit 1) and names the offending field.
+// TestRunHardwareInvariants pins the schema-structural hardware/networks invariants
+// restored in #32 — the dimensionless-field ban, required/positive SMCount, and the
+// non-finite check on chips and fabrics — each a malformed edit the deleted blis-catalog
+// validate_catalog.py rejected and the Go gate once silently accepted. (The fourth gap in
+// #32, the SM-count citation, is a catalog-provenance policy deliberately not enforced
+// here; see spec/hardware/hardware.go and the README.) Each case applies one mutation to
+// an otherwise-clean chip or fabric and asserts the run fails (exit 1) and names the
+// offending field.
 func TestRunHardwareInvariants(t *testing.T) {
 	// cleanChip is a well-formed h100 the cases mutate one line at a time.
 	const cleanChip = `Provenance: vendor_spec
