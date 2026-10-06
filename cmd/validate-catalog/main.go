@@ -16,6 +16,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -67,6 +68,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		r.loadFail("models", "%v", err)
 	} else {
 		validateModelGraphs(r, dirs)
+		validateModelConfigs(r, dirs)
 		validateModelIdentities(r, dirs)
 	}
 	validateHardware(r, root)
@@ -168,6 +170,52 @@ func validateModelGraphs(r *reporter, dirs []string) {
 		}
 		r.pass(fmt.Sprintf("%-46s %3d layers, %d kind(s), %s", name,
 			g.Stack.Layers(), len(g.LayerKinds), g.Global.WeightDType))
+	}
+}
+
+func validateModelConfigs(r *reporter, dirs []string) {
+	if len(dirs) == 0 {
+		return
+	}
+	r.section("# models/*/config.json")
+	for _, dir := range dirs {
+		name := filepath.Base(dir)
+		label := name + "/config.json"
+		path := filepath.Join(dir, "config.json")
+		// config.json is the verbatim vendor file every model entry pairs with its
+		// model.yaml, and it is REQUIRED: this is the structural half of blis-catalog's
+		// validate_models — present, parseable, a non-empty JSON object — reproduced so the
+		// binary can stand in for that gate without a schema type reading the config's keys.
+		switch info, err := os.Stat(path); {
+		case errors.Is(err, fs.ErrNotExist):
+			r.loadFail(label, "missing (a model entry needs config.json)")
+			continue
+		case err != nil:
+			r.loadFail(label, "%v", err)
+			continue
+		case info.IsDir():
+			r.loadFail(label, "config.json is a directory, not a file")
+			continue
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			r.loadFail(label, "%v", err)
+			continue
+		}
+		// Decode into any first so valid JSON of any shape parses; then require a non-empty
+		// object. A non-object (array, scalar) and an empty object are both rejected with the
+		// one message, as validate_models does; invalid JSON is reported as a parse error.
+		var v any
+		if err := json.Unmarshal(raw, &v); err != nil {
+			r.loadFail(label, "invalid JSON: %v", err)
+			continue
+		}
+		obj, ok := v.(map[string]any)
+		if !ok || len(obj) == 0 {
+			r.loadFail(label, "must be a non-empty JSON object")
+			continue
+		}
+		r.pass(fmt.Sprintf("%-46s %d key(s)", label, len(obj)))
 	}
 }
 

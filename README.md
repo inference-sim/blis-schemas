@@ -152,6 +152,8 @@ go run ./cmd/validate-catalog /path/to/blis-catalog
 It walks six artifact kinds, in one combined report:
 
 - `models/*/graph.yaml` — the derived cost graph (`model.Graph`)
+- `models/*/config.json` — the verbatim vendor file: a structural check (present,
+  parseable, a non-empty JSON object), no schema type, no interpretation of its keys
 - `models/*/model.yaml` — the entry's identity manifest (`model.Identity`): a `name`
   that must match the directory, and a `source` provenance block
 - `hardware/*.yaml` — chips (`hardware.Chip`)
@@ -159,15 +161,15 @@ It walks six artifact kinds, in one combined report:
 - `devices/storage.yaml` — storage tiers (`hardware.StorageDevice`), optional
 - `workloads/*.yaml` — traffic shapes (`workload.Shape`)
 
-These checks are blis-schemas' own typed `Validate()`s, and they are meant to be
-*complementary* to blis-catalog's Python gate, not a reimplementation of it. The one
-place the two deliberately overlap is `model.yaml`: `model.Identity` mirrors the
-**model.yaml portion** of the catalog's `validate_models` (the `name`/directory match and
-the `source.{provider,repo,revision}` fields), so those identity rules agree. The rest do
-*not* claim parity — the catalog's gate also checks each `config.json` and enforces a
-datasheet-unit vocabulary on hardware fields that these typed validators do not, and these
-validators check cost-model properties (an acyclic graph, a prefix no longer than its
-prompt) that the Python gate does not. The two gates are stronger together.
+The two **model-entry** checks — the structural `config.json` check and the `model.Identity`
+rules — together reproduce blis-catalog's own `validate_models` in full (`config.json`
+present/parse/non-empty, plus `name`/directory and `source.{provider,repo,revision}`), so
+this binary can stand in for that gate when blis-catalog wires it into CI. The other kinds
+are blis-schemas' own typed `Validate()`s and are *complementary* to the Python gate rather
+than a reimplementation of it: the catalog's gate enforces a datasheet-unit vocabulary on
+hardware fields that these typed validators do not, and these validators check cost-model
+properties (an acyclic graph, a prefix no longer than its prompt) that the Python gate does
+not. The two gates are stronger together.
 
 A per-entry summary line goes to stdout for each artifact that validates and every
 problem to stderr, so the report reads cleanly and the exit code is scriptable: `0`

@@ -19,10 +19,13 @@ import "github.com/inference-sim/blis-schemas/internal/validate"
 // further restriction to those fields — no pattern on provider (any non-empty string,
 // "huggingface" in practice) and no date-format check on retrieved — so retrieved is declared
 // here only to name the key every real card carries, and is neither required nor
-// format-checked. The catalog's gate also checks the sibling config.json (present, parseable,
-// a non-empty object), and that is deliberately NOT mirrored here: config.json is a verbatim
-// vendor file the catalog owns, and these schemas do not read it (#23). So this is the
-// model.yaml half of a two-gate split, not a reimplementation of the whole catalog gate.
+// format-checked. The sibling config.json is the OTHER half of validate_models' per-entry
+// check, and the validate-catalog command covers it too: it asserts config.json
+// structurally (present, parseable, a non-empty JSON object) without a schema type, since it
+// is a verbatim vendor file whose keys the derived graph — not this schema — interprets.
+// Between that structural check and this identity, the command reproduces validate_models'
+// model-entry checks in full, so it can stand in for them when blis-catalog wires it into CI
+// (#22, catalog#14).
 //
 // Field values aside, the loader (LoadModelIdentity) decodes strict: an unknown key is
 // rejected, where the catalog's Python gate reads model.yaml leniently and ignores extra

@@ -41,12 +41,26 @@ func catalogWith(t *testing.T, files map[string]string) string {
 	return root
 }
 
+// Shared minimal fixtures for tests that build a model entry and want to isolate one
+// failure: a well-formed model.yaml and a non-empty config.json object, so a test that is
+// not about those files does not also trip their required-presence checks.
+const (
+	validModelYAML = `name: tiny-llm
+source:
+  provider: huggingface
+  repo: example/Tiny-LLM
+  revision: deadbeef
+`
+	validConfigJSON = `{"hidden_size": 2048}
+`
+)
+
 // TestRunValidCatalogValidatesEveryKind is the headline: the committed fixture catalog
-// holds one of every artifact kind — a graph, a model.yaml, a chip, a fabric, two storage
-// tiers, and a NESTED workload shape — and all of them must validate, with a zero exit and
-// nothing on stderr. The workload fixture is deliberately the nested form; the live
-// catalog's workloads are still flat (catalog #16), so this path is covered by a local
-// fixture rather than the live tree.
+// holds one of every artifact kind — a graph, a config.json, a model.yaml, a chip, a
+// fabric, two storage tiers, and a NESTED workload shape — and all of them must validate,
+// with a zero exit and nothing on stderr. The workload fixture is deliberately the nested
+// form; the live catalog's workloads are still flat (catalog #16), so this path is covered
+// by a local fixture rather than the live tree.
 func TestRunValidCatalogValidatesEveryKind(t *testing.T) {
 	code, out, errb := exercise(t, filepath.Join("testdata", "catalog-ok"))
 	if code != 0 {
@@ -56,10 +70,12 @@ func TestRunValidCatalogValidatesEveryKind(t *testing.T) {
 		t.Errorf("a clean catalog wrote to stderr:\n%s", errb)
 	}
 	// Every artifact kind must appear in the report, named, so a kind silently dropped
-	// from the walk is caught here rather than by its absence going unnoticed.
+	// from the walk is caught here rather than by its absence going unnoticed. The two
+	// model-dir files (config.json and model.yaml) and the graph all count, so a complete
+	// entry contributes three artifacts.
 	for _, want := range []string{
-		"tiny-llm", "h100", "ib-400g", "cpu_dram", "nvme_gen4", "chatbot",
-		"all 7 artifact(s) validate",
+		"tiny-llm", "config.json", "h100", "ib-400g", "cpu_dram", "nvme_gen4", "chatbot",
+		"all 8 artifact(s) validate",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("report does not mention %q:\n%s", want, out)
@@ -128,6 +144,7 @@ func TestRunNamespacePresentButNoArtifacts(t *testing.T) {
 // identity failure the Python gate catches too; the Go gate must report it and exit 1.
 func TestRunModelNameMismatch(t *testing.T) {
 	root := catalogWith(t, map[string]string{
+		"models/tiny-llm/config.json": validConfigJSON,
 		"models/tiny-llm/model.yaml": `name: not-tiny
 source:
   provider: huggingface
@@ -144,11 +161,12 @@ source:
 	}
 }
 
-// TestRunMissingModelYaml: a model directory without a model.yaml is an incomplete entry;
-// the walk must report the absence and exit 1, mirroring validate_models.
+// TestRunMissingModelYaml: a model directory with its config.json but no model.yaml is an
+// incomplete entry; the walk must report the absent model.yaml and exit 1, mirroring
+// validate_models. (config.json is present here so the failure isolates to model.yaml.)
 func TestRunMissingModelYaml(t *testing.T) {
 	root := catalogWith(t, map[string]string{
-		"models/orphan": "", // a model directory with no model.yaml
+		"models/orphan/config.json": validConfigJSON,
 	})
 	code, _, errb := exercise(t, root)
 	if code != 1 {
@@ -156,6 +174,52 @@ func TestRunMissingModelYaml(t *testing.T) {
 	}
 	if !strings.Contains(errb, "orphan") || !strings.Contains(errb, "model.yaml") {
 		t.Errorf("stderr should report the missing model.yaml, got: %s", errb)
+	}
+}
+
+// TestRunMissingConfigJson: a model directory with its model.yaml but no config.json is an
+// incomplete entry too — the verbatim vendor file is required, mirroring validate_models —
+// so the walk reports the absence and exits 1.
+func TestRunMissingConfigJson(t *testing.T) {
+	root := catalogWith(t, map[string]string{
+		"models/tiny-llm/model.yaml": validModelYAML,
+	})
+	code, _, errb := exercise(t, root)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1\nstderr:\n%s", code, errb)
+	}
+	if !strings.Contains(errb, "config.json") || !strings.Contains(errb, "needs config.json") {
+		t.Errorf("stderr should report the missing config.json, got: %s", errb)
+	}
+}
+
+// TestRunMalformedConfigJson covers validate_models' structural config.json failure modes:
+// an empty object and a valid-JSON-but-not-an-object both fail as "not a non-empty JSON
+// object", and malformed JSON fails as a parse error. All exit 1.
+func TestRunMalformedConfigJson(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{"empty object", "{}\n", "non-empty JSON object"},
+		{"valid JSON but not an object", "[1, 2, 3]\n", "non-empty JSON object"},
+		{"malformed JSON", "{not json\n", "invalid JSON"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			root := catalogWith(t, map[string]string{
+				"models/tiny-llm/model.yaml":  validModelYAML,
+				"models/tiny-llm/config.json": c.body,
+			})
+			code, _, errb := exercise(t, root)
+			if code != 1 {
+				t.Fatalf("exit = %d, want 1\nstderr:\n%s", code, errb)
+			}
+			if !strings.Contains(errb, "config.json") || !strings.Contains(errb, c.want) {
+				t.Errorf("stderr should report the config.json fault %q, got: %s", c.want, errb)
+			}
+		})
 	}
 }
 
@@ -283,12 +347,8 @@ InterNodeBwGBps: 50
 // walk was broadened.
 func TestRunInvalidGraph(t *testing.T) {
 	root := catalogWith(t, map[string]string{
-		"models/tiny-llm/model.yaml": `name: tiny-llm
-source:
-  provider: huggingface
-  repo: example/Tiny-LLM
-  revision: deadbeef
-`,
+		"models/tiny-llm/config.json": validConfigJSON,
+		"models/tiny-llm/model.yaml":  validModelYAML,
 		"models/tiny-llm/graph.yaml": `kind: ModelGraph
 name: tiny-llm
 derived_from:
