@@ -1,6 +1,9 @@
 package model
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // validGraph is a Granite-shaped uniform MoE stack: 224 experts, GQA attention,
 // one layer kind repeated. Each negative test mutates one field of a copy, so a
@@ -161,6 +164,152 @@ func TestRecurrentNodeRequirements(t *testing.T) {
 	g2.LayerKinds[0].Nodes[2] = kda
 	if p := g2.Validate(); !p.OK() {
 		t.Fatalf("a KDA node without convolution parameters was rejected:\n%s", p.Error())
+	}
+}
+
+// CompressRatio is the sparse-MLA latent-read compression factor DeepSeek-V4-Pro's
+// csa4_moe/csa128_moe layers carry. It is valid only on a sparse_mla attention node
+// and must be positive, the same way the other MLA-specific parameters are gated to
+// their kind. These check it is governed rather than merely accepted.
+func TestCompressRatio(t *testing.T) {
+	// A sparse_mla node that already satisfies its kind's other requirements, so each
+	// case below isolates the compress_ratio rule rather than tripping another.
+	sparse := func() Node {
+		return Node{Op: OpAttention, AttentionKind: AttentionSparseMLA,
+			NumQHeads: 128, NumKVHeads: 1, HeadDim: 512, IndexTopK: 1024}
+	}
+	with := func(n Node, r int) Node { n.CompressRatio = r; return n }
+	for _, tc := range []struct {
+		name string
+		node Node
+		ok   bool
+	}{
+		{"positive on a sparse_mla node is valid", with(sparse(), 4), true},
+		{"absent is valid when index_topk carries the sparsity", sparse(), true},
+		{"a negative value on a sparse_mla node is rejected", with(sparse(), -1), false},
+		{"an explicit zero is treated as absent (omitempty), so index_topk still carries it",
+			with(sparse(), 0), true},
+		// A sparse_mla layer must do at least one of top-k selection or latent
+		// compression; DeepSeek-V4-Pro ships one layer kind of each.
+		{"compress_ratio alone satisfies a sparse_mla node (csa128_moe)",
+			Node{Op: OpAttention, AttentionKind: AttentionSparseMLA,
+				NumQHeads: 128, NumKVHeads: 1, HeadDim: 512, CompressRatio: 128}, true},
+		{"index_topk alone satisfies a sparse_mla node (csa4_moe)",
+			Node{Op: OpAttention, AttentionKind: AttentionSparseMLA,
+				NumQHeads: 128, NumKVHeads: 1, HeadDim: 512, IndexTopK: 1024}, true},
+		{"a sparse_mla node with neither is rejected",
+			Node{Op: OpAttention, AttentionKind: AttentionSparseMLA,
+				NumQHeads: 128, NumKVHeads: 1, HeadDim: 512}, false},
+		// A positive compress_ratio must not mask a negative index_topk: a negative
+		// count is a mistake, not a compress-only layer.
+		{"a negative index_topk is rejected even with a valid compress_ratio",
+			Node{Op: OpAttention, AttentionKind: AttentionSparseMLA,
+				NumQHeads: 128, NumKVHeads: 1, HeadDim: 512, IndexTopK: -5, CompressRatio: 4}, false},
+		{"on a non-sparse_mla attention node is rejected",
+			Node{Op: OpAttention, AttentionKind: AttentionGQA,
+				NumQHeads: 48, NumKVHeads: 8, HeadDim: 64, CompressRatio: 4}, false},
+		{"a set (nonzero) value on a node whose op does not price it is rejected",
+			Node{Op: OpGEMM, N: 4096, K: 3072, CompressRatio: 4}, false},
+		// omitempty makes a zero indistinguishable from an absent field, so an explicit
+		// compress_ratio: 0 is an unset value and does not make a GEMM invalid -- the same
+		// convention index_topk and every other optional shape field follows.
+		{"an unset (zero) value on a node whose op does not price it is accepted",
+			Node{Op: OpGEMM, N: 4096, K: 3072, CompressRatio: 0}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := validGraph()
+			g.LayerKinds[0].Nodes[2] = tc.node
+			p := g.Validate()
+			if got := p.OK(); got != tc.ok {
+				t.Fatalf("OK() = %v, want %v: %v", got, tc.ok, p.Error())
+			}
+		})
+	}
+}
+
+// A node that is both the wrong op for compress_ratio and carries a non-positive
+// value must report both faults rather than masking one, matching the validator's
+// report-every-problem contract.
+func TestCompressRatioAccumulatesProblems(t *testing.T) {
+	g := validGraph()
+	g.LayerKinds[0].Nodes[2] = Node{Op: OpGEMM, N: 4096, K: 3072, CompressRatio: -1}
+	var positive, wrongKind bool
+	for _, e := range g.Validate().Errors() {
+		if e.Path != "layer_kinds[0].nodes[2].compress_ratio" {
+			continue
+		}
+		switch {
+		case strings.Contains(e.Message, "must be positive"):
+			positive = true
+		case strings.Contains(e.Message, "only priced by"):
+			wrongKind = true
+		}
+	}
+	if !positive || !wrongKind {
+		t.Fatalf("want both the positivity and the wrong-op problems, got positive=%v wrongKind=%v:\n%s",
+			positive, wrongKind, g.Validate().Error())
+	}
+}
+
+// index_topk, like compress_ratio, selects over the latent cache, so it is valid only on
+// a sparse_mla attention node and rejected on any other op or kind.
+func TestIndexTopKGating(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		node Node
+		ok   bool
+	}{
+		{"index_topk on a sparse_mla node is valid",
+			Node{Op: OpAttention, AttentionKind: AttentionSparseMLA,
+				NumQHeads: 128, NumKVHeads: 1, HeadDim: 512, IndexTopK: 1024}, true},
+		{"index_topk on a non-sparse_mla attention node is rejected",
+			Node{Op: OpAttention, AttentionKind: AttentionGQA,
+				NumQHeads: 48, NumKVHeads: 8, HeadDim: 64, IndexTopK: 1024}, false},
+		{"index_topk on a node whose op does not price it is rejected",
+			Node{Op: OpGEMM, N: 4096, K: 3072, IndexTopK: 1024}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := validGraph()
+			g.LayerKinds[0].Nodes[2] = tc.node
+			p := g.Validate()
+			if got := p.OK(); got != tc.ok {
+				t.Fatalf("OK() = %v, want %v: %v", got, tc.ok, p.Error())
+			}
+		})
+	}
+}
+
+// A layer kind the speculator's own stack uses is intentional, not a leftover, so it must
+// not draw the "declared but never used" warning; a kind used by neither stack still does.
+func TestSpeculatorLayerKindCountsAsUsed(t *testing.T) {
+	warned := func(g *Graph, id string) bool {
+		for _, it := range g.Validate().All() {
+			if strings.Contains(it.Message, `layer kind "`+id+`" is declared but never used`) {
+				return true
+			}
+		}
+		return false
+	}
+	// Start from the valid single-kind graph, add a kind only the speculator references.
+	base := func() *Graph {
+		g := validGraph()
+		draft := g.LayerKinds[0]
+		draft.ID = "draft"
+		g.LayerKinds = append(g.LayerKinds, draft)
+		g.Speculator = &Speculator{Method: "glm4_moe_mtp", NumSpec: 1,
+			Stack: Stack{Pattern: []string{"draft"}, Repeat: 1}}
+		return g
+	}
+	if warned(base(), "draft") {
+		t.Errorf("a layer kind used only by the speculator was flagged as unused")
+	}
+	// A kind used by neither the main stack nor the speculator is still flagged.
+	g := base()
+	orphan := g.LayerKinds[0]
+	orphan.ID = "orphan"
+	g.LayerKinds = append(g.LayerKinds, orphan)
+	if !warned(g, "orphan") {
+		t.Errorf("a genuinely unused layer kind was not flagged")
 	}
 }
 

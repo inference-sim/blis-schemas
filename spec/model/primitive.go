@@ -87,7 +87,11 @@ const (
 	AttentionGQA AttentionKind = "gqa"
 	// AttentionMLA is multi-head latent attention: one latent vector per token.
 	AttentionMLA AttentionKind = "mla"
-	// AttentionSparseMLA adds top-k index selection over the latent cache.
+	// AttentionSparseMLA narrows the latent-cache read: a layer may select a top-k
+	// of the cache (index_topk), compress the latent read (compress_ratio), or both.
+	// Both are the same latent-cache cost structure narrowed by different mechanisms,
+	// not two attention families, so they are one kind rather than a separate
+	// compressed-MLA kind that would duplicate the MLA shape and sharding rules.
 	AttentionSparseMLA AttentionKind = "sparse_mla"
 	// AttentionSWA is sliding-window attention, whose per-token read is bounded by
 	// the window rather than by context length.
