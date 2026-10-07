@@ -334,14 +334,14 @@ InterNodeBwGBps: 0
 // is new coverage, so a negative test pins that a per-tier failure bubbles up.
 func TestRunMalformedStorageDevice(t *testing.T) {
 	root := catalogWith(t, map[string]string{
-		"devices/storage.yaml": `cpu_dram: {read_bandwidth: -1, write_bandwidth: 2.0e4, base_latency: 1.0}
+		"devices/storage.yaml": `cpu_dram: {read_bandwidth_mb_s: -1, write_bandwidth_mb_s: 2.0e4, base_latency_us: 1.0}
 `,
 	})
 	code, _, errb := exercise(t, root)
 	if code != 1 {
 		t.Fatalf("exit = %d, want 1\nstderr:\n%s", code, errb)
 	}
-	if !strings.Contains(errb, "read_bandwidth") || !strings.Contains(errb, "cpu_dram") {
+	if !strings.Contains(errb, "read_bandwidth_mb_s") || !strings.Contains(errb, "cpu_dram") {
 		t.Errorf("stderr should name the tier and the offending field, got: %s", errb)
 	}
 }

@@ -12,7 +12,13 @@
 // concrete, rather than carrying two fields that could disagree.
 package workload
 
-import "sort"
+import (
+	"sort"
+
+	"gopkg.in/yaml.v3"
+
+	"github.com/inference-sim/blis-schemas/internal/validate"
+)
 
 // Shape is one traffic class. Token counts are per request.
 type Shape struct {
@@ -24,13 +30,10 @@ type Shape struct {
 	// truth this removes — so under strict decoding an in-file `name` is now an unknown
 	// field and is REJECTED.
 	//
-	// This TIGHTENS the by-filename convention chips and fabrics describe but do not yet
-	// enforce; it does not merely match them. spec/hardware asserts "the files also carry
-	// no name: identity is the filename," yet Chip.Name/Fabric.Name stay tagged
-	// `yaml:"name"` with an `if Name == ""` loader guard, so they still ACCEPT an in-file
-	// name and let it win — the dual-source-of-truth this change rules out for Shape.
-	// Shape is the first type where that stated rule and the code actually agree; chips
-	// and fabrics are to follow (tracked as #27).
+	// Chip.Name and Fabric.Name follow this same rule (#27): both are tagged `yaml:"-"`
+	// with the stem as their only source, so spec/hardware's stated convention — "the files
+	// also carry no name: identity is the filename" — and its code now agree, as they do
+	// here. The three by-filename catalog entities are single-sourced identically.
 	//
 	// Validate still requires Name — now always loader-supplied — so a Shape reaching a
 	// cost model without one is an error; it just cannot originate from the file.
@@ -44,6 +47,33 @@ type Shape struct {
 	Output Distribution `yaml:"output"`
 }
 
+// UnmarshalYAML accepts the catalog's `_comment`-prefixed provenance keys and strips them
+// before decoding, exactly as Chip, Fabric and StorageDevice do (#28). The catalog keeps
+// each number's narrative in these keys, and workload token figures — why a chatbot prompt
+// is 256 tokens with a stdev of 100, from which benchmark — are precisely the kind of number
+// that wants one, so a workloads/*.yaml should be able to carry the same prose every
+// hardware/*.yaml does rather than fail strict decoding on it.
+//
+// The custom unmarshaller carries a cost: yaml.Node.Decode does NOT honour the decoder's
+// KnownFields setting, so a type that overrides UnmarshalYAML loses strict unknown-field
+// checking unless it restores it. RejectUnknownKeys restores it here, and Distribution has
+// its own UnmarshalYAML for the same reason — without it, a typo'd key nested under prompt:
+// or output: would silently decode to a zero value, which this package rejected before #28
+// and must keep rejecting.
+func (s *Shape) UnmarshalYAML(node *yaml.Node) error {
+	if err := validate.RejectUnknownKeys(node, Shape{}, validate.IgnoreCatalogComments); err != nil {
+		return err
+	}
+	validate.StripCatalogComments(node)
+	type shape Shape
+	var raw shape
+	if err := node.Decode(&raw); err != nil {
+		return err
+	}
+	*s = Shape(raw)
+	return nil
+}
+
 // Distribution is a token-count distribution. Mean and StdDev describe the bulk;
 // Min and Max bound it, and they matter because a scheduler's behaviour at the
 // tail is what sets a knee.
@@ -52,6 +82,27 @@ type Distribution struct {
 	StdDev int `yaml:"tokens_stdev,omitempty"`
 	Min    int `yaml:"tokens_min,omitempty"`
 	Max    int `yaml:"tokens_max,omitempty"`
+}
+
+// UnmarshalYAML restores strict unknown-field checking at this nesting level and accepts the
+// same `_comment` provenance keys, so a note can sit beside a single distribution (why this
+// min, why this max) and not only at the top of the file. The hook is required, not stylistic
+// symmetry with Shape: once Shape overrides UnmarshalYAML its node.Decode no longer honours
+// the decoder's KnownFields setting for the values it recurses into, so without this method a
+// misspelled key under prompt:/output: would silently decode to a zero value — exactly what
+// RejectUnknownKeys here prevents.
+func (d *Distribution) UnmarshalYAML(node *yaml.Node) error {
+	if err := validate.RejectUnknownKeys(node, Distribution{}, validate.IgnoreCatalogComments); err != nil {
+		return err
+	}
+	validate.StripCatalogComments(node)
+	type shape Distribution
+	var raw shape
+	if err := node.Decode(&raw); err != nil {
+		return err
+	}
+	*d = Distribution(raw)
+	return nil
 }
 
 // Binding is a Scenario's "what traffic" slot: a sum type with two arms, exactly one of

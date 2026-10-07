@@ -310,6 +310,155 @@ output:
 	}
 }
 
+// TestLoadWorkloadAcceptsCommentKeys is #28: a workload Shape now carries the catalog's
+// `_comment`-prefixed provenance narrative that Chip, Fabric and StorageDevice already
+// accept, so a workloads/*.yaml can document why its token figures are what they are —
+// following the pattern every hardware/*.yaml sets — rather than failing strict decoding on
+// the first `_comment`. The notes are accepted at both nesting levels (top-level and inside
+// a prompt/output distribution) and stripped before decoding, so no prose reaches the struct.
+func TestLoadWorkloadAcceptsCommentKeys(t *testing.T) {
+	path := write(t, "chatbot.yaml", `
+_comment: "token figures from the vLLM chat benchmark; see the issue that set them"
+prefix_tokens: 0
+prompt:
+  _comment_min: "min is p01 of the sampled trace, not an assumption"
+  tokens: 256
+  tokens_stdev: 100
+  tokens_min: 2
+output:
+  tokens: 256
+`)
+	w, err := LoadWorkload(path)
+	if err != nil {
+		t.Fatalf("comment keys were rejected: %v", err)
+	}
+	// The prose is stripped, and the real fields decode normally around it.
+	if w.Prompt.Mean != 256 || w.Prompt.StdDev != 100 || w.Prompt.Min != 2 {
+		t.Errorf("distribution did not parse around the comment: %+v", w.Prompt)
+	}
+}
+
+// TestLoadWorkloadStillRejectsNestedTypos guards the regression the #28 hook could have
+// introduced. Giving Shape a custom UnmarshalYAML means node.Decode runs, which does NOT
+// honour the decoder's KnownFields setting — so without Distribution's own hook a misspelled
+// key nested under prompt:/output: would silently decode to a zero value. Distribution
+// restores the check, so a typo at the inner level is still a loud error, as it was before
+// #28. A comment key is accepted; a typo is not — the distinction strict decoding exists for.
+func TestLoadWorkloadStillRejectsNestedTypos(t *testing.T) {
+	path := write(t, "chatbot.yaml", `
+prefix_tokens: 0
+prompt:
+  tokens: 256
+  tokens_minn: 2
+output:
+  tokens: 256
+`)
+	if _, err := LoadWorkload(path); err == nil {
+		t.Fatal("a nested misspelled field was accepted; the shape would decode with a wrong " +
+			"bound and nothing would report it")
+	} else if !strings.Contains(err.Error(), "tokens_minn") {
+		t.Errorf("the error should name the offending nested field, got: %v", err)
+	}
+}
+
+// TestLoadChipRejectsInFileName is the by-filename identity contract for a Chip, the same
+// one TestLoadWorkloadRejectsInFileName pins for a Shape. #27 made Chip.Name a filename
+// fact: the field is tagged `yaml:"-"`, so yaml.v3 binds no `name` key to it and the strict
+// decoder rejects a stray one rather than letting an in-file name become a second source of
+// truth for an identity the filename already fixes.
+func TestLoadChipRejectsInFileName(t *testing.T) {
+	// A valid chip body — but written to h100.yaml with an in-file name that disagrees.
+	path := write(t, "h100.yaml", `
+name: not-h100
+Provenance: vendor_spec
+TFlopsPeak: 989.5
+BwPeakTBs: 4.8
+MemoryGiB: 141.0
+IntraNodeBwGBps: 450
+SMCount: 132
+`)
+	if _, err := LoadChip(path); err == nil {
+		t.Fatal("an in-file name was accepted; the filename and the field could disagree")
+	} else if !strings.Contains(err.Error(), "name") {
+		t.Errorf("the error should name the offending field %q, got: %v", "name", err)
+	}
+
+	// An in-file name that AGREES with the filename is still rejected: the strict decoder
+	// keys off the field, not the value, so a human author mirroring the stem into the body
+	// — the most likely real-world mistake — fails loudly rather than being tolerated as a
+	// harmless-looking special case that would re-admit the second source of truth.
+	agreeing := write(t, "h100.yaml", `
+name: h100
+Provenance: vendor_spec
+TFlopsPeak: 989.5
+BwPeakTBs: 4.8
+MemoryGiB: 141.0
+IntraNodeBwGBps: 450
+SMCount: 132
+`)
+	if _, err := LoadChip(agreeing); err == nil {
+		t.Fatal("an in-file name matching the filename was accepted; identity must have one source")
+	}
+}
+
+// TestLoadFabricRejectsInFileName is TestLoadChipRejectsInFileName for a Fabric: identity is
+// the filename, Fabric.Name is tagged `yaml:"-"`, and an in-file `name` is a rejected
+// unknown field (#27).
+func TestLoadFabricRejectsInFileName(t *testing.T) {
+	path := write(t, "ib-400g.yaml", `
+name: not-ib-400g
+Provenance: vendor_spec
+InterNodeBwGBps: 50
+RDMA: true
+`)
+	if _, err := LoadFabric(path); err == nil {
+		t.Fatal("an in-file name was accepted; the filename and the field could disagree")
+	} else if !strings.Contains(err.Error(), "name") {
+		t.Errorf("the error should name the offending field %q, got: %v", "name", err)
+	}
+}
+
+// TestLoadChipAndFabricStampNameFromFilename is the positive half of the identity contract:
+// a nameless file (as every catalog chip and fabric is) loads, and Name is stamped from the
+// path stem as its only source — exactly as TestLoadWorkload checks for a Shape. A stamped
+// value then validates, since Validate requires a Name it can no longer get from the file.
+func TestLoadChipAndFabricStampNameFromFilename(t *testing.T) {
+	chipPath := write(t, "h100.yaml", `
+Provenance: vendor_spec
+TFlopsPeak: 989.5
+BwPeakTBs: 4.8
+MemoryGiB: 141.0
+IntraNodeBwGBps: 450
+SMCount: 132
+`)
+	c, err := LoadChip(chipPath)
+	if err != nil {
+		t.Fatalf("LoadChip: %v", err)
+	}
+	if c.Name != "h100" {
+		t.Errorf("name = %q; it should come from the filename", c.Name)
+	}
+	if p := c.Validate(); !p.OK() {
+		t.Errorf("a loader-named chip failed validation:\n%s", p.Error())
+	}
+
+	fabPath := write(t, "ib-400g.yaml", `
+Provenance: vendor_spec
+InterNodeBwGBps: 50
+RDMA: true
+`)
+	f, err := LoadFabric(fabPath)
+	if err != nil {
+		t.Fatalf("LoadFabric: %v", err)
+	}
+	if f.Name != "ib-400g" {
+		t.Errorf("name = %q; it should come from the filename", f.Name)
+	}
+	if p := f.Validate(); !p.OK() {
+		t.Errorf("a loader-named fabric failed validation:\n%s", p.Error())
+	}
+}
+
 func TestLoadDeployment(t *testing.T) {
 	path := write(t, "d.yaml", `
 kind: Deployment
@@ -759,17 +908,23 @@ func TestLoadCatalogFiles(t *testing.T) {
 		len(chips), len(fabrics), len(workloads), len(devices))
 }
 
-// TestLoadRegistryFilesIfPresent parses the committed coefficient sets from a BLIS_REGISTRY
-// checkout. Unlike the catalog tests above, the registry has no vendored in-tree snapshot
-// yet, so this one is still gated on an env var and SKIPS when it is unset, and it checks
-// the parsed entries' fields (a name, a unit, a method) rather than calling Set.Validate().
-// Pinning and fully validating the registry the way testdata/ now pins the catalog is a
-// separate change.
+// TestLoadRegistryFilesIfPresent loads and VALIDATES the committed coefficient sets from a
+// BLIS_REGISTRY checkout. Unlike the catalog tests above, the registry has no vendored
+// in-tree snapshot yet, so this one is still gated on an env var and SKIPS when it is unset.
+//
+// It calls Set.Validate() rather than only spot-checking parsed fields (#17): CI proving the
+// committed artifacts PARSE is not the same as proving they are VALID, and the gap was that
+// the registry's own checks — the intra-set duplicate-(name,scope) check whose comment notes
+// a resolver would otherwise keep whichever came last — ran against committed data nowhere.
+// The catalog half of #17 is already covered by TestLoadCatalogFiles, which validates every
+// vendored artifact; this closes the registry half the same way, short of a vendored
+// snapshot. Pinning the registry the way testdata/ pins the catalog is still a separate
+// change.
 func TestLoadRegistryFilesIfPresent(t *testing.T) {
 	root := os.Getenv("BLIS_REGISTRY")
 	if root == "" {
-		t.Skip("BLIS_REGISTRY is unset: the coefficient tags were NOT checked " +
-			"against the committed registry files")
+		t.Skip("BLIS_REGISTRY is unset: the committed coefficient sets were NOT loaded " +
+			"or validated")
 	}
 	sets, _ := filepath.Glob(filepath.Join(root, "coefficients", "*.yaml"))
 	if len(sets) == 0 {
@@ -786,19 +941,16 @@ func TestLoadRegistryFilesIfPresent(t *testing.T) {
 			t.Errorf("%s: parsed no entries", filepath.Base(path))
 			continue
 		}
-		// Every entry must have taken its name from the key it was nested under, and
-		// must carry a unit and a method: those are what make a number usable.
-		for i, e := range s.Coefficients {
-			if e.Name == "" {
-				t.Errorf("%s: coefficients[%d] parsed without a name", filepath.Base(path), i)
-			}
-			if e.Units == "" || e.Method == "" {
-				t.Errorf("%s: %s parsed without units or method", filepath.Base(path), e.Name)
-			}
+		// Validate the set, running the same checks blisschemas.Validate would — the
+		// duplicate-(name,scope) check among them — against the committed file. This is the
+		// coverage #17 found missing: a set that parsed but was invalid landed green.
+		if p := s.Validate(); !p.OK() {
+			t.Errorf("%s failed validation:\n%s", filepath.Base(path), p.Error())
 		}
 		total += len(s.Coefficients)
 	}
-	t.Logf("parsed %d sets holding %d coefficients from the registry", len(sets), total)
+	t.Logf("loaded and validated %d sets holding %d coefficients from the registry",
+		len(sets), total)
 }
 
 // TestCoefficientEntryFormIsEnforced covers the nested wire form's failure modes. The
@@ -900,5 +1052,37 @@ MemorGiB: 999
 	if _, err := LoadChip(bad); err == nil {
 		t.Fatal("a misspelled field was accepted; the chip would validate with the " +
 			"wrong capacity and nothing would report it")
+	}
+}
+
+// TestStorageDeviceKeysCarryUnits is #18: the StorageDevice wire keys now carry their units
+// (read_bandwidth_mb_s, write_bandwidth_mb_s, base_latency_us), because a unit stated only in
+// the Go field name or a file comment is not a contract. The rename flows through
+// RejectUnknownKeys by reflection, so the OLD unit-less spelling is now an unknown-field
+// error rather than a silently-ignored field — the desired behaviour, since a file written
+// to the old contract must fail loudly rather than decode to zeros. The new spelling loads.
+func TestStorageDeviceKeysCarryUnits(t *testing.T) {
+	// New spelling: loads, and the facts land on the right fields.
+	okPath := write(t, "storage.yaml", `
+nvme_gen4: {read_bandwidth_mb_s: 7.0e3, write_bandwidth_mb_s: 5.0e3, base_latency_us: 80.0}
+`)
+	devices, err := LoadStorageDevices(okPath)
+	if err != nil {
+		t.Fatalf("unit-suffixed keys were rejected: %v", err)
+	}
+	if len(devices) != 1 || devices[0].ReadBandwidthMBs != 7000 ||
+		devices[0].WriteBandwidthMBs != 5000 || devices[0].BaseLatencyUs != 80 {
+		t.Fatalf("facts did not land on the renamed keys: %+v", devices)
+	}
+
+	// Old spelling: each unit-less key is now an unknown field. A file written to the old
+	// contract fails rather than loading a tier whose numbers all read as zero.
+	oldPath := write(t, "storage.yaml", `
+nvme_gen4: {read_bandwidth: 7.0e3, write_bandwidth: 5.0e3, base_latency: 80.0}
+`)
+	if _, err := LoadStorageDevices(oldPath); err == nil {
+		t.Fatal("the old unit-less keys were accepted; a stale file would load as zeros")
+	} else if !strings.Contains(err.Error(), "read_bandwidth") {
+		t.Errorf("the error should name an offending old key, got: %v", err)
 	}
 }

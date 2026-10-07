@@ -12,6 +12,8 @@
 package v0_29
 
 import (
+	"sort"
+
 	"github.com/inference-sim/blis-schemas/internal/validate"
 	"github.com/inference-sim/blis-schemas/rules"
 	"github.com/inference-sim/blis-schemas/spec/deployment"
@@ -89,6 +91,36 @@ func Pack() *rules.Pack {
 			"mtp", "dflash", "ngram_gpu", "draft_model", "dspark"),
 
 		OffloadSpecs: set("CPUOffloadingSpec", "TieringOffloadingSpec"),
+
+		// Transcribed from the QuantizationMethods literal in
+		// vllm/model_executor/layers/quantization/__init__.py: thirty members, the named
+		// methods and the online-quant shorthands. The engine extends QUANTIZATION_METHODS
+		// at runtime for out-of-tree methods, so a name outside this set is a warning, not
+		// an error — the field is still the one that decides weight width, compute peak and
+		// GEMM efficiency, and a typo among the in-tree names is worth catching.
+		Quantizations: set("awq", "auto_awq", "fp8", "fbgemm_fp8", "fp_quant", "modelopt",
+			"modelopt_fp4", "modelopt_mxfp8", "modelopt_mixed", "auto_gptq", "gptq",
+			"gptq_marlin", "awq_marlin", "humming", "compressed-tensors", "experts_int8",
+			"quark", "moe_wna16", "torchao", "inc", "mxfp4", "gpt_oss_mxfp4",
+			"deepseek_v4_fp8", "online", "fp8_per_tensor", "fp8_per_block",
+			"fp8_per_channel", "int8_per_channel_weight_only", "nvfp4_per_token", "mxfp8"),
+
+		// Transcribed from the KVConnectorFactory.register_connector calls in
+		// vllm/distributed/kv_transfer/kv_connector/factory.py: the names an offload or
+		// PD-transfer block may select. Like a quantization method the registry is
+		// extensible out of tree, so an unknown name is a warning.
+		Connectors: set("DecodeBenchConnector", "ExampleConnector",
+			"ExampleHiddenStatesConnector", "FlexKVConnectorV1", "HF3FSKVConnector",
+			"LMCacheConnectorV1", "LMCacheMPConnector", "MoRIIOConnector",
+			"MooncakeConnector", "MooncakeStoreConnector", "MultiConnector",
+			"NixlConnector", "NixlPullConnector", "NixlPushConnector",
+			"OffloadingConnector", "SimpleCPUOffloadConnector"),
+
+		// Transcribed from the CachePolicyFactory.register_cache_policy calls in
+		// vllm/v1/kv_offload/cpu/policies/factory.py: the KV-offload eviction policies. Two
+		// in-tree (lru, arc); the factory also admits out-of-tree policies, so like the
+		// connector and quantization registries an unknown name is a warning, not an error.
+		EvictionPolicies: set("lru", "arc"),
 
 		CustomAllReduceWorldSizes: set(2, 4, 6, 8, 16),
 
@@ -289,6 +321,59 @@ func ruleList(p *rules.Pack) []rules.Rule {
 			},
 		},
 		{
+			Name:    "quantization-known",
+			Because: "the served weight format sets weight-read bytes, compute peak and the GEMM efficiency envelope at once, so a misspelled in-tree method is priced against three wrong constants; it is a warning because the engine admits out-of-tree methods this set cannot enumerate",
+			Check: func(in rules.Input, out *validate.Problems) {
+				forEachEngine(in, func(at string, e deployment.Engine) {
+					if e.Quantization == "" || p.Quantizations[e.Quantization] {
+						return
+					}
+					out.RuleWarnf("quantization-known",
+						"%s.engine.quantization: %q is not an in-tree method of engine %s; if it is an out-of-tree method this is expected, otherwise check the spelling. In-tree methods are %v",
+						at, e.Quantization, p.Version, sortedKeys(p.Quantizations))
+				})
+			},
+		},
+		{
+			Name:    "connector-known",
+			Because: "the connector names the offload/PD-transfer implementation whose spec decides whether a fetch consumes SMs or a copy engine, so an unknown name leaves the transfer on no modelled resource; a warning because the KV connector registry is extensible out of tree",
+			Check: func(in rules.Input, out *validate.Problems) {
+				if in.Deployment == nil {
+					return
+				}
+				check := func(field, value string) {
+					if value == "" || p.Connectors[value] {
+						return
+					}
+					out.RuleWarnf("connector-known",
+						"%s: %q is not a connector registered in engine %s; if it is an out-of-tree connector this is expected, otherwise check the spelling. Registered connectors are %v",
+						field, value, p.Version, sortedKeys(p.Connectors))
+				}
+				if in.Deployment.Offload != nil {
+					check("offload.connector", in.Deployment.Offload.Connector)
+				}
+				if in.Deployment.PDTransfer != nil {
+					check("pd_transfer.connector", in.Deployment.PDTransfer.Connector)
+				}
+			},
+		},
+		{
+			Name:    "eviction-policy-known",
+			Because: "a supplied name the engine does not recognize does not silently fall back — CachePolicyFactory.get_cache_policy_cls raises ValueError at launch unless cache_policy_module_path names an out-of-tree policy; this rule catches that typo earlier, as a warning, while still permitting a real out-of-tree name the set cannot enumerate",
+			Check: func(in rules.Input, out *validate.Problems) {
+				if in.Deployment == nil || in.Deployment.Offload == nil {
+					return
+				}
+				ep := in.Deployment.Offload.EvictionPolicy
+				if ep == "" || p.EvictionPolicies[ep] {
+					return
+				}
+				out.RuleWarnf("eviction-policy-known",
+					"offload.eviction_policy: %q is not an in-tree policy of engine %s; if it is an out-of-tree policy this is expected, otherwise check the spelling. In-tree policies are %v",
+					ep, p.Version, sortedKeys(p.EvictionPolicies))
+			},
+		},
+		{
 			Name:    "mamba-cache-mode-matches-model",
 			Because: "a cache mode for recurrent layers on a model with none is a setting with no effect, and its absence on a model with them leaves the state unsized",
 			Check: func(in rules.Input, out *validate.Problems) {
@@ -375,6 +460,18 @@ func forEachPool(in rules.Input, fn func(at string, pool deployment.Pool)) {
 
 func forEachEngine(in rules.Input, fn func(at string, e deployment.Engine)) {
 	forEachPool(in, func(at string, pool deployment.Pool) { fn(at, pool.Engine) })
+}
+
+// sortedKeys returns a set's members in sorted order, for a membership diagnostic that
+// enumerates the valid alternatives (#19 item 3): an error that names what IS accepted is
+// self-correcting in one turn, where "check the spelling" leaves a generator to guess.
+func sortedKeys(set map[string]bool) []string {
+	out := make([]string, 0, len(set))
+	for k := range set {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func poolPath(i int) string {

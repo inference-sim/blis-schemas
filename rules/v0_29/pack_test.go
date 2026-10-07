@@ -73,13 +73,16 @@ func TestPackRuleSet(t *testing.T) {
 		"all2all-backend-known",
 		"allreduce-backend-known",
 		"cascade-attention-is-opt-in",
+		"connector-known",
 		"custom-allreduce-reachable",
 		"dbo-thresholds-stated-when-enabled",
 		"enum-values-known",
+		"eviction-policy-known",
 		"expert-divisibility-under-eplb",
 		"expert-imbalance-without-eplb",
 		"mamba-cache-mode-matches-model",
 		"offload-spec-known",
+		"quantization-known",
 		"sequence-parallel-moe-implied",
 		"speculative-method-known",
 	}
@@ -275,5 +278,83 @@ func TestSpeculativeMethodKnown(t *testing.T) {
 			Method: "glm4_moe_mtp", NumSpecTokens: 1}}))
 	if p := run(t, s2, graniteGraph()); fired(p, "speculative-method-known") {
 		t.Error("rule fired on an accepted method")
+	}
+}
+
+// TestQuantizationKnown: an in-tree method passes, a typo warns. It is a warning rather
+// than an error because the engine admits out-of-tree methods the pack cannot enumerate,
+// so the rule flags a probable typo without rejecting a possibly-valid name.
+func TestQuantizationKnown(t *testing.T) {
+	s := dep(colocated(deployment.Parallelism{TP: 8, PP: 1, DP: 1},
+		deployment.Engine{Quantization: "fp8_but_misspelled"}))
+	p := run(t, s, graniteGraph())
+	if !fired(p, "quantization-known") {
+		t.Fatal("rule did not fire on an unrecognized quantization method")
+	}
+	// The warning must enumerate the valid set (#19 item 3): naming an in-tree method the
+	// author could have meant is what makes the diagnostic self-correcting.
+	if !strings.Contains(p.Error(), "compressed-tensors") {
+		t.Errorf("the warning should enumerate in-tree methods; got:\n%s", p.Error())
+	}
+	s2 := dep(colocated(deployment.Parallelism{TP: 8, PP: 1, DP: 1},
+		deployment.Engine{Quantization: "compressed-tensors"}))
+	if p := run(t, s2, graniteGraph()); fired(p, "quantization-known") {
+		t.Error("rule fired on an in-tree quantization method")
+	}
+}
+
+// TestConnectorKnown checks both connector sites — the offload block and the pd_transfer
+// block — since a deployment can name a connector in either. An unknown name warns; a
+// registered one is quiet.
+func TestConnectorKnown(t *testing.T) {
+	s := dep(colocated(deployment.Parallelism{TP: 8, PP: 1, DP: 1}, deployment.Engine{}))
+	s.Offload = &deployment.Offload{Connector: "TelepathyConnector",
+		Tiers: []deployment.Tier{{Device: "cpu_dram", Bytes: 1 << 40}}}
+	s.PDTransfer = &deployment.PDTransfer{Connector: "NixlConnector"}
+	p := run(t, s, graniteGraph())
+	if !fired(p, "connector-known") {
+		t.Fatal("rule did not fire on an unregistered offload connector")
+	}
+	if !strings.Contains(p.Error(), "offload.connector") {
+		t.Errorf("the warning should name the offload connector site; got:\n%s", p.Error())
+	}
+	// The warning enumerates the registered connectors (#19 item 3).
+	if !strings.Contains(p.Error(), "NixlConnector") {
+		t.Errorf("the warning should enumerate registered connectors; got:\n%s", p.Error())
+	}
+
+	// Both connectors registered: quiet.
+	s.Offload.Connector = "OffloadingConnector"
+	if p := run(t, s, graniteGraph()); fired(p, "connector-known") {
+		t.Errorf("rule fired on two registered connectors:\n%s", p.Error())
+	}
+
+	// A bad pd_transfer connector is caught on its own.
+	s2 := dep(colocated(deployment.Parallelism{TP: 8, PP: 1, DP: 1}, deployment.Engine{}))
+	s2.PDTransfer = &deployment.PDTransfer{Connector: "CarrierPigeonConnector"}
+	if p := run(t, s2, graniteGraph()); !fired(p, "connector-known") {
+		t.Fatal("rule did not fire on an unregistered pd_transfer connector")
+	}
+}
+
+// TestEvictionPolicyKnown: an in-tree policy (lru/arc) passes, a typo warns and the warning
+// enumerates the in-tree set. A warning, not an error, because the CachePolicyFactory admits
+// out-of-tree policies — the same shape as the connector and quantization rules (#19).
+func TestEvictionPolicyKnown(t *testing.T) {
+	s := dep(colocated(deployment.Parallelism{TP: 8, PP: 1, DP: 1}, deployment.Engine{}))
+	s.Offload = &deployment.Offload{EvictionPolicy: "most_recently_used_typo",
+		Tiers: []deployment.Tier{{Device: "cpu_dram", Bytes: 1 << 40}}}
+	p := run(t, s, graniteGraph())
+	if !fired(p, "eviction-policy-known") {
+		t.Fatal("rule did not fire on an unrecognized eviction policy")
+	}
+	if !strings.Contains(p.Error(), "lru") || !strings.Contains(p.Error(), "arc") {
+		t.Errorf("the warning should enumerate in-tree policies lru and arc; got:\n%s", p.Error())
+	}
+
+	// An in-tree policy is quiet.
+	s.Offload.EvictionPolicy = "arc"
+	if p := run(t, s, graniteGraph()); fired(p, "eviction-policy-known") {
+		t.Errorf("rule fired on an in-tree policy:\n%s", p.Error())
 	}
 }

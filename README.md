@@ -53,6 +53,49 @@ Rules do not run when field validation fails. A rule reading a malformed documen
 produces findings that are artifacts of the malformation, and a reader cannot tell
 those from real ones.
 
+`Validate` is pure: it checks the documents it is handed and resolves nothing against
+the catalog on disk, because this repository deliberately does not vendor the catalog —
+that separation is what lets either side be validated in CI without the other. A
+by-name reference a scenario makes (`cluster.hardware: h200`, `model: deepseek-v3`) is
+therefore *not* checked by `Validate`: `hardware: nvidia-h200` is structurally fine and
+fails only later, elsewhere, as a missing file. A caller that does have a catalog
+checked out resolves those references through a second entry point:
+
+```go
+rep := blisschemas.ValidateAgainstCatalog(bundle, catalogRoot, registryRoot)
+// references.hardware: "nvidia-h200": looked for hardware/nvidia-h200.yaml;
+//   the catalog has [a100-80 a100-sxm b200 h100 h200 l40s ...]
+```
+
+It checks that every name resolves to a file or directory the catalog has, and each
+error names the path it looked for and lists the real entries, so a generator that
+guessed a name is corrected in one turn. It is separate from `Validate` rather than
+folded in precisely to keep `Validate` free of any dependency on where the catalog
+lives.
+
+## Units are part of the contract
+
+A numeric field carries its unit in the thing the producer writes — the YAML key — or
+is a self-describing type. A unit stated only in a Go field name, or only in a file
+comment, is not a contract: the producer and consumer agree by coincidence, and a
+contributor entering a datasheet figure in the wrong unit passes every validator while
+making a value wrong by orders of magnitude.
+
+Three conventions satisfy this, and each is right in its place:
+
+- **A self-describing type in process.** `kernel.Kernel`'s durations are `time.Duration`,
+  unambiguous to the compiler.
+- **A unit-suffixed key on the wire.** `evaluation.Point` writes `ttft_ms`; a storage
+  device writes `read_bandwidth_mb_s`, `base_latency_us`. The key an author types names
+  the unit, so there is nowhere for a silent disagreement to live.
+- **A declared unit field, only where producers genuinely vary.** `workload.TraceHeader`
+  has a `time_unit` because its producers disagree on spelling (`us` vs `microseconds`).
+
+What this rules out is a unit that lives only in a Go field name (`BaseLatencyUs` →
+`base_latency`) or only in a line-1 comment no validator reads. Adding a redundant unit
+field beside an already-unambiguous value (`ttft_unit: ms` next to `ttft_ms`) is equally
+wrong: it creates two sources that can disagree.
+
 ## Layout
 
 ```

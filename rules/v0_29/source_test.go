@@ -163,6 +163,48 @@ func TestOffloadSpecsMatchSource(t *testing.T) {
 	assertSameSet(t, "OffloadSpecs", Pack().OffloadSpecs, specs)
 }
 
+// Quantizations is the QuantizationMethods literal — a plain Literal[...] like the cache
+// and backend sets, so it uses the same extractor. The engine extends QUANTIZATION_METHODS
+// at runtime for out-of-tree methods, but the literal is the in-tree set the pack mirrors;
+// a divergence here means a method was added or renamed in the release.
+func TestQuantizationsMatchSource(t *testing.T) {
+	root := vllmSource(t)
+	src := readSource(t, root, "vllm", "model_executor", "layers", "quantization", "__init__.py")
+	assertSameSet(t, "Quantizations", Pack().Quantizations,
+		literalMembers(t, src, "QuantizationMethods"))
+}
+
+// Connectors is a registry like OffloadSpecs: names passed to register_connector rather
+// than a Literal, so it is extracted the same way. The first string argument of each call
+// is the connector name a deployment selects.
+func TestConnectorsMatchSource(t *testing.T) {
+	root := vllmSource(t)
+	src := readSource(t, root, "vllm", "distributed", "kv_transfer", "kv_connector", "factory.py")
+	re := regexp.MustCompile(`register_connector\(\s*"([^"]+)"`)
+	var names []string
+	for _, m := range re.FindAllStringSubmatch(src, -1) {
+		names = append(names, m[1])
+	}
+	sort.Strings(names)
+	assertSameSet(t, "Connectors", Pack().Connectors, names)
+}
+
+// EvictionPolicies is the CachePolicyFactory registry — register_cache_policy calls in
+// vllm/v1/kv_offload/cpu/policies/factory.py, the same shape as the connector registry (the
+// name is the call's first string argument, on the line after the paren). A divergence means
+// a built-in policy was added or renamed in the release.
+func TestEvictionPoliciesMatchSource(t *testing.T) {
+	root := vllmSource(t)
+	src := readSource(t, root, "vllm", "v1", "kv_offload", "cpu", "policies", "factory.py")
+	re := regexp.MustCompile(`register_cache_policy\(\s*"([^"]+)"`)
+	var names []string
+	for _, m := range re.FindAllStringSubmatch(src, -1) {
+		names = append(names, m[1])
+	}
+	sort.Strings(names)
+	assertSameSet(t, "EvictionPolicies", Pack().EvictionPolicies, names)
+}
+
 // The numeric constants are single values rather than sets, so each is matched
 // against its declaration site.
 func TestNumericConstantsMatchSource(t *testing.T) {

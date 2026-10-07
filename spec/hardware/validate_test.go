@@ -238,7 +238,7 @@ func TestCommentNarrowingAppliesToFabricAndDevice(t *testing.T) {
 		}
 	})
 	t.Run("storage device accepts _comment, rejects _mfu", func(t *testing.T) {
-		base := "read_bandwidth: 7000\nwrite_bandwidth: 5000\nbase_latency: 80\n"
+		base := "read_bandwidth_mb_s: 7000\nwrite_bandwidth_mb_s: 5000\nbase_latency_us: 80\n"
 		var d StorageDevice
 		if err := yaml.Unmarshal([]byte(base+`_comment: "prose"`+"\n"), &d); err != nil {
 			t.Fatalf("storage device should accept a _comment key, got: %v", err)
