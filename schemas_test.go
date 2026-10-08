@@ -202,6 +202,46 @@ func TestOffloadTierMustBeInClusterStorage(t *testing.T) {
 	}
 }
 
+// TestEngineMustFitItsPool is the composition-level statement of the rank-count rule:
+// no layer used to relate a layout's rank count to the GPUs it was placed on, so the
+// issue's example — tp 8 with pcp 4 on one 8-GPU node, needing 32 devices — passed both
+// the deployment validator and the cluster-coupling checks. It goes through Validate
+// because the claim was about the whole pipeline, not one function.
+func TestEngineMustFitItsPool(t *testing.T) {
+	// The ordinary bundle is tp 8 on one 8-GPU node: eight ranks on eight devices.
+	if rep := Validate(bundle()); !rep.OK() {
+		t.Fatalf("tp 8 on an 8-GPU node should fit:\n%s", renderAll(rep))
+	}
+
+	b := bundle()
+	b.Deployment.Pools[0].Parallel = deployment.Parallelism{TP: 8, PP: 1, DP: 1, PCP: 4}
+	rep := Validate(b)
+	if rep.Field.OK() {
+		t.Fatal("tp 8 with pcp 4 needs 32 GPUs and must not validate on an 8-GPU node")
+	}
+	found := false
+	for _, p := range rep.Field.Errors() {
+		if p.Path == "deployment.pools[0].parallel" && strings.Contains(p.Message, "needs 32 GPUs") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a problem at deployment.pools[0].parallel naming 32 GPUs, got:\n%s",
+			renderAll(rep))
+	}
+
+	// The same layout fits once the pool owns enough nodes. The rule is about room, not
+	// about the layout being unusual: pcp 4 is fine when there is somewhere to put it.
+	// A multi-node cluster must also name its fabric, which is unrelated to what is
+	// being tested but part of a well-formed scenario.
+	b.Scenario.Cluster.Nodes = 4
+	b.Scenario.Cluster.Fabric = "ib-400g"
+	b.Deployment.Pools[0].Nodes = 4
+	if rep := Validate(b); !rep.Field.OK() {
+		t.Fatalf("the same layout on four 8-GPU nodes should fit:\n%s", renderAll(rep))
+	}
+}
+
 func renderAll(r Report) string {
 	var b strings.Builder
 	for _, p := range r.Problems() {

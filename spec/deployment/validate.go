@@ -2,6 +2,7 @@ package deployment
 
 import (
 	"fmt"
+	"math"
 	"sort"
 
 	"github.com/inference-sim/blis-schemas/internal/validate"
@@ -48,7 +49,9 @@ type ClusterConstraints struct {
 // ValidateAgainstCluster adds the field-level checks that couple a deployment to the
 // available-hardware inventory it is placed on: that its pools' node counts sum to the
 // nodes the cluster declares, that each data-parallel-local width divides a node's GPU
-// count, and that every offload tier names a storage class the cluster actually lists.
+// count, that no engine needs more GPUs than its pool owns (or than a node holds, for
+// the replicas it places there), and that every offload tier names a storage class the
+// cluster actually lists.
 //
 // Pools fill the cluster exactly rather than take a subset of it: a deployment lays out
 // the whole cluster it is handed, so the inventory is that cluster's full extent and not
@@ -71,6 +74,7 @@ func (d *Deployment) ValidateAgainstCluster(c ClusterConstraints) *validate.Prob
 			p.Field(fmt.Sprintf("pools[%d].parallel.dp_local", i),
 				"%d does not divide gpus_per_node %d", pool.Parallel.DPLocal, c.GPUsPerNode)
 		}
+		validateRankFit(p, fmt.Sprintf("pools[%d]", i), pool, c)
 	}
 	if len(d.Pools) > 0 && total != c.Nodes {
 		p.Field("pools",
@@ -94,6 +98,80 @@ func (d *Deployment) ValidateAgainstCluster(c ClusterConstraints) *validate.Prob
 		}
 	}
 	return p
+}
+
+// validateRankFit refuses an engine that needs more GPUs than it has been given. Every
+// rank is one device, so a layout's footprint is its rank count; nothing in the
+// divisibility or node-sum checks relates the two, which is how tp 8 with pcp 4 on a
+// single 8-GPU node validated while needing 32.
+//
+// There are two bounds, both against the engine and neither an equality:
+//
+//   - The engine against its pool: pp x tp x pcp x dp ranks must not exceed the GPUs in
+//     the pool's nodes. DCP and expert parallelism add none — DCP reuses the
+//     tensor-parallel ranks and an expert group is carved across ranks that already
+//     exist — so neither enters the product.
+//   - The replicas placed on a node against that node: dp_local replicas of pp x tp x
+//     pcp ranks each must fit in gpus_per_node. The total cannot see this. tp 4 with
+//     dp 4 and dp_local 4 over two 8-GPU nodes totals 16 and fits, yet puts 16 ranks on
+//     one node of 8.
+//
+// Both are upper bounds because a pool is the set of nodes serving a role, not a single
+// engine: 36 one-node dp-8 engines behind a router is a 36-node pool whose layout is
+// dp 8, and an engine may leave devices idle. Requiring equality would reject those, so
+// only the impossible case is refused — an engine larger than the room it has.
+//
+// The rank counts mirror the engine's own: world size is pp x tp x pcp per data-parallel
+// replica, and local data-parallel rank i takes devices [i x world, (i+1) x world).
+//
+// A width the checks above already reported as malformed describes no layout, so this
+// declines to run over it rather than invent a rank count and file a second problem
+// naming the wrong field. An unset pcp is the one zero that is meaningful: it means off,
+// and counts as one. A cluster that states no GPU count constrains nothing, the way an
+// undeclared storage inventory does.
+func validateRankFit(p *validate.Problems, at string, pool Pool, c ClusterConstraints) {
+	pl := pool.Parallel
+	if pl.TP < 1 || pl.PP < 1 || pl.DP < 1 || pl.PCP < 0 ||
+		pool.Nodes < 1 || c.GPUsPerNode < 1 {
+		return
+	}
+	pcp := pl.PCP
+	if pcp < 1 {
+		pcp = 1
+	}
+	// Saturating products: a width absurd enough to overflow must read as too many,
+	// not wrap to a small or negative count that passes.
+	replica := mulSat(mulSat(pl.PP, pl.TP), pcp)
+	ranks := mulSat(replica, pl.DP)
+	gpus := mulSat(pool.Nodes, c.GPUsPerNode)
+
+	if ranks > gpus {
+		p.Field(at+".parallel",
+			"needs %d GPUs (pp %d x tp %d x pcp %d x dp %d, one per rank) but the pool's %d node(s) of %d GPUs provide %d",
+			ranks, pl.PP, pl.TP, pcp, pl.DP, pool.Nodes, c.GPUsPerNode, gpus)
+	}
+	// Only when one replica fits inside a node. A replica wider than a node spans nodes,
+	// and how many of its ranks sit on each depends on a node split this schema does not
+	// carry, so no per-node bound is asserted there.
+	if pl.DPLocal > 0 && replica <= c.GPUsPerNode {
+		if local := mulSat(pl.DPLocal, replica); local > c.GPUsPerNode {
+			p.Field(at+".parallel.dp_local",
+				"%d replicas of %d GPUs (pp %d x tp %d x pcp %d) need %d GPUs on one node but a node has %d",
+				pl.DPLocal, replica, pl.PP, pl.TP, pcp, local, c.GPUsPerNode)
+		}
+	}
+}
+
+// mulSat multiplies two non-negative ints, saturating at the largest int rather than
+// wrapping.
+func mulSat(a, b int) int {
+	if a == 0 || b == 0 {
+		return 0
+	}
+	if a > math.MaxInt/b {
+		return math.MaxInt
+	}
+	return a * b
 }
 
 func (d *Deployment) validatePools(p *validate.Problems) {

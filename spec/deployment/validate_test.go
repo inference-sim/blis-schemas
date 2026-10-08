@@ -5,6 +5,8 @@ import (
 	"math"
 	"strings"
 	"testing"
+
+	"github.com/inference-sim/blis-schemas/internal/validate"
 )
 
 // pdDeployment is a prefill/decode-disaggregated deployment of the kind the design
@@ -504,5 +506,199 @@ func TestDCPAlongsideThePCPDPConflict(t *testing.T) {
 	d2.Pools[0].Parallel = Parallelism{TP: 4, PP: 1, DP: 1, PCP: 1, DCP: 4}
 	if p2 := d2.Validate(); !p2.OK() {
 		t.Errorf("dcp 4 divides tp 4 with pcp off and should validate:\n%s", p2.Error())
+	}
+}
+
+// rankFit runs only the cluster-coupling checks over one pool, so a case states the
+// layout and the room it has and nothing else. The deployment around it is the ordinary
+// single-pool shape, and the cluster is sized to that pool, which keeps the node-sum
+// check out of the way of what is being tested.
+func rankFit(pl Parallelism, nodes, gpusPerNode int) *validate.Problems {
+	d := singleNodeDeployment()
+	d.Pools[0].Nodes = nodes
+	d.Pools[0].Parallel = pl
+	return d.ValidateAgainstCluster(ClusterConstraints{Nodes: nodes, GPUsPerNode: gpusPerNode})
+}
+
+// TestRankFit is the rule that an engine cannot need more GPUs than it was given. Every
+// rank is one device, and before this nothing related a layout's rank count to the
+// inventory it ran on: tp 8 with pcp 4 on one 8-GPU node needs 32 devices and validated.
+//
+// The accepted cases are as much the point as the rejected ones. A pool is the set of
+// nodes serving a role and may hold several engines, so a rank count BELOW the pool's
+// GPUs is ordinary, and the bound is an inequality — an equality would reject the
+// published 36-node prefill pool whose layout is dp 8.
+func TestRankFit(t *testing.T) {
+	cases := []struct {
+		name        string
+		pl          Parallelism
+		nodes, gpus int
+		reject      bool
+	}{
+		// The case that motivated the rule.
+		{"tp8 pcp4 on one 8-GPU node", Parallelism{TP: 8, PP: 1, DP: 1, PCP: 4}, 1, 8, true},
+
+		// Each axis counts. One case per factor of the product, so dropping any one
+		// from the arithmetic fails exactly one of these.
+		{"tp alone fills the node", Parallelism{TP: 8, PP: 1, DP: 1}, 1, 8, false},
+		{"tp over the node", Parallelism{TP: 16, PP: 1, DP: 1}, 1, 8, true},
+		{"pp counts", Parallelism{TP: 4, PP: 4, DP: 1}, 1, 8, true},
+		{"pp within the node", Parallelism{TP: 4, PP: 2, DP: 1}, 1, 8, false},
+		{"dp counts", Parallelism{TP: 2, PP: 1, DP: 8}, 1, 8, true},
+		{"dp within the node", Parallelism{TP: 2, PP: 1, DP: 4}, 1, 8, false},
+		{"pcp counts", Parallelism{TP: 2, PP: 1, DP: 1, PCP: 8}, 1, 8, true},
+		{"pcp within the node", Parallelism{TP: 2, PP: 1, DP: 1, PCP: 4}, 1, 8, false},
+
+		// Neither DCP nor expert parallelism adds a rank: DCP reuses the tensor-parallel
+		// ranks and an expert group is carved across ranks that already exist. Rejecting
+		// either would refuse layouts the engine runs.
+		{"dcp adds no ranks", Parallelism{TP: 8, PP: 1, DP: 1, DCP: 8}, 1, 8, false},
+		{"expert parallelism adds no ranks",
+			Parallelism{TP: 8, PP: 1, DP: 1, EnableExpertParallel: true}, 1, 8, false},
+
+		// An engine may span nodes; it needs the pool to own enough of them.
+		{"two-node engine on two nodes", Parallelism{TP: 8, PP: 2, DP: 1}, 2, 8, false},
+		{"two-node engine on one node", Parallelism{TP: 8, PP: 2, DP: 1}, 1, 8, true},
+
+		// A pool holds several engines, so the layout may be far smaller than the pool.
+		{"one dp-8 engine in a 36-node pool", Parallelism{TP: 1, PP: 1, DP: 8, DPLocal: 8}, 36, 8, false},
+		{"unset pcp counts as one", Parallelism{TP: 8, PP: 1, DP: 1, PCP: 0}, 1, 8, false},
+
+		// A width that would wrap must read as too many, not as a small number.
+		{"overflowing product", Parallelism{TP: math.MaxInt, PP: 2, DP: 1}, 1, 8, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			p := rankFit(c.pl, c.nodes, c.gpus)
+			if !c.reject {
+				if !p.OK() {
+					t.Fatalf("%+v on %d x %d should fit:\n%s", c.pl, c.nodes, c.gpus, p.Error())
+				}
+				return
+			}
+			if p.OK() {
+				t.Fatalf("%+v on %d x %d needs more GPUs than it has and should be rejected",
+					c.pl, c.nodes, c.gpus)
+			}
+			// Attributed to the parallelism block, where the author edits the layout.
+			for _, problem := range p.All() {
+				if problem.Path == "pools[0].parallel" {
+					return
+				}
+			}
+			t.Errorf("expected a problem at pools[0].parallel, got:\n%s", p.Error())
+		})
+	}
+}
+
+// TestRankFitMessageNamesTheArithmetic pins the content a reader acts on: the needed
+// count, each factor it was built from, and what the pool provides. "does not fit"
+// alone would leave them to redo the product to find which axis to shrink.
+func TestRankFitMessageNamesTheArithmetic(t *testing.T) {
+	p := rankFit(Parallelism{TP: 8, PP: 1, DP: 1, PCP: 4}, 1, 8)
+	var msg string
+	for _, problem := range p.All() {
+		if problem.Path == "pools[0].parallel" {
+			msg = problem.Message
+		}
+	}
+	if msg == "" {
+		t.Fatalf("no rank-fit problem:\n%s", p.Error())
+	}
+	for _, want := range []string{"32", "pp 1", "tp 8", "pcp 4", "dp 1", "provide 8"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("message does not contain %q: %s", want, msg)
+		}
+	}
+}
+
+// TestRankFitPerNode covers the bound the total cannot see. Local data-parallel replicas
+// are placed on one node, each taking its own pp x tp x pcp devices, so dp_local of them
+// need dp_local times that on a single node. The engine hands local rank i the devices
+// [i x world, (i+1) x world), so rank dp_local-1 reaches past the node's end.
+//
+// The first case is the discriminator: it TOTALS 16 on a pool of 16 and passes the pool
+// bound, and only the per-node bound refuses it.
+func TestRankFitPerNode(t *testing.T) {
+	cases := []struct {
+		name        string
+		pl          Parallelism
+		nodes, gpus int
+		reject      bool
+	}{
+		{"fits the pool but not a node",
+			Parallelism{TP: 4, PP: 1, DP: 4, DPLocal: 4}, 2, 8, true},
+		{"replicas fill a node exactly",
+			Parallelism{TP: 4, PP: 1, DP: 4, DPLocal: 2}, 2, 8, false},
+		{"tp1 replicas, the wide-EP shape",
+			Parallelism{TP: 1, PP: 1, DP: 16, DPLocal: 8}, 2, 8, false},
+		{"pp and pcp count toward the replica",
+			Parallelism{TP: 2, PP: 2, DP: 4, PCP: 1, DPLocal: 4}, 2, 8, true},
+		// A replica wider than a node spans nodes, so how many of its ranks sit on each
+		// is not the schema's to say. No per-node bound is asserted; the total still is.
+		{"replica wider than a node is not bounded per node",
+			Parallelism{TP: 8, PP: 2, DP: 1, DPLocal: 1}, 2, 8, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			p := rankFit(c.pl, c.nodes, c.gpus)
+			if !c.reject {
+				if !p.OK() {
+					t.Fatalf("%+v on %d x %d should fit:\n%s", c.pl, c.nodes, c.gpus, p.Error())
+				}
+				return
+			}
+			// Matched on the message as well as the path: the pre-existing "does not
+			// divide gpus_per_node" check files at the same path, and either would
+			// otherwise satisfy this for the wrong reason.
+			for _, problem := range p.All() {
+				if problem.Path == "pools[0].parallel.dp_local" &&
+					strings.Contains(problem.Message, "on one node") {
+					return
+				}
+			}
+			t.Errorf("expected a per-node problem at pools[0].parallel.dp_local, got:\n%s", p.Error())
+		})
+	}
+}
+
+// TestRankFitDeclinesOnMalformedInput pins that the rule stays out of the way of a
+// document already reported for something else. A rank count over a width that is
+// itself an error would be invented, and filing it would point the author at the wrong
+// field.
+//
+// One honest caveat about what these cases can discriminate. A single zero width makes
+// the product zero and a single negative one makes it negative, and neither can exceed
+// the pool — so the width guards are individually redundant for a lone malformed width,
+// and the first four cases pass with or without them. The guard earns its place when two
+// widths are negative: their product is POSITIVE, so tp -2 and pp -50 would claim 100
+// GPUs are needed by a layout that is not a layout at all. The "two negative" cases are
+// the ones that fail without it.
+func TestRankFitDeclinesOnMalformedInput(t *testing.T) {
+	cases := []struct {
+		name        string
+		pl          Parallelism
+		nodes, gpus int
+	}{
+		{"zero tp", Parallelism{TP: 0, PP: 99, DP: 1}, 1, 8},
+		{"zero pp", Parallelism{TP: 99, PP: 0, DP: 1}, 1, 8},
+		{"zero dp", Parallelism{TP: 99, PP: 1, DP: 0}, 1, 8},
+		{"negative pcp", Parallelism{TP: 99, PP: 1, DP: 1, PCP: -1}, 1, 8},
+		// A product of negatives is positive and large.
+		{"two negative widths", Parallelism{TP: -2, PP: -50, DP: 1}, 1, 8},
+		{"negative tp and dp", Parallelism{TP: -9, PP: 1, DP: -9}, 1, 8},
+		{"negative pp and pcp", Parallelism{TP: 1, PP: -9, DP: 1, PCP: -9}, 1, 8},
+		// A cluster or pool that states no room constrains nothing.
+		{"cluster states no gpus per node", Parallelism{TP: 99, PP: 1, DP: 1}, 1, 0},
+		{"pool with no nodes", Parallelism{TP: 99, PP: 1, DP: 1}, 0, 8},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			for _, problem := range rankFit(c.pl, c.nodes, c.gpus).All() {
+				if strings.Contains(problem.Message, "needs") && strings.Contains(problem.Message, "GPUs") {
+					t.Errorf("rank-fit fired over input it should decline: %s", problem)
+				}
+			}
+		})
 	}
 }
