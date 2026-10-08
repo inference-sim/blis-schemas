@@ -874,14 +874,94 @@ func TestRankFitAtTheEdgesOfInt(t *testing.T) {
 	}
 }
 
-// TestPerNodeNeverRefusesWithoutProof: the divisor search is bounded, so past its limit
-// the rule gives no verdict rather than a refusal — a layout is refused only when the
-// rule has shown no split places it. This one IS placeable (a split of 2^21 divides a
-// replica of 2^61 and leaves each node 2^40), but both of the search's ranges are far
-// past the limit. It must be accepted.
-func TestPerNodeNeverRefusesWithoutProof(t *testing.T) {
-	pl := Parallelism{TP: 1 << 61, PP: 1, DP: 1, DPLocal: 1}
-	if p := rankFit(pl, 1<<30, 1<<40); !p.OK() {
-		t.Fatalf("a placeable layout beyond the search limit must not be refused:\n%s", p.Error())
+// TestPlacementIsDecidedExactlyAtScale covers layouts whose divisor search is far too
+// wide to scan. Placement fits exactly when the replica has a divisor in a range, and
+// that is decided from the replica's exact factorisation, not by sampling the range.
+func TestPlacementIsDecidedExactlyAtScale(t *testing.T) {
+	const p, q = 2147483647, 2147483629 // both prime, near 2^31
+	cases := []struct {
+		name        string
+		pl          Parallelism
+		nodes, gpus int
+		reject      bool
+	}{
+		// From review: a prime replica of 1,000,000,007 on 1,100,000 nodes of 1,100,000
+		// GPUs. A split must divide the prime and lie in [910, 1,100,000]; none does, so
+		// no launch can place it. Both ranges are far past any scan.
+		{"prime replica, no divisor in range", Parallelism{TP: 1_000_000_007, PP: 1, DP: 1, DPLocal: 1},
+			1_100_000, 1_100_000, true},
+		// 2^61 split 2^21 ways leaves 2^40 per node: placeable.
+		{"power-of-two replica, divisor in range", Parallelism{TP: 1 << 61, PP: 1, DP: 1, DPLocal: 1},
+			1 << 30, 1 << 40, false},
+		// p x q split q ways leaves p per node; it fits when a node holds p.
+		{"semiprime replica, a factor fits", Parallelism{TP: p, PP: q, DP: 1, DPLocal: 1}, q, p, false},
+		// One GPU short of p per node, and q is the only split the pool allows besides
+		// 1: refused.
+		{"semiprime replica, no factor fits", Parallelism{TP: p, PP: q, DP: 1, DPLocal: 1}, q + 1, p - 1, true},
+		// The same two replicas as a single width, which is itself a semiprime near 2^62:
+		// deciding these factors the width with rho rather than reading two primes.
+		{"one semiprime width, a factor fits", Parallelism{TP: p * q, PP: 1, DP: 1, DPLocal: 1}, q, p, false},
+		{"one semiprime width, no factor fits", Parallelism{TP: p * q, PP: 1, DP: 1, DPLocal: 1}, q + 1, p - 1, true},
 	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			pr := rankFit(c.pl, c.nodes, c.gpus)
+			if refused := perNodeRefusal(pr) != ""; refused != c.reject {
+				t.Fatalf("%+v on %d x %d: refused=%v, want %v\n%s", c.pl, c.nodes, c.gpus, refused, c.reject, pr.Error())
+			}
+			if !c.reject && len(pr.All()) != 0 {
+				t.Fatalf("a decided placement must carry no finding:\n%s", pr.Error())
+			}
+		})
+	}
+}
+
+// TestUndecidedPlacementIsReported: the walk is bounded so no input can hang validation.
+// No layout a cluster could hold reaches the bound, so the bound is lowered here to
+// reach the path. An undecided layout must be neither refused without proof nor admitted
+// in silence: it carries a warning saying its per-node fit is unverified.
+func TestUndecidedPlacementIsReported(t *testing.T) {
+	saved := placeableSearchLimit
+	placeableSearchLimit = 1
+	defer func() { placeableSearchLimit = saved }()
+
+	// 2 x 3 x 5 x 7 = 210, with no divisor in [11, 13]: deciding that takes more than
+	// one step.
+	pr := rankFit(Parallelism{TP: 210, PP: 1, DP: 1, DPLocal: 1}, 13, 20)
+	if perNodeRefusal(pr) != "" {
+		t.Fatalf("an undecided layout must not be refused:\n%s", pr.Error())
+	}
+	warned := false
+	for _, f := range pr.All() {
+		if f.Severity == validate.SeverityWarning && strings.Contains(f.Message, "unverified") {
+			warned = true
+		}
+	}
+	if !warned {
+		t.Fatalf("an undecided layout must be reported as unverified, got:\n%s", pr.Error())
+	}
+}
+
+// TestUnfactoredPlacementIsReported: factoring is budgeted so validation cannot hang. If
+// the budget ever runs out, the layout is reported as unverified — like an exhausted
+// search, never refused without proof and never admitted in silence. The budget is
+// lowered here so the semiprime below, whose factors are near 2^31, cannot be split.
+func TestUnfactoredPlacementIsReported(t *testing.T) {
+	saved := rhoSteps
+	rhoSteps = 1
+	defer func() { rhoSteps = saved }()
+
+	// One width that is itself a semiprime, so splitting it needs rho. (Two prime widths
+	// would not: each is recognised as prime directly.)
+	const p, q = 2147483647, 2147483629
+	pr := rankFit(Parallelism{TP: p * q, PP: 1, DP: 1, DPLocal: 1}, q+1, p-1)
+	if perNodeRefusal(pr) != "" {
+		t.Fatalf("an unfactored layout must not be refused:\n%s", pr.Error())
+	}
+	for _, f := range pr.All() {
+		if f.Severity == validate.SeverityWarning && strings.Contains(f.Message, "unverified") {
+			return
+		}
+	}
+	t.Fatalf("an unfactored layout must be reported as unverified, got:\n%s", pr.Error())
 }

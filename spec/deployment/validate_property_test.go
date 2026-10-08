@@ -528,6 +528,7 @@ func FuzzRankFit(f *testing.F) {
 	f.Add(6, 1, 2, 0, 2, 3, 8)
 	f.Add(-2, -50, 1, 0, 0, 1, 8)
 	f.Add(1, 1, 4, 8, 1, 4, 8)
+	f.Add(1_000_000_007, 1, 1, 0, 1, 1_100_000, 1_100_000)
 	f.Fuzz(func(t *testing.T, tp, pp, dp, pcp, dpLocal, nodes, gpn int) {
 		pl := Parallelism{TP: tp, PP: pp, DP: dp, PCP: pcp, DPLocal: dpLocal}
 		pool, node := fitVerdict(pl, nodes, gpn) // must not panic
@@ -571,4 +572,68 @@ func FuzzParallelismValidation(f *testing.F) {
 			}
 		}
 	})
+}
+
+// TestPlacementDecisionMatchesKnownFactorisations builds replicas from primes the test
+// chooses, so the oracle knows every divisor without factoring anything: it enumerates
+// the divisors of the product it built and checks the range directly. Replicas run to
+// near 2^63 and ranges far wider than any scan, so the rule's own factorisation is what
+// is under test.
+func TestPlacementDecisionMatchesKnownFactorisations(t *testing.T) {
+	primes := []int{2, 3, 5, 7, 11, 13, 101, 65537, 1_000_000_007, 2147483647}
+	r := rand.New(rand.NewSource(31))
+	placed, refusedN := 0, 0
+	for i := 0; i < 3000; i++ {
+		// A replica of up to four chosen primes, kept below 2^62 so tp is an int.
+		chosen, world := []int{}, 1
+		for j := 0; j < 1+r.Intn(4); j++ {
+			q := primes[r.Intn(len(primes))]
+			if world > (1<<62)/q {
+				break
+			}
+			chosen, world = append(chosen, q), world*q
+		}
+		divisors := []int{1}
+		for _, q := range chosen {
+			next := []int{}
+			for _, d := range divisors {
+				next = append(next, d, d*q)
+			}
+			divisors = next
+		}
+		// Room drawn up to the replica's own size, and half the time a pool of up to 2^30
+		// nodes, so the range a split must fall in is often far wider than any scan.
+		nodes, gpn := 1+r.Intn(world), 1+r.Intn(world)
+		if r.Intn(2) == 0 {
+			nodes = 1 + r.Intn(1<<30)
+		}
+		// The pool bound must hold, so the per-node bound is what decides.
+		if big.NewInt(0).Mul(big.NewInt(int64(nodes)), big.NewInt(int64(gpn))).Cmp(big.NewInt(int64(world))) < 0 {
+			continue
+		}
+		lo := (world + gpn - 1) / gpn
+		want := false
+		for _, d := range divisors {
+			if d >= lo && d <= nodes {
+				want = true
+			}
+		}
+		pr := rankFit(Parallelism{TP: world, PP: 1, DP: 1, DPLocal: 1}, nodes, gpn)
+		got := perNodeRefusal(pr) == ""
+		if got != want {
+			t.Fatalf("replica %d = %v on %d x %d: validator places=%v, divisors say %v\n%s",
+				world, chosen, nodes, gpn, got, want, pr.Error())
+		}
+		if len(pr.All()) != 0 && got {
+			t.Fatalf("replica %d on %d x %d: placed but with a finding:\n%s", world, nodes, gpn, pr.Error())
+		}
+		if got {
+			placed++
+		} else {
+			refusedN++
+		}
+	}
+	if placed == 0 || refusedN == 0 {
+		t.Fatalf("degenerate sample: %d placed, %d refused", placed, refusedN)
+	}
 }

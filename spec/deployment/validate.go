@@ -3,6 +3,7 @@ package deployment
 import (
 	"fmt"
 	"math/big"
+	"math/bits"
 	"sort"
 
 	"github.com/inference-sim/blis-schemas/internal/validate"
@@ -190,14 +191,17 @@ func validateRankFit(p *validate.Problems, at string, pool Pool, c ClusterConstr
 		maxSplit = 1 // n = 1 always gives a split of 1
 	}
 	room := new(big.Int).Sub(gpn, last) // positive: last < gpn
-	switch placeable(world, big.NewInt(int64(maxSplit)), room) {
+	switch placeable([]int{pl.PP, pl.TP, pcp}, world, int64(maxSplit), room) {
 	case placeNo:
 		p.Field(at+".parallel",
 			"no node count up to the pool's %d lets the engine place %d local replicas of %s GPUs (pp %d x tp %d x pcp %d) on a %d-GPU node: replica i starts at device i x %s, so the last leaves %d GPUs for its share of the replica, and every split the pool allows (a divisor of %s over at most %d nodes) leaves a larger share",
 			pool.Nodes, pl.DPLocal, world, pl.PP, pl.TP, pcp, c.GPUsPerNode, world, room, world, maxSplit)
 	case placeUnknown:
-		// Only for widths far beyond any real cluster: the search is bounded, and an
-		// unanswered question is not a refusal.
+		// The search is exact, but bounded so that no input can make validation hang.
+		// No layout a cluster could hold reaches the bound. One that does is neither
+		// refused without proof nor admitted in silence: it is reported as undecided.
+		p.Warnf("%s.parallel: could not decide within the search limit whether %d local replicas of %s GPUs (pp %d x tp %d x pcp %d) can be placed on a %d-GPU node; this layout's per-node fit is unverified",
+			at, pl.DPLocal, world, pl.PP, pl.TP, pcp, c.GPUsPerNode)
 	}
 }
 
@@ -209,58 +213,160 @@ const (
 	placeUnknown
 )
 
-// placeableSearchLimit bounds the divisor search below. Real layouts need a few dozen
-// steps; the limit exists so an absurd width cannot make validation hang.
-const placeableSearchLimit = 1 << 20
+// placeableSearchLimit bounds the divisor walk in placeable. Real layouts need a handful
+// of steps; the limit exists only so that no input can make validation hang. It is a
+// variable so a test can lower it to exercise the undecided path.
+var placeableSearchLimit = 1 << 22
 
-// placeable reports whether some split k — a divisor of world, at most maxSplit — leaves
-// a per-node share world/k of at most room. All three are exact: world is a product of
-// widths and may exceed any machine word. It searches whichever of the two ranges is
-// shorter, the splits themselves or the shares, and declines to answer past
-// placeableSearchLimit steps.
-func placeable(world, maxSplit, room *big.Int) placement {
-	one := big.NewInt(1)
+// placeable decides whether some split k — a divisor of world, at most maxSplit — leaves a
+// per-node share world/k of at most room. That is: does world have a divisor in
+// [ceil(world/room), min(maxSplit, world)]?
+//
+// It is decided exactly, not by sampling. world is the product of the given widths, each
+// an int, so each is factored exactly (factorInto) and the divisors of world no larger
+// than the upper end are walked, stopping at the first that reaches the lower end. Every
+// candidate fits a uint64, because it is at most maxSplit. The walk is bounded by
+// placeableSearchLimit; past that the answer is placeUnknown, which the caller reports
+// rather than treating as either verdict.
+func placeable(widths []int, world *big.Int, maxSplit int64, room *big.Int) placement {
 	// lo = ceil(world / room), the smallest split whose share fits.
 	lo, rem := new(big.Int).QuoRem(world, room, new(big.Int))
 	if rem.Sign() != 0 {
-		lo.Add(lo, one)
+		lo.Add(lo, big.NewInt(1))
 	}
-	hi := maxSplit
+	hi := big.NewInt(maxSplit)
 	if world.Cmp(hi) < 0 {
-		hi = world
+		hi.Set(world)
 	}
 	if lo.Cmp(hi) > 0 {
 		return placeNo
 	}
-	splits := new(big.Int).Sub(hi, lo)
-	splits.Add(splits, one)
-	shares := room
-	if world.Cmp(shares) < 0 {
-		shares = world
+	low, high := lo.Uint64(), hi.Uint64() // both at most maxSplit
+
+	exp := map[uint64]int{}
+	for _, w := range widths {
+		if !factorInto(uint64(w), exp) {
+			return placeUnknown
+		}
 	}
-	limit := big.NewInt(placeableSearchLimit)
-	mod := new(big.Int)
+	primes := make([]uint64, 0, len(exp))
+	for q := range exp {
+		primes = append(primes, q)
+	}
+	// Largest primes first: a divisor reaching low is found in fewer steps.
+	sort.Slice(primes, func(i, j int) bool { return primes[i] > primes[j] })
+
+	steps, exhausted := 0, false
+	var walk func(i int, k uint64) bool
+	walk = func(i int, k uint64) bool {
+		if k >= low {
+			return true // every k walked is at most high
+		}
+		if i == len(primes) {
+			return false
+		}
+		if steps++; steps > placeableSearchLimit {
+			exhausted = true
+			return false
+		}
+		q := primes[i]
+		for e := 0; e <= exp[q]; e++ {
+			if walk(i+1, k) {
+				return true
+			}
+			if exhausted || k > high/q {
+				return false
+			}
+			k *= q
+		}
+		return false
+	}
 	switch {
-	case splits.Cmp(shares) <= 0 && splits.Cmp(limit) <= 0:
-		for k := new(big.Int).Set(lo); k.Cmp(hi) <= 0; k.Add(k, one) {
-			if mod.Mod(world, k).Sign() == 0 {
-				return placeYes
-			}
-		}
-	case shares.Cmp(limit) <= 0:
-		k := new(big.Int)
-		for share := big.NewInt(1); share.Cmp(shares) <= 0; share.Add(share, one) {
-			if mod.Mod(world, share).Sign() == 0 {
-				k.Quo(world, share)
-				if k.Cmp(lo) >= 0 && k.Cmp(hi) <= 0 {
-					return placeYes
-				}
-			}
-		}
-	default:
+	case walk(0, 1):
+		return placeYes
+	case exhausted:
 		return placeUnknown
+	default:
+		return placeNo
 	}
-	return placeNo
+}
+
+// factorInto adds the prime factorisation of n (n >= 1) to exp, exactly, and reports
+// whether it finished. Small primes are divided out first; what remains is split by
+// Pollard's rho until every part is prime. Primality is big.Int.ProbablyPrime(0), which
+// is documented to be exact for inputs below 2^64, so no factor is misclassified.
+//
+// Rho is not guaranteed to split a composite in any fixed time, and a validator must not
+// hang, so it runs on a budget. If the budget runs out, factorInto reports false and the
+// caller treats the placement as undecided — reported, never guessed.
+func factorInto(n uint64, exp map[uint64]int) bool {
+	for _, q := range []uint64{2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37} {
+		for n%q == 0 {
+			exp[q]++
+			n /= q
+		}
+	}
+	if n == 1 {
+		return true
+	}
+	if new(big.Int).SetUint64(n).ProbablyPrime(0) {
+		exp[n]++
+		return true
+	}
+	d, ok := pollardRho(n)
+	if !ok {
+		return false
+	}
+	return factorInto(d, exp) && factorInto(n/d, exp)
+}
+
+// Pollard's rho budget. A composite below 2^63 with no factor under 38 is split in about
+// n^(1/4) steps — under 60,000 at the top of the range — so 2^20 steps per constant is a
+// margin of more than fifteen, and eight constants bound the worst case, a number every
+// constant fails on, to about a second. rhoSteps is a variable so a test can exhaust it.
+const rhoConstants = 8
+
+var rhoSteps = 1 << 20
+
+// pollardRho looks for a non-trivial factor of n, which must be composite, odd, and free
+// of the small primes factorInto removes; for such n the first polynomial almost always
+// succeeds. It reports false only if every constant within the budget fails.
+func pollardRho(n uint64) (uint64, bool) {
+	mulmod := func(a, b uint64) uint64 {
+		hi, lo := bits.Mul64(a, b)
+		return bits.Rem64(hi, lo, n)
+	}
+	for c := uint64(1); c <= rhoConstants; c++ {
+		next := func(x uint64) uint64 {
+			// x*x mod n + c, without overflow: both terms are below n, and n < 2^64.
+			v, carry := bits.Add64(mulmod(x, x), c, 0)
+			if carry != 0 || v >= n {
+				v -= n
+			}
+			return v
+		}
+		x, y, d := uint64(2), uint64(2), uint64(1)
+		for i := 0; d == 1 && i < rhoSteps; i++ {
+			x = next(x)
+			y = next(next(y))
+			diff := x - y
+			if y > x {
+				diff = y - x
+			}
+			d = gcd(diff, n)
+		}
+		if d != 1 && d != n {
+			return d, true
+		}
+	}
+	return 0, false
+}
+
+func gcd(a, b uint64) uint64 {
+	for b != 0 {
+		a, b = b, a%b
+	}
+	return a
 }
 
 // product multiplies non-negative ints exactly.
