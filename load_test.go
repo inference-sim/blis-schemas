@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/inference-sim/blis-schemas/internal/registry"
+	"github.com/inference-sim/blis-schemas/spec/coefficient"
 	"github.com/inference-sim/blis-schemas/spec/model"
 	"github.com/inference-sim/blis-schemas/spec/workload"
 )
@@ -908,6 +910,40 @@ func TestLoadCatalogFiles(t *testing.T) {
 		len(chips), len(fabrics), len(workloads), len(devices))
 }
 
+// TestCoefficientOnlyBundleRunsNoRules is a canary for validate-registry. That command
+// validates each set with (*coefficient.Set).Validate alone, which is complete only while
+// a coefficient-only bundle runs no version-scoped rules: rules run solely against a
+// Scenario, and rules.Input carries no coefficient. If a future rules pack ever runs for a
+// coefficient-only bundle, this test fails on purpose — the signal to route
+// validate-registry through blisschemas.Validate so it enforces those rules rather than
+// silently passing sets they would reject.
+func TestCoefficientOnlyBundleRunsNoRules(t *testing.T) {
+	path := write(t, "c.yaml", `
+kind: CoefficientSet
+name: canary
+coefficients:
+  - x:
+      value: 1
+      units: dimensionless
+      method: measured
+      scope:
+        hardware: [h200]
+`)
+	s, err := LoadCoefficientSet(path)
+	if err != nil {
+		t.Fatalf("LoadCoefficientSet: %v", err)
+	}
+	rep := Validate(Bundle{Coefficients: []*coefficient.Set{s}})
+	if rep.RulesApplied != "" {
+		t.Errorf("a rules pack now runs for a coefficient-only bundle (RulesApplied=%q); "+
+			"route validate-registry through blisschemas.Validate so it enforces coefficient rules",
+			rep.RulesApplied)
+	}
+	if !rep.Rule.OK() {
+		t.Errorf("rule-layer findings on a coefficient-only bundle: %s", rep.Rule.Error())
+	}
+}
+
 // TestLoadRegistryFilesIfPresent loads and VALIDATES the committed coefficient sets from a
 // BLIS_REGISTRY checkout. Unlike the catalog tests above, the registry has no vendored
 // in-tree snapshot yet, so this one is still gated on an env var and SKIPS when it is unset.
@@ -926,9 +962,15 @@ func TestLoadRegistryFilesIfPresent(t *testing.T) {
 		t.Skip("BLIS_REGISTRY is unset: the committed coefficient sets were NOT loaded " +
 			"or validated")
 	}
-	sets, _ := filepath.Glob(filepath.Join(root, "coefficients", "*.yaml"))
+	// Discover the sets exactly as a consumer and the registry's own gate do — the shared
+	// registry.SetPaths predicate, recursive over .yaml and .yml — so this check cannot pass
+	// over a committed set that discovery with a narrower glob would skip.
+	sets, err := registry.SetPaths(root)
+	if err != nil {
+		t.Fatalf("registry.SetPaths(%s): %v", root, err)
+	}
 	if len(sets) == 0 {
-		t.Skipf("BLIS_REGISTRY=%s has no coefficients/*.yaml", root)
+		t.Skipf("BLIS_REGISTRY=%s has no coefficient sets", root)
 	}
 	total := 0
 	for _, path := range sets {

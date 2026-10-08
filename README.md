@@ -111,7 +111,9 @@ kernel/             the interface a cost model implements
 rules/              the version-scoped rule mechanism
 rules/v0_29/        one release's rules and constants
 internal/validate/  the accumulating, located problem list every validator shares
+internal/registry/  the shared discovery of a blis-registry checkout's coefficient-set files
 cmd/validate-catalog/  CLI: load and validate every artifact in a blis-catalog checkout
+cmd/validate-registry/ CLI: load and validate every coefficient set in a blis-registry checkout
 testdata/           a pinned, by-hand copy of blis-catalog's data, used as test fixtures
 ```
 
@@ -253,6 +255,30 @@ problem to stderr, so the report reads cleanly and the exit code is scriptable: 
 when everything validates, `1` on any validation failure, and `2` for a usage error
 or a path that is not a catalog (none of the artifact namespaces present, or present but
 holding nothing to validate). It is the binary blis-catalog proposes to run in its own CI.
+
+## Validating a registry checkout
+
+`cmd/validate-registry` is the coefficient-set counterpart. It loads and validates every
+committed set in a [blis-registry](https://github.com/inference-sim/blis-registry) checkout
+against these schemas — the same `(*coefficient.Set).Validate()` a Go consumer runs after
+`LoadCoefficientSet`, among its checks the intra-set `(name, scope)` duplicate rule a
+resolver depends on. Point it at a registry root:
+
+```sh
+go run ./cmd/validate-registry /path/to/blis-registry
+```
+
+It discovers sets the way the registry's own validator does — a recursive walk under
+`coefficients/` taking `.yaml` and `.yml`, case-insensitively — so a set the registry's
+Python gate sees is one this gate sees too. (Like any plain directory walk, neither
+descends into symlinked directories; the registry stores its sets as regular files.) Each
+set gets one summary line on stdout (its
+coefficient count, or `FAILED`) and every finding on stderr, and the exit code is
+scriptable: `0` when every set validates, `1` on any load or validation failure, and `2`
+for a usage error or a root with no coefficient sets. Wiring it into blis-registry's own
+CI — so a bad set is rejected on the pull request that introduces it rather than surfacing
+later in a consumer — is
+[inference-sim/blis-registry#20](https://github.com/inference-sim/blis-registry/issues/20).
 
 ## Evolving this repository
 
