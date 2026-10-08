@@ -186,27 +186,34 @@ func validateParallelism(p *validate.Problems, at string, pl Parallelism) {
 // and no model graph — which is why they are field checks here rather than a
 // version-scoped rule. They mirror what the engine itself refuses at startup.
 func validateDecodeContextParallel(p *validate.Problems, at string, pl Parallelism) {
+	// Problems accumulates rather than aborting, so a width already reported above
+	// arrives here unchanged. These rules are stated over a real rank group, and a
+	// malformed width describes none, so running them anyway does active harm in two
+	// ways: it files a second problem naming dcp when the fault is another field, and
+	// — worse — it can ACCEPT a dcp that the corrected width would reject, so the
+	// author sees a fresh error only on a later run. That second round is exactly
+	// what an accumulating problem list exists to prevent, so every width the checks
+	// above already reported is a reason to stop here rather than guess at intent.
+	//
+	// A negative pcp is the instructive case. Normalising it to 1 below would route
+	// the deployment into the prefill-context-parallelism-OFF branch and assert, in
+	// the message, that pcp is off — when the document asked for it and merely asked
+	// malformedly. tp 8, pcp -2, dcp 4 is the masking half: 8 % 4 is 0 so nothing is
+	// reported, while at the evident pcp of 2 the admissible set is {1, 2, 16} and 4
+	// is not in it.
+	if pl.TP < 1 || pl.PCP < 0 || pl.DCP < 0 {
+		return
+	}
 	// Both widths are omitempty, so an absent field arrives as 0 meaning "not enabled".
 	// The rules are stated over enabled widths, so normalise before applying them —
 	// otherwise tp % dcp divides by zero for every deployment that simply omits dcp.
+	// Only a zero reaches this point: a negative returned above.
 	pcp, dcp := pl.PCP, pl.DCP
 	if pcp < 1 {
 		pcp = 1
 	}
 	if dcp < 1 {
 		dcp = 1
-	}
-	// Problems accumulates rather than aborting, so a tp below 1 has already been
-	// recorded above and execution continues into here with it unchanged. These rules
-	// are stated over a real rank group, and there is none below a tp of 1, so a
-	// second problem about how dcp divides it would only obscure the one real fault:
-	// leave it to the check that already named it.
-	//
-	// What keeps the modulus safe is the dcp floor above, not this guard — tp is the
-	// dividend here, so a zero tp divides cleanly by anything. Removing the floor
-	// panics; removing this guard does not, it just reports a nonsense group.
-	if pl.TP < 1 {
-		return
 	}
 	if pcp == 1 {
 		if pl.TP%dcp != 0 {

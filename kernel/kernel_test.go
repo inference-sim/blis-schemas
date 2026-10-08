@@ -1,7 +1,6 @@
 package kernel
 
 import (
-	"reflect"
 	"testing"
 	"time"
 
@@ -41,22 +40,48 @@ var _ Kernel = stub{}
 // settings that decide admission. If any of these ever stops being reachable from a
 // kernel.Kernel, this fails to compile.
 func TestConsumerNeedsOnlyTheInterface(t *testing.T) {
+	// The resolution deliberately DISAGREES with the pool's parallelism. That is the
+	// whole point of the fixture: these are two different facts, and a stub whose
+	// resolved widths merely echoed the document would satisfy a test built on
+	// agreeing numbers while proving nothing. A resolver that transposed the two, or
+	// that read the request where it meant the resolution, is caught here.
+	//
+	// The layout is not meant to be physically sensible — it is a request the resolver
+	// settled differently, which is exactly the case Resolution exists to report.
+	const (
+		requestTP, requestDP   = 8, 4
+		resolvedTP, resolvedDP = 4, 8
+	)
 	var k Kernel = stub{
-		res: Resolution{TensorParallelWidth: 8, DataParallelWidth: 4, ExpertParallelWidth: 32},
+		res: Resolution{
+			TensorParallelWidth: resolvedTP,
+			DataParallelWidth:   resolvedDP,
+			ExpertParallelWidth: 32,
+		},
 		pool: deployment.Pool{
-			Role:     deployment.RoleDecode,
-			Parallel: deployment.Parallelism{TP: 8, PP: 1, DP: 4, EnableExpertParallel: true},
-			Engine:   deployment.Engine{BlockSize: 64, MaxNumSeqs: 256, MaxNumBatchedTokens: 8192},
+			Role: deployment.RoleDecode,
+			Parallel: deployment.Parallelism{TP: requestTP, PP: 1, DP: requestDP,
+				EnableExpertParallel: true},
+			Engine: deployment.Engine{BlockSize: 64, MaxNumSeqs: 256, MaxNumBatchedTokens: 8192},
 		},
 	}
 
+	// Resolved reports the resolution.
 	r := k.Resolved()
-	if r.TensorParallel() != 8 || r.DataParallel() != 4 || r.ExpertParallel() != 32 {
-		t.Errorf("resolved widths = (%d, %d, %d), want (8, 4, 32)",
-			r.TensorParallel(), r.DataParallel(), r.ExpertParallel())
+	if r.TensorParallel() != resolvedTP || r.DataParallel() != resolvedDP {
+		t.Errorf("resolved widths = (%d, %d), want (%d, %d)",
+			r.TensorParallel(), r.DataParallel(), resolvedTP, resolvedDP)
+	}
+	if r.ExpertParallel() != 32 {
+		t.Errorf("resolved expert width = %d, want 32", r.ExpertParallel())
 	}
 
+	// Deployment reports the request, and must NOT have been overwritten by it.
 	pool := k.Deployment()
+	if pool.Parallel.TP != requestTP || pool.Parallel.DP != requestDP {
+		t.Errorf("pool parallelism = (tp %d, dp %d), want the request (%d, %d)",
+			pool.Parallel.TP, pool.Parallel.DP, requestTP, requestDP)
+	}
 	if pool.Role != deployment.RoleDecode {
 		t.Errorf("role = %q, want %q", pool.Role, deployment.RoleDecode)
 	}
@@ -137,26 +162,5 @@ func TestExpertWidthIsNotRecomputableFromTheOtherTwo(t *testing.T) {
 				t.Errorf("reported expert width %d, derived %d", got, derived)
 			}
 		})
-	}
-}
-
-// TestResolutionCarriesTheWidthsSeparately pins the asymmetry this change removed.
-// Before it, a consumer could read the expert width from a Resolution but had to go
-// elsewhere for tensor- and data-parallel width, and "elsewhere" meant either
-// re-deriving the resolver's logic or reading the Deployment and getting the request.
-// Reflection rather than a field read, because the point is that the type DECLARES
-// all three: a field read would still compile if two of them were removed and
-// replaced by accessors over the request.
-func TestResolutionCarriesTheWidthsSeparately(t *testing.T) {
-	ty := reflect.TypeOf(Resolution{})
-	for _, name := range []string{"TensorParallelWidth", "DataParallelWidth", "ExpertParallelWidth"} {
-		f, ok := ty.FieldByName(name)
-		if !ok {
-			t.Errorf("Resolution does not declare %s; a consumer must not have to re-derive it", name)
-			continue
-		}
-		if f.Type.Kind() != reflect.Int {
-			t.Errorf("%s is %s, want int", name, f.Type)
-		}
 	}
 }

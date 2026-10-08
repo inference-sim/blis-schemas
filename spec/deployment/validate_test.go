@@ -1,6 +1,7 @@
 package deployment
 
 import (
+	"fmt"
 	"math"
 	"strings"
 	"testing"
@@ -263,12 +264,28 @@ func TestDecodeContextParallelWidth(t *testing.T) {
 			d := singleNodeDeployment()
 			d.Pools[0].Parallel = c.p
 			p := d.Validate()
-			if c.reject && p.OK() {
+			if !c.reject {
+				if !p.OK() {
+					t.Fatalf("expected %+v to validate:\n%s", c.p, p.Error())
+				}
+				return
+			}
+			if p.OK() {
 				t.Fatalf("expected rejection of %+v, got none", c.p)
 			}
-			if !c.reject && !p.OK() {
-				t.Fatalf("expected %+v to validate:\n%s", c.p, p.Error())
+			// The rejection must be attributed to dcp, not merely present. The path
+			// is the load-bearing half of the diagnostic: it is what tells an author
+			// which field to edit, and asserting only OK() would hold just as well if
+			// the problem were filed against tp or the pool. Without this, both
+			// p.Field paths in validateDecodeContextParallel can be renamed and the
+			// whole suite stays green.
+			const want = "pools[0].parallel.dcp"
+			for _, problem := range p.All() {
+				if problem.Path == want {
+					return
+				}
 			}
+			t.Errorf("expected a problem at %s, got:\n%s", want, p.Error())
 		})
 	}
 }
@@ -323,19 +340,169 @@ func TestDecodeContextParallelWithInvalidTP(t *testing.T) {
 	}
 }
 
-// TestNegativeContextParallelWidthDoesNotPanic covers the other way a width can arrive
-// outside the enabled range. A negative dcp is reported by the non-negativity check;
-// normalising it to 1 for the divisibility rule keeps that one problem from becoming
-// two, and keeps the modulus away from a negative divisor.
-func TestNegativeContextParallelWidthDoesNotPanic(t *testing.T) {
-	for _, pl := range []Parallelism{
-		{TP: 8, PP: 1, DP: 1, DCP: -1},
-		{TP: 8, PP: 1, DP: 1, PCP: -1},
-	} {
+// TestNegativeContextParallelWidth covers the other way a width can arrive outside the
+// enabled range. A negative one is reported by the non-negativity check, and the rules
+// then decline to run: a malformed width describes no rank group, so any divisibility
+// verdict over it would be invented.
+//
+// The pcp cases are the ones that matter, and they are regressions. Normalising a
+// negative pcp to 1 — rather than returning — routes the deployment into the
+// prefill-context-parallelism-OFF branch and files a dcp problem whose message asserts
+// pcp is off, when the document asked for it. The last case is the masking half: at
+// pcp -2 the off-branch finds 8 % 4 == 0 and says nothing, while at the evident pcp of
+// 2 the admissible set is {1, 2, 16} and dcp 4 is not in it — so the author would meet
+// that error only on a second run, after fixing pcp.
+func TestNegativeContextParallelWidth(t *testing.T) {
+	cases := []struct {
+		name string
+		p    Parallelism
+	}{
+		{"negative dcp", Parallelism{TP: 8, PP: 1, DP: 1, DCP: -1}},
+		{"negative pcp", Parallelism{TP: 8, PP: 1, DP: 1, PCP: -1}},
+		{"negative pcp with an indivisible dcp", Parallelism{TP: 8, PP: 1, DP: 1, PCP: -1, DCP: 3}},
+		{"negative pcp masking an inadmissible dcp", Parallelism{TP: 8, PP: 1, DP: 1, PCP: -2, DCP: 4}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			d := singleNodeDeployment()
+			d.Pools[0].Parallel = c.p
+			p := d.Validate()
+			if p.OK() {
+				t.Fatalf("a negative context-parallel width should be rejected: %+v", c.p)
+			}
+			sawWidth := false
+			for _, problem := range p.All() {
+				if strings.Contains(problem.Path, "dcp") {
+					t.Errorf("a malformed width should yield no dcp verdict, got %s", problem)
+				}
+				if problem.Path == "pools[0].parallel" {
+					sawWidth = true
+				}
+			}
+			// The real fault must still be named, or a guard that suppressed
+			// everything would satisfy the check above for the wrong reason.
+			if !sawWidth {
+				t.Errorf("expected the non-negativity problem to be reported:\n%s", p.Error())
+			}
+		})
+	}
+}
+
+// TestAdmissibleDCP covers the rendered set directly, not just the verdict it informs.
+// Issue #39 asks the PCP-on message to name the admissible widths rather than only the
+// violation, so the set IS part of the contract: a reader's next question after "3 is
+// wrong" is "then what works". Only its verdict was exercised before, which left the
+// dedup and the sort free to regress.
+//
+// The tp 1 row is the one that motivates deduplicating at all: there the full TP x PCP
+// block IS the pcp axis, so a literal three-element list would print the same width
+// twice and read as though it were three distinct choices. No case elsewhere in this
+// file has tp 1 with pcp above 1, so without this row that rationale is untested.
+func TestAdmissibleDCP(t *testing.T) {
+	cases := []struct {
+		tp, pcp int
+		want    []int
+	}{
+		{4, 2, []int{1, 2, 8}},
+		{8, 2, []int{1, 2, 16}},
+		{1, 2, []int{1, 2}}, // the block equals the axis; two widths, not three
+		{2, 3, []int{1, 3, 6}},
+	}
+	for _, c := range cases {
+		t.Run(fmt.Sprintf("tp%d_pcp%d", c.tp, c.pcp), func(t *testing.T) {
+			got := admissibleDCP(c.tp, c.pcp)
+			if len(got) != len(c.want) {
+				t.Fatalf("admissibleDCP(%d, %d) = %v, want %v", c.tp, c.pcp, got, c.want)
+			}
+			for i := range got {
+				if got[i] != c.want[i] {
+					t.Fatalf("admissibleDCP(%d, %d) = %v, want %v (ascending, deduplicated)",
+						c.tp, c.pcp, got, c.want)
+				}
+			}
+		})
+	}
+}
+
+// TestDecodeContextParallelMessagesNameTheFacts pins the load-bearing CONTENT of the two
+// new problems, which no assertion on a verdict or a path can reach. A message reduced
+// to "invalid" would satisfy every other test in this file while telling an author
+// nothing they can act on.
+//
+// It asserts substrings rather than whole wordings deliberately: the contract from issue
+// #39 is that the message names the offending width and, for the PCP-on branch, the set
+// that would be accepted. Pinning the full sentence would couple these tests to
+// rephrasings that change nothing a reader depends on.
+func TestDecodeContextParallelMessagesNameTheFacts(t *testing.T) {
+	find := func(t *testing.T, pl Parallelism) string {
+		t.Helper()
 		d := singleNodeDeployment()
 		d.Pools[0].Parallel = pl
-		if p := d.Validate(); p.OK() {
-			t.Errorf("a negative context-parallel width should be rejected: %+v", pl)
+		for _, problem := range d.Validate().All() {
+			if problem.Path == "pools[0].parallel.dcp" {
+				return problem.Message
+			}
 		}
+		t.Fatalf("no dcp problem for %+v", pl)
+		return ""
+	}
+
+	// PCP off: the message must name both sides of the divisibility it is asserting,
+	// since "8 must be divisible by 3" is actionable and "invalid" is not.
+	msg := find(t, Parallelism{TP: 8, PP: 1, DP: 1, DCP: 3})
+	for _, want := range []string{"8", "3"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("pcp-off message does not name %q: %s", want, msg)
+		}
+	}
+
+	// PCP on: the message must name the admissible set, which is the half of the
+	// contract that tells a reader what to change the width TO.
+	msg = find(t, Parallelism{TP: 4, PP: 1, DP: 1, PCP: 2, DCP: 3})
+	for _, want := range []string{"[1 2 8]", "3"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("pcp-on message does not name %q: %s", want, msg)
+		}
+	}
+}
+
+// TestDCPAlongsideThePCPDPConflict pins how the new rules compose with the pre-existing
+// PCP/DP check, which no other case covers. Both problems are true of the document as
+// written and each names the right field, so both are reported — that is the
+// accumulating problem list working as designed.
+//
+// It is worth pinning because the pair is CONTINGENT in a way that looks like a bug and
+// is not: fixing pcp to 1 also clears the dcp problem (4 divides tp 4), while fixing dp
+// to 1 leaves it standing. An author sees both constraints and converges in one round
+// either way, which is the property that matters. What would be a defect is a dcp
+// verdict computed from a width the document does not state — see
+// TestNegativeContextParallelWidth, where the rules decline rather than guess.
+func TestDCPAlongsideThePCPDPConflict(t *testing.T) {
+	d := singleNodeDeployment()
+	d.Pools[0].Parallel = Parallelism{TP: 4, PP: 1, DP: 8, PCP: 2, DCP: 4}
+	p := d.Validate()
+	if p.OK() {
+		t.Fatal("expected rejection")
+	}
+	want := map[string]bool{
+		"pools[0].parallel.pcp": false, // pcp and dp cannot both exceed 1
+		"pools[0].parallel.dcp": false, // 4 is not in {1, 2, 8} with pcp on
+	}
+	for _, problem := range p.All() {
+		if _, ok := want[problem.Path]; ok {
+			want[problem.Path] = true
+		}
+	}
+	for path, seen := range want {
+		if !seen {
+			t.Errorf("expected a problem at %s, got:\n%s", path, p.Error())
+		}
+	}
+	// Correcting the conflict the other way leaves a document that is fully valid,
+	// which is what makes the dcp problem above contingent rather than spurious.
+	d2 := singleNodeDeployment()
+	d2.Pools[0].Parallel = Parallelism{TP: 4, PP: 1, DP: 1, PCP: 1, DCP: 4}
+	if p2 := d2.Validate(); !p2.OK() {
+		t.Errorf("dcp 4 divides tp 4 with pcp off and should validate:\n%s", p2.Error())
 	}
 }
