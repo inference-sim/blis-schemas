@@ -45,6 +45,12 @@ type Set struct {
 
 // UnmarshalYAML reads the registry's nested entry form into a flat list.
 func (s *Set) UnmarshalYAML(node *yaml.Node) error {
+	// Unknown top-level keys are rejected here: a custom unmarshal does not inherit the
+	// decoder's KnownFields, so `backend:` or `extends:` (or a typo) would otherwise decode
+	// to nothing silently. This matches blis-registry's strict top-level parse.
+	if err := validate.RejectUnknownKeys(node, Set{}, nil); err != nil {
+		return err
+	}
 	// An alias type without this method, so decoding it does not recurse.
 	type setShape struct {
 		Kind         string      `yaml:"kind"`
@@ -155,6 +161,24 @@ type Scope struct {
 	TP           []int    `yaml:"tp,omitempty"`
 	EP           []int    `yaml:"ep,omitempty"`
 	NodesSpanned []int    `yaml:"nodes_spanned,omitempty"`
+}
+
+// UnmarshalYAML rejects unknown scope keys before decoding. The typed fields alone would
+// silently drop a key the resolver does not know — a custom unmarshal does not inherit the
+// decoder's KnownFields — so an unrecognized dimension would read as "no such scoping"
+// rather than an error. This restores the strict check, matching blis-registry's own
+// validator.
+func (s *Scope) UnmarshalYAML(node *yaml.Node) error {
+	if err := validate.RejectUnknownKeys(node, Scope{}, nil); err != nil {
+		return err
+	}
+	type scopeShape Scope // no UnmarshalYAML, so decoding does not recurse
+	var raw scopeShape
+	if err := node.Decode(&raw); err != nil {
+		return err
+	}
+	*s = Scope(raw)
+	return nil
 }
 
 // Empty reports whether no dimension is stated.

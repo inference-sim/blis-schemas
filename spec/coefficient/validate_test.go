@@ -3,6 +3,7 @@ package coefficient
 import (
 	"fmt"
 	"math"
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -89,29 +90,130 @@ func TestRejects(t *testing.T) {
 	}
 }
 
-// TestAssumedWithoutRationaleWarns: usable but unweighable, so a warning rather
-// than an error.
-func TestAssumedWithoutRationaleWarns(t *testing.T) {
-	s := validSet()
-	s.Coefficients[2].Rationale = ""
-	p := s.Validate()
-	if !p.OK() {
-		t.Errorf("a missing rationale should warn, not fail:\n%s", p.Error())
-	}
-	if len(p.All()) == 0 {
-		t.Error("expected a warning about the missing rationale")
+// The provenance/evidence rules below were migrated from blis-registry's Python validator
+// (validator/schema.py) so the registry can drop it and validation lives in one place.
+// Each is tested positive and negative, matching schema.py's exact scoping.
+
+// Every method but measured must carry its reasoning. This was a warning (assumed only);
+// it is now an error for all non-measured methods, as the Python validator required.
+func TestRationaleRequiredForEveryMethodButMeasured(t *testing.T) {
+	for _, m := range []vocab.Method{
+		vocab.MethodLiterature, vocab.MethodVendorSpec, vocab.MethodCopied,
+		vocab.MethodAssumed, vocab.MethodNotCharged,
+	} {
+		s := validSet()
+		e := &s.Coefficients[2] // the assumed entry
+		e.Method, e.Rationale, e.Fitted = m, "", false
+		// Satisfy the OTHER companions each method needs, so rationale is the sole failure.
+		switch m {
+		case vocab.MethodLiterature, vocab.MethodVendorSpec:
+			e.Sources = []Source{{Kind: vocab.SourceDatasheet, Cite: "x", Role: vocab.RolePrimary}}
+		case vocab.MethodCopied:
+			e.CopiedFrom = "hardware=h100"
+		case vocab.MethodNotCharged:
+			e.Value = 0
+		}
+		if p := s.Validate(); p.OK() {
+			t.Errorf("method %q without a rationale should be rejected", m)
+		}
+		e.Rationale = "a weighable reason"
+		if p := s.Validate(); !p.OK() {
+			t.Errorf("method %q with a rationale should pass:\n%s", m, p.Error())
+		}
 	}
 }
 
-func TestEvidencedWithoutSourceWarns(t *testing.T) {
+func TestMeasuredNeedsNoRationale(t *testing.T) {
+	s := validSet()
+	s.Coefficients[0].Rationale = "" // entry[0] is measured
+	if p := s.Validate(); !p.OK() {
+		t.Errorf("a measured value needs no rationale:\n%s", p.Error())
+	}
+}
+
+// sources are required for literature and vendor_spec specifically — not for measured.
+func TestSourcesRequiredForLiteratureAndVendorSpec(t *testing.T) {
+	for _, m := range []vocab.Method{vocab.MethodLiterature, vocab.MethodVendorSpec} {
+		s := validSet()
+		e := &s.Coefficients[0]
+		e.Method, e.Fitted, e.Rationale, e.Sources = m, false, "cited below", nil
+		if p := s.Validate(); p.OK() {
+			t.Errorf("method %q without sources should be rejected", m)
+		}
+		e.Sources = []Source{{Kind: vocab.SourcePublication, Cite: "arXiv:1", Role: vocab.RolePrimary}}
+		if p := s.Validate(); !p.OK() {
+			t.Errorf("method %q with a source should pass:\n%s", m, p.Error())
+		}
+	}
+}
+
+// A measured value may be uncited — the registry carries such entries — so it is neither
+// an error nor a warning now (the broad "evidenced without source" warning is gone).
+func TestMeasuredWithoutSourceIsClean(t *testing.T) {
 	s := validSet()
 	s.Coefficients[0].Sources = nil
 	p := s.Validate()
 	if !p.OK() {
-		t.Errorf("an uncited measurement should warn, not fail:\n%s", p.Error())
+		t.Errorf("an uncited measured value should pass:\n%s", p.Error())
 	}
-	if len(p.All()) == 0 {
-		t.Error("expected a warning about the missing citation")
+	for _, pr := range p.All() {
+		if strings.Contains(pr.Message, "source") {
+			t.Errorf("measured-without-source should be silent, got: %s", pr)
+		}
+	}
+}
+
+// fitted: true is coherent only with a measured method.
+func TestFittedTrueRequiresMeasured(t *testing.T) {
+	s := validSet()
+	s.Coefficients[2].Fitted = true // entry[2] is assumed
+	if p := s.Validate(); p.OK() {
+		t.Error("fitted: true on a non-measured method should be rejected")
+	}
+	s.Coefficients[2].Fitted = false
+	if p := s.Validate(); !p.OK() {
+		t.Errorf("the fixture should otherwise be valid:\n%s", p.Error())
+	}
+}
+
+// A zero value is reserved for method not_charged (and not_charged must be zero).
+func TestZeroValueRequiresNotCharged(t *testing.T) {
+	s := validSet()
+	s.Coefficients[0].Value = 0 // measured, so this must be rejected
+	if p := s.Validate(); p.OK() {
+		t.Error("a zero value under a non-not_charged method should be rejected")
+	}
+	s2 := validSet()
+	e := &s2.Coefficients[2] // assumed, has a rationale
+	e.Method, e.Value = vocab.MethodNotCharged, 0
+	if p := s2.Validate(); !p.OK() {
+		t.Errorf("not_charged with a zero value and a rationale should pass:\n%s", p.Error())
+	}
+}
+
+// Strict parse: an unknown top-level key or an unknown scope key is rejected at decode —
+// a custom UnmarshalYAML would otherwise drop them silently (the KnownFields loss).
+func TestStrictUnknownKeysRejectedAtDecode(t *testing.T) {
+	cases := map[string]string{
+		"unknown top-level key": `kind: CoefficientSet
+name: s
+backend: vllm
+coefficients:
+  - x: {value: 1, units: dimensionless, method: measured, fitted: false, scope: {tp: [8]}}
+`,
+		"unknown scope key": `kind: CoefficientSet
+name: s
+coefficients:
+  - x: {value: 1, units: dimensionless, method: measured, fitted: false, scope: {dtype: [bf16]}}
+`,
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			var s Set
+			if err := yaml.Unmarshal([]byte(body), &s); err == nil {
+				t.Fatal("expected a decode error for the unknown key, got none")
+			}
+		})
 	}
 }
 

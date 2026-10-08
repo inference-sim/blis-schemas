@@ -77,24 +77,44 @@ func (e Entry) validate(p *validate.Problems, at string) {
 		p.Field(at+".scope",
 			"at least one dimension is required; an empty scope states no applicability rather than universal applicability")
 	}
+	// value 0 is reserved for a deliberately not-charged term. A zero under any other
+	// method reads as "free" when it almost always means "unfilled", so require the method
+	// to declare the intent; the converse (not_charged must be zero) is just below. Both
+	// gate on finiteness so a non-finite value is reported once, not also here.
+	if valueFinite && e.Value == 0 && e.Method != vocab.MethodNotCharged {
+		p.Field(at+".value",
+			"value 0 requires method %q (a priced-at-zero term), got method %q",
+			vocab.MethodNotCharged, e.Method)
+	}
 	if valueFinite && e.Method == vocab.MethodNotCharged && e.Value != 0 {
 		p.Field(at+".value",
 			"method not_charged declares a deliberate zero, but value is %v", e.Value)
 	}
-	if e.Method == vocab.MethodCopied && e.CopiedFrom == "" {
-		p.Field(at+".copied_from", "required when method is copied")
+	// fitted marks a value obtained by fitting a curve to its own measured term, so it is
+	// coherent only with a measured method.
+	if e.Fitted && e.Method != vocab.MethodMeasured {
+		p.Field(at+".fitted",
+			"fitted: true requires method %q, got method %q",
+			vocab.MethodMeasured, e.Method)
 	}
-	// An assumed value's only support is its reasoning, so its absence leaves a
-	// reader nothing to weigh. A warning rather than an error: the value is usable,
-	// and forcing prose would invite filler.
-	if e.Method == vocab.MethodAssumed && e.Rationale == "" {
-		p.Warnf("%s: an assumed value carries no rationale, so a reader cannot weigh it", at)
-	}
-	// A claim of evidence should cite it. Also a warning: the registry holds
-	// pre-existing entries that are measured and uncited, and failing them would
-	// block adoption rather than improve the data.
-	if e.Method.Evidenced() && len(e.Sources) == 0 {
-		p.Warnf("%s: method %s claims evidence but cites no source", at, e.Method)
+	// Companion fields required by method. Gated on a known method so an unknown one is
+	// reported once (as an unknown method) rather than also as a missing companion.
+	if e.Method.Valid() {
+		// Every method but measured rests on a judgement a reader must be able to weigh,
+		// so it must carry its reasoning. (A measured value cites a source instead.)
+		if e.Method != vocab.MethodMeasured && e.Rationale == "" {
+			p.Field(at+".rationale", "method %q requires a rationale", e.Method)
+		}
+		// A value drawn from the literature or a datasheet must cite where. measured is
+		// evidenced too, but the registry carries pre-existing uncited measured entries,
+		// so a source is not required there — matching blis-registry's own validator.
+		if (e.Method == vocab.MethodLiterature || e.Method == vocab.MethodVendorSpec) &&
+			len(e.Sources) == 0 {
+			p.Field(at+".sources", "method %q requires at least one source", e.Method)
+		}
+		if e.Method == vocab.MethodCopied && e.CopiedFrom == "" {
+			p.Field(at+".copied_from", "method copied requires copied_from")
+		}
 	}
 	for j, src := range e.Sources {
 		sat := fmt.Sprintf("%s.sources[%d]", at, j)
