@@ -27,8 +27,8 @@
 // resolver reports what it resolved, so a reader is never misled by a request.
 //
 // Engine settings are per pool. A prefill/decode-disaggregated deployment runs two
-// engines with different backends and different graph modes; one shared engine
-// block would describe neither.
+// kinds of engine with different backends and different graph modes; one shared
+// engine block would describe neither.
 package deployment
 
 import "math"
@@ -59,7 +59,11 @@ var roles = map[Role]bool{RoleColocated: true, RolePrefill: true, RoleDecode: tr
 // Valid reports whether r is a recognized role.
 func (r Role) Valid() bool { return roles[r] }
 
-// Pool is one engine: a role, a node count, a parallelism layout, and settings.
+// Pool is the nodes serving one role: a role, a node count, a parallelism layout, and
+// settings. It may hold more than one engine, each running that layout with those
+// settings — llm-d runs a LeaderWorkerSet of `replicas` groups, each group one engine
+// over `size` nodes, so a 36-node prefill pool of dp 8 is 36 one-node engines. Nodes is
+// therefore the pool's whole extent, which one engine's layout may occupy only part of.
 type Pool struct {
 	Role     Role        `yaml:"role"`
 	Nodes    int         `yaml:"nodes"`
