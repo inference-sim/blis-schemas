@@ -37,6 +37,14 @@ func (s *Set) Validate() *validate.Problems {
 	//
 	// Two entries sharing a name AND a scope are still an error: a resolver would
 	// keep whichever came last, so the file would mean something other than it says.
+	//
+	// This is a deliberate, documented LOOSENING of blis-registry's own validator, which
+	// keys duplicate identity on the name ALONE and so rejects one set holding
+	// gemm_eps_max_bf16 at both {hardware: h100} and {hardware: h200}. The (name, scope)
+	// rule is the more expressive one and is authoritative once the registry adopts this
+	// validator as its single gate (blis-registry#29); until then a set this accepts could
+	// be rejected by the registry's Python gate, so the loosening is a contract change, not
+	// a like-for-like migration.
 	seen := map[string]bool{}
 	for i, e := range s.Coefficients {
 		at := fmt.Sprintf("coefficients[%d]", i)

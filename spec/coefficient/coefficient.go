@@ -83,6 +83,13 @@ func (s *Set) UnmarshalYAML(node *yaml.Node) error {
 		if err := item.Content[1].Decode(&e); err != nil {
 			return fmt.Errorf("coefficients[%d] (%s): %w", i, item.Content[0].Value, err)
 		}
+		// A present `sources:` must be a non-empty list, matching the registry's validator.
+		// Presence is read from the node because an absent key and `sources: []` both decode
+		// to an empty slice, and only the latter is an error.
+		if nodeHasKey(item.Content[1], "sources") && len(e.Sources) == 0 {
+			return fmt.Errorf("coefficients[%d] (%s): sources, when present, must be a non-empty list",
+				i, item.Content[0].Value)
+		}
 		e.Name = item.Content[0].Value
 		s.Coefficients = append(s.Coefficients, e)
 	}
@@ -169,6 +176,23 @@ type Source struct {
 	Kind vocab.SourceKind `yaml:"kind"`
 	Cite string           `yaml:"cite"`
 	Role vocab.SourceRole `yaml:"role"`
+}
+
+// UnmarshalYAML rejects unknown keys in a source object before decoding, so a stray field
+// (a typo, or a key the registry's own validator forbids) is an error rather than silently
+// dropped — the custom unmarshal that gives the entry its name would otherwise lose the
+// decoder's KnownFields for the nested source nodes too.
+func (s *Source) UnmarshalYAML(node *yaml.Node) error {
+	if err := validate.RejectUnknownKeys(node, Source{}, nil); err != nil {
+		return err
+	}
+	type sourceShape Source // no UnmarshalYAML, so decoding does not recurse
+	var raw sourceShape
+	if err := node.Decode(&raw); err != nil {
+		return err
+	}
+	*s = Source(raw)
+	return nil
 }
 
 // Scope bounds where an entry holds. An empty scope is not "everywhere" but "not

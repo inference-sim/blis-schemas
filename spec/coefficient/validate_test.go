@@ -247,6 +247,46 @@ coefficients:
 	}
 }
 
+// sources parity with the registry's _check_sources: an unknown field inside a source
+// object, and a present-but-empty sources list, are both rejected at decode — the custom
+// unmarshal would otherwise drop the stray field and ignore the empty list.
+func TestSourcesStrictAtDecode(t *testing.T) {
+	cases := map[string]string{
+		"unknown field in a source object": `kind: CoefficientSet
+name: s
+coefficients:
+  - x:
+      value: 1
+      units: dimensionless
+      method: literature
+      fitted: false
+      rationale: from a paper
+      scope: {tp: [8]}
+      sources:
+        - {kind: publication, cite: "arXiv:1", role: primary, bogus: 1}
+`,
+		"empty sources list present": `kind: CoefficientSet
+name: s
+coefficients:
+  - x:
+      value: 1
+      units: dimensionless
+      method: measured
+      fitted: false
+      scope: {tp: [8]}
+      sources: []
+`,
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			var s Set
+			if err := yaml.Unmarshal([]byte(body), &s); err == nil {
+				t.Fatalf("expected a decode error, got none")
+			}
+		})
+	}
+}
+
 func TestScopeEmpty(t *testing.T) {
 	if !(Scope{}).Empty() {
 		t.Error("a zero scope should report empty")
