@@ -217,6 +217,36 @@ coefficients:
 	}
 }
 
+// fitted is a required field whose Go zero value (false) is valid, so its absence is
+// caught at decode rather than slipping through as an intentional false — matching the
+// Python validator, which requires it present. Present (either value) decodes cleanly.
+func TestFittedPresenceRequiredAtDecode(t *testing.T) {
+	const tmpl = `kind: CoefficientSet
+name: s
+coefficients:
+  - x:
+      value: 1
+      units: dimensionless
+      method: measured
+%s      scope:
+        hardware: [h200]
+`
+	t.Run("absent fitted is rejected", func(t *testing.T) {
+		var s Set
+		if err := yaml.Unmarshal([]byte(fmt.Sprintf(tmpl, "")), &s); err == nil {
+			t.Fatal("an entry without a fitted key should fail to decode, got none")
+		}
+	})
+	for _, present := range []string{"      fitted: true\n", "      fitted: false\n"} {
+		t.Run("present fitted decodes: "+strings.TrimSpace(present), func(t *testing.T) {
+			var s Set
+			if err := yaml.Unmarshal([]byte(fmt.Sprintf(tmpl, present)), &s); err != nil {
+				t.Fatalf("an entry with a fitted key should decode, got: %v", err)
+			}
+		})
+	}
+}
+
 func TestScopeEmpty(t *testing.T) {
 	if !(Scope{}).Empty() {
 		t.Error("a zero scope should report empty")

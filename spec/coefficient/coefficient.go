@@ -71,6 +71,15 @@ func (s *Set) UnmarshalYAML(node *yaml.Node) error {
 		if err := validate.RejectUnknownKeys(item.Content[1], Entry{}, nil); err != nil {
 			return fmt.Errorf("coefficients[%d] (%s): %w", i, item.Content[0].Value, err)
 		}
+		// fitted's Go zero value (false) is itself valid, so a plain decode cannot tell an
+		// absent `fitted:` from an intentional `fitted: false`. The registry requires the
+		// field present — it records a real provenance distinction (a datasheet figure is
+		// not fitted; a curve fit is) — so enforce presence at the node here, keeping
+		// Entry.Fitted a plain bool for every consumer that reads it.
+		if !nodeHasKey(item.Content[1], "fitted") {
+			return fmt.Errorf("coefficients[%d] (%s): missing required field %q",
+				i, item.Content[0].Value, "fitted")
+		}
 		if err := item.Content[1].Decode(&e); err != nil {
 			return fmt.Errorf("coefficients[%d] (%s): %w", i, item.Content[0].Value, err)
 		}
@@ -78,6 +87,20 @@ func (s *Set) UnmarshalYAML(node *yaml.Node) error {
 		s.Coefficients = append(s.Coefficients, e)
 	}
 	return nil
+}
+
+// nodeHasKey reports whether a mapping node declares key. It is how a required entry field
+// whose decoded zero value is itself valid (fitted: false) is told apart from absent.
+func nodeHasKey(node *yaml.Node, key string) bool {
+	if node.Kind != yaml.MappingNode {
+		return false
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Value == key {
+			return true
+		}
+	}
+	return false
 }
 
 // Entry is one coefficient. Value, Units, Method, Fitted and Scope are required:

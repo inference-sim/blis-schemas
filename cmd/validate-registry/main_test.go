@@ -60,12 +60,14 @@ coefficients:
       value: 0.72
       units: dimensionless
       method: measured
+      fitted: false
       scope:
         hardware: [h200]
   - gemm_eps_max_bf16:
       value: 0.80
       units: dimensionless
       method: measured
+      fitted: false
       scope:
         hardware: [h200]
 `
@@ -156,6 +158,7 @@ coefficients:
       value: .nan
       units: dimensionless
       method: measured
+      fitted: false
       scope:
         hardware: [h200]
 `)
@@ -179,8 +182,8 @@ func TestRunUsageOnWrongArgs(t *testing.T) {
 	}
 }
 
-// A root with no coefficient sets is misuse, not success: exit 2 naming the path, so a
-// mistyped root cannot pass as "nothing to check".
+// A root that exists but holds no coefficient sets is misuse, not success: exit 2 naming
+// the path, so a mistyped-but-present root cannot pass as "nothing to check".
 func TestRunNoSetsIsMisuse(t *testing.T) {
 	dir := t.TempDir()
 	var out, errBuf bytes.Buffer
@@ -189,6 +192,54 @@ func TestRunNoSetsIsMisuse(t *testing.T) {
 	}
 	if !strings.Contains(errBuf.String(), "no coefficient sets") {
 		t.Errorf("stderr did not name the missing path:\n%s", errBuf.String())
+	}
+}
+
+// A nonexistent root is diagnosed as a bad root, not as an empty registry — so a typo in
+// the path is distinguishable from a real registry with nothing to validate.
+func TestRunNonexistentRootIsMisuse(t *testing.T) {
+	var out, errBuf bytes.Buffer
+	if code := run([]string{filepath.Join(t.TempDir(), "nope")}, &out, &errBuf); code != 2 {
+		t.Fatalf("exit = %d, want 2; stderr:\n%s", code, errBuf.String())
+	}
+	if !strings.Contains(errBuf.String(), "does not exist or is not a directory") {
+		t.Errorf("stderr did not diagnose the bad root:\n%s", errBuf.String())
+	}
+}
+
+// A .yaml file that is not a well-formed coefficient set is a load failure (exit 1), not a
+// crash: malformed content is reported and the run continues.
+func TestRunMalformedYamlFails(t *testing.T) {
+	dir := t.TempDir()
+	writeSet(t, dir, "garbage.yaml", "not a coefficient set, just a scalar\n")
+
+	var out, errBuf bytes.Buffer
+	if code := run([]string{dir}, &out, &errBuf); code != 1 {
+		t.Fatalf("exit = %d, want 1; stderr:\n%s", code, errBuf.String())
+	}
+	if !strings.Contains(out.String(), "FAILED") {
+		t.Errorf("stdout should mark the malformed set FAILED:\n%s", out.String())
+	}
+}
+
+// A dangling symlink matching the extension is discovered (its target cannot be resolved,
+// so it falls through under its own name) and surfaces as a load failure, exit 1 — not a
+// silent skip.
+func TestRunDanglingSymlinkFails(t *testing.T) {
+	dir := t.TempDir()
+	coeff := filepath.Join(dir, "coefficients")
+	if err := os.MkdirAll(coeff, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(dir, "missing-target.yaml"), filepath.Join(coeff, "dangling.yaml")); err != nil {
+		t.Skipf("symlinks unavailable on this filesystem: %v", err)
+	}
+	var out, errBuf bytes.Buffer
+	if code := run([]string{dir}, &out, &errBuf); code != 1 {
+		t.Fatalf("exit = %d, want 1; stderr:\n%s", code, errBuf.String())
+	}
+	if !strings.Contains(out.String(), "dangling.yaml") || !strings.Contains(out.String(), "FAILED") {
+		t.Errorf("the dangling set should be listed FAILED, not skipped:\n%s", out.String())
 	}
 }
 

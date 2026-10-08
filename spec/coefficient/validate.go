@@ -116,6 +116,10 @@ func (e Entry) validate(p *validate.Problems, at string) {
 			p.Field(at+".copied_from", "method copied requires copied_from")
 		}
 	}
+	// Intentional minor divergence from the Python validator: it also rejects a present-
+	// but-blank optional string (supersedes, or copied_from on a non-copied method). Go
+	// stores these as plain strings, so "" cannot be told from absent without presence
+	// tracking, and no committed set carries a blank one — so this is left unchecked.
 	for j, src := range e.Sources {
 		sat := fmt.Sprintf("%s.sources[%d]", at, j)
 		if !src.Kind.Valid() {

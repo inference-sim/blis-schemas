@@ -58,6 +58,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	root := args[0]
+	// Distinguish a mistyped root from a real registry with nothing to validate, as
+	// validate-catalog does: without this, a nonexistent root and an empty coefficients/
+	// both read as "no sets found", so a typo looks like an empty directory.
+	if info, err := os.Stat(root); err != nil || !info.IsDir() {
+		fmt.Fprintf(stderr, "%s: registry root does not exist or is not a directory\n", root)
+		return 2
+	}
 	coeffDir := filepath.Join(root, "coefficients")
 	paths, err := registry.SetPaths(root)
 	if err != nil {

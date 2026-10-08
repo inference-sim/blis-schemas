@@ -926,6 +926,7 @@ coefficients:
       value: 1
       units: dimensionless
       method: measured
+      fitted: false
       scope:
         hardware: [h200]
 `)
