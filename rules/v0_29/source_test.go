@@ -105,6 +105,13 @@ func TestAll2AllBackendsMatchSource(t *testing.T) {
 		literalMembers(t, src, "All2AllBackend"))
 }
 
+func TestDCPCommBackendsMatchSource(t *testing.T) {
+	root := vllmSource(t)
+	src := readSource(t, root, "vllm", "config", "parallel.py")
+	assertSameSet(t, "DCPCommBackends", Pack().DCPCommBackends,
+		literalMembers(t, src, "DCPCommBackend"))
+}
+
 // The cache-dtype set is the one an earlier draft got most wrong, so it is checked
 // member by member rather than only by size.
 func TestCacheDTypesMatchSource(t *testing.T) {

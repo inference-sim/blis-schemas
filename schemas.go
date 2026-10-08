@@ -84,8 +84,9 @@ func Validate(b Bundle) Report {
 	}
 	// A deployment and the cluster it is placed on are two documents, so the checks
 	// that couple them — that the pools fill the cluster, that each local data-parallel
-	// width divides a node, and that offload tiers draw from the declared storage
-	// inventory — can only run when both are present.
+	// width divides a node, that no engine needs more GPUs than its pool owns, and that
+	// offload tiers draw from the declared storage inventory — can only run when both
+	// are present.
 	if b.Scenario != nil && b.Deployment != nil {
 		field.Merge("deployment", b.Deployment.ValidateAgainstCluster(
 			deployment.ClusterConstraints{

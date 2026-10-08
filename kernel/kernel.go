@@ -90,6 +90,41 @@ type Kernel interface {
 	// Resolved reports the configuration after resolution, including requested
 	// settings the layout overrode.
 	Resolved() Resolution
+
+	// Deployment reports the pool this kernel prices: its role, its node count, its
+	// parallelism and its engine settings, as the document declared them.
+	//
+	// It is on the interface because a simulator needs it and there is no other
+	// non-duplicating source. The scheduler-facing engine settings — block_size,
+	// max_num_seqs, max_num_batched_tokens — decide ADMISSION, which the package
+	// comment assigns to the simulator; but they are properties of the pool the
+	// kernel resolved, and the kernel is the only value that knows which pool that
+	// was. A caller that instead retained the Deployment and a pool index would hold
+	// a second answer to "which pool is this", and the two can disagree: a decode
+	// pool priced at a prefill pool's parallelism is a wrong simulation that still
+	// runs. Returning the pool removes the second answer rather than asking callers
+	// to keep it consistent.
+	//
+	// A pool rather than an Engine because the role comes with it at no cost, and a
+	// caller asking for admission settings is usually the same caller that needs to
+	// know whether this engine prefills.
+	//
+	// What it returns is the REQUEST, not the resolution. The pool is the document as
+	// loaded: where resolution settled a width or a backend differently, Resolved is
+	// the answer and this is not. The two are separate values precisely so a reader is
+	// never shown one while believing it is the other — so a caller wanting the
+	// parallelism or the all-reduce backend reads Resolved, and reads the pool for the
+	// settings resolution does not touch, which is what the admission settings are.
+	//
+	// It returns a copy, which is what a value return gives, but not a deep one:
+	// Engine's tri-state requests are *bool and its DBO, EPLB and Speculative blocks
+	// are pointers, so those pointees are shared with whatever the implementation
+	// holds. A caller must treat the result as read-only. Deep-copying instead would
+	// cost an allocation on every call for a guarantee no caller in this design
+	// needs, and the purity the package comment requires is a promise about what the
+	// kernel does, not a defence against a caller that writes through a borrowed
+	// pointer.
+	Deployment() deployment.Pool
 }
 
 // MemoryBreakdown decomposes fixed occupancy rather than returning a scalar,
@@ -247,6 +282,29 @@ type CoefficientOrigin struct {
 // request. It exists so a prediction can be read without re-deriving the resolver's
 // logic, and so a reader is never misled by a field the layout overrode.
 type Resolution struct {
+	// TensorParallelWidth, DataParallelWidth and ExpertParallelWidth are the
+	// resolved layout. All three are decided by one constructor from one
+	// deployment.Parallelism, which is why they are reported together: a consumer
+	// that could read one and not the others would have to re-derive the rest or
+	// read the Deployment and get the REQUEST rather than the resolution.
+	//
+	// Each states a width, so each has a floor of one — a layout that shards along
+	// no axis still has one rank along it. Zero is not a narrower layout but an
+	// unset field, and the distinction matters because a consumer multiplies by
+	// these: a scheduler scales its sequence cap, token budget and KV budget by
+	// DataParallelWidth, so a zero silently makes all three zero rather than
+	// failing. An implementation fills all three; a reader that may see a
+	// zero-valued Resolution should use TensorParallel, DataParallel and
+	// ExpertParallel, which apply the floor.
+	TensorParallelWidth int
+	DataParallelWidth   int
+	// ExpertParallelWidth is derived from the other two and the prefill-context
+	// width rather than requested: tp x pcp x dp, or 1 when expert parallelism is
+	// off. It is reported and not recomputed here because two of the facts it
+	// needs — whether expert parallelism is enabled at all, and the prefill-context
+	// width — are not part of this value, so a consumer recomputing it from the two
+	// fields above may get a different answer. Expert parallelism off is the sharpest
+	// case: the width is 1 however wide tp and dp are.
 	ExpertParallelWidth int
 	// AllReduceBackend is what will run, which may differ from what was requested.
 	AllReduceBackend string
@@ -259,6 +317,29 @@ type Resolution struct {
 	SequenceParallelMoE bool
 	// Overrides records each request the layout could not honour, and why.
 	Overrides []Override
+}
+
+// TensorParallel returns the resolved tensor-parallel width with its floor applied.
+// It exists so a consumer reading a Resolution it did not construct cannot divide or
+// multiply by a zero that means "unset" — see the field comments. An implementation
+// should still fill the fields; this is the reader's guard, not a substitute.
+func (r Resolution) TensorParallel() int { return atLeastOne(r.TensorParallelWidth) }
+
+// DataParallel returns the resolved data-parallel width with its floor applied. An
+// omitted dp means one instance, not none, and this is the field a scheduler
+// multiplies its sequence cap, token budget and KV budget by.
+func (r Resolution) DataParallel() int { return atLeastOne(r.DataParallelWidth) }
+
+// ExpertParallel returns the resolved expert-parallel width with its floor applied.
+// One is the correct floor here too: expert parallelism off means every rank holds
+// every expert, which is a width of one group, not of none.
+func (r Resolution) ExpertParallel() int { return atLeastOne(r.ExpertParallelWidth) }
+
+func atLeastOne(w int) int {
+	if w < 1 {
+		return 1
+	}
+	return w
 }
 
 // Override is one request the resolver declined, with the reason.

@@ -13,6 +13,7 @@ package v0_29
 
 import (
 	"sort"
+	"strings"
 
 	"github.com/inference-sim/blis-schemas/internal/validate"
 	"github.com/inference-sim/blis-schemas/rules"
@@ -73,6 +74,10 @@ func Pack() *rules.Pack {
 			"turboquant_4bit_nc", "turboquant_k3v4_nc", "turboquant_3bit_nc",
 			"int4_per_token_head", "int8_per_token_head", "fp8_per_token_head",
 			"nvfp4", "nvfp4_4over6"),
+
+		// Transcribed from the DCPCommBackend literal: an all-gather/reduce-scatter
+		// set, or one all-to-all in place of the last two collectives.
+		DCPCommBackends: set("ag_rs", "a2a"),
 
 		MambaCacheModes:   set("none", "align", "all"),
 		SchedulerPolicies: set("fcfs", "priority"),
@@ -213,6 +218,63 @@ func ruleList(p *rules.Pack) []rules.Rule {
 							in.Model.Speculator.Method, p.Version)
 					}
 				}
+			},
+		},
+		{
+			Name:    "dcp-comm-backend-known",
+			Because: "the engine types this setting as a closed literal and refuses any other name at startup",
+			Check: func(in rules.Input, out *validate.Problems) {
+				forEachEngine(in, func(at string, e deployment.Engine) {
+					if e.DCPCommBackend != "" && !p.DCPCommBackends[e.DCPCommBackend] {
+						out.RuleErrorf("dcp-comm-backend-known",
+							"%s.engine.dcp_comm_backend %q is not one engine %s accepts (%s)",
+							at, e.DCPCommBackend, Version, strings.Join(sortedKeys(p.DCPCommBackends), ", "))
+					}
+				})
+			},
+		},
+		{
+			Name:    "cp-kv-cache-interleave-fits-block",
+			Because: "with decode-context parallelism on and no KV connector configured, this release asserts at startup that block_size is at least, and divisible by, cp_kv_cache_interleave_size (vllm/config/vllm.py validate_block_size), so a layout breaking it does not start",
+			Check: func(in rules.Input, out *validate.Problems) {
+				// Only where the assert is certain to run on the values stated:
+				//   - a KV connector of any kind makes this release pin the size to the
+				//     block size instead, so any PD transfer or offload skips the check;
+				//   - a hybrid model may have its block size re-aligned by the platform,
+				//     and an unknown model may be hybrid, so the stated size is final only
+				//     for a known model with no recurrent layer;
+				//   - an unstated block size is chosen by the platform.
+				if in.Deployment == nil || in.Deployment.PDTransfer != nil ||
+					in.Deployment.Offload != nil || in.Model == nil || modelHasRecurrent(in) {
+					return
+				}
+				forEachPool(in, func(at string, pool deployment.Pool) {
+					e := pool.Engine
+					size, block := e.CPKVCacheInterleaveSize, e.BlockSize
+					if pool.Parallel.DCP <= 1 || size < 1 || block < 1 {
+						return
+					}
+					// One test covers both halves of the engine's assert: a size above
+					// the block leaves the block itself as the remainder.
+					if block%size != 0 {
+						out.RuleErrorf("cp-kv-cache-interleave-fits-block",
+							"%s.engine: block_size %d must be at least, and divisible by, cp_kv_cache_interleave_size %d when dcp is %d; engine %s refuses it at startup",
+							at, block, size, pool.Parallel.DCP, Version)
+					}
+				})
+			},
+		},
+		{
+			Name:    "pcp-excludes-data-parallelism",
+			Because: "this release refuses prefill-context parallelism combined with data parallelism at startup (\"PCP does not support data parallelism yet\", vllm/config/parallel.py), so such a layout does not run; later releases support it from e6dc16cebd, which is why the refusal is here and not a field check",
+			Check: func(in rules.Input, out *validate.Problems) {
+				forEachPool(in, func(at string, pool deployment.Pool) {
+					if pool.Parallel.PCP > 1 && pool.Parallel.DP > 1 {
+						out.RuleErrorf("pcp-excludes-data-parallelism",
+							"%s: pcp %d with dp %d; engine %s refuses prefill-context parallelism combined with data parallelism",
+							at, pool.Parallel.PCP, pool.Parallel.DP, Version)
+					}
+				})
 			},
 		},
 		{

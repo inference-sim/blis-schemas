@@ -74,14 +74,17 @@ func TestPackRuleSet(t *testing.T) {
 		"allreduce-backend-known",
 		"cascade-attention-is-opt-in",
 		"connector-known",
+		"cp-kv-cache-interleave-fits-block",
 		"custom-allreduce-reachable",
 		"dbo-thresholds-stated-when-enabled",
+		"dcp-comm-backend-known",
 		"enum-values-known",
 		"eviction-policy-known",
 		"expert-divisibility-under-eplb",
 		"expert-imbalance-without-eplb",
 		"mamba-cache-mode-matches-model",
 		"offload-spec-known",
+		"pcp-excludes-data-parallelism",
 		"quantization-known",
 		"sequence-parallel-moe-implied",
 		"speculative-method-known",
@@ -356,5 +359,109 @@ func TestEvictionPolicyKnown(t *testing.T) {
 	s.Offload.EvictionPolicy = "arc"
 	if p := run(t, s, graniteGraph()); fired(p, "eviction-policy-known") {
 		t.Errorf("rule fired on an in-tree policy:\n%s", p.Error())
+	}
+}
+
+// TestPCPExcludesDataParallelism: this release refuses the combination at startup, so a
+// v0.29 scenario that asks for it is reported — by the version's own rule, because the
+// schema admits it for releases that run it. Each axis alone is fine.
+func TestPCPExcludesDataParallelism(t *testing.T) {
+	cases := []struct {
+		name string
+		pl   deployment.Parallelism
+		want bool
+	}{
+		{"pcp with dp", deployment.Parallelism{TP: 1, PP: 1, DP: 4, PCP: 8}, true},
+		{"pcp alone", deployment.Parallelism{TP: 1, PP: 1, DP: 1, PCP: 8}, false},
+		{"dp alone", deployment.Parallelism{TP: 1, PP: 1, DP: 8}, false},
+		{"pcp unset with dp", deployment.Parallelism{TP: 1, PP: 1, DP: 8, PCP: 0}, false},
+		{"pcp 1 with dp", deployment.Parallelism{TP: 1, PP: 1, DP: 8, PCP: 1}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			p := run(t, dep(colocated(c.pl, deployment.Engine{})), nil)
+			if got := fired(p, "pcp-excludes-data-parallelism"); got != c.want {
+				t.Fatalf("%+v: rule fired=%v, want %v\n%s", c.pl, got, c.want, p.Error())
+			}
+			if c.want && !strings.Contains(p.Error(), "pcp 8 with dp 4") {
+				t.Errorf("message should name both widths: %s", p.Error())
+			}
+		})
+	}
+}
+
+// TestDCPCommBackendKnown: the engine types the setting as a closed literal, so a name
+// outside it does not start. Unset is the engine default and is fine.
+func TestDCPCommBackendKnown(t *testing.T) {
+	pl := deployment.Parallelism{TP: 8, PP: 1, DP: 1, DCP: 8}
+	for _, c := range []struct {
+		backend string
+		want    bool
+	}{{"", false}, {"ag_rs", false}, {"a2a", false}, {"allgather", true}, {"A2A", true}} {
+		p := run(t, dep(colocated(pl, deployment.Engine{DCPCommBackend: c.backend})), nil)
+		if got := fired(p, "dcp-comm-backend-known"); got != c.want {
+			t.Errorf("dcp_comm_backend %q: rule fired=%v, want %v\n%s", c.backend, got, c.want, p.Error())
+		}
+		if c.want && !strings.Contains(p.Error(), "a2a, ag_rs") {
+			t.Errorf("message should name the accepted set: %s", p.Error())
+		}
+	}
+}
+
+// hybridGraph is graniteGraph with one recurrent layer, which lets the platform re-align
+// a stated block size.
+func hybridGraph() *model.Graph {
+	g := graniteGraph()
+	g.LayerKinds[0].Nodes = append(g.LayerKinds[0].Nodes,
+		model.Node{Op: model.OpRecurrentUpdate, RecurrentKind: model.RecurrentMamba2})
+	return g
+}
+
+// TestCPKVCacheInterleaveFitsBlock: with DCP on and no KV connector, this release asserts
+// at startup that block_size is at least, and divisible by, the interleave size. The rule
+// fires only where that assert is certain to run on the values stated.
+func TestCPKVCacheInterleaveFitsBlock(t *testing.T) {
+	pool := func(dcp, size, block int) deployment.Pool {
+		return colocated(deployment.Parallelism{TP: 8, PP: 1, DP: 1, DCP: dcp},
+			deployment.Engine{CPKVCacheInterleaveSize: size, BlockSize: block})
+	}
+	cases := []struct {
+		name string
+		d    *deployment.Deployment
+		g    *model.Graph
+		want bool
+	}{
+		{"interleave above block", dep(pool(8, 128, 64)), graniteGraph(), true},
+		{"interleave does not divide block", dep(pool(8, 24, 64)), graniteGraph(), true},
+		{"interleave divides block", dep(pool(8, 16, 64)), graniteGraph(), false},
+		{"interleave equals block", dep(pool(8, 64, 64)), graniteGraph(), false},
+		// Where the assert does not run, or does not run on these values.
+		{"dcp off", dep(pool(1, 128, 64)), graniteGraph(), false},
+		{"interleave unstated", dep(pool(8, 0, 64)), graniteGraph(), false},
+		{"block size unstated", dep(pool(8, 128, 0)), graniteGraph(), false},
+		{"model unknown", dep(pool(8, 128, 64)), nil, false},
+		{"hybrid model", dep(pool(8, 128, 64)), hybridGraph(), false},
+		{"pd transfer configured", func() *deployment.Deployment {
+			d := dep(pool(8, 128, 64))
+			d.PDTransfer = &deployment.PDTransfer{Connector: "nixl"}
+			return d
+		}(), graniteGraph(), false},
+		{"offload connector configured", func() *deployment.Deployment {
+			d := dep(pool(8, 128, 64))
+			d.Offload = &deployment.Offload{Connector: "OffloadingConnector",
+				Tiers: []deployment.Tier{{Device: "cpu_dram", Bytes: 1}}}
+			return d
+		}(), graniteGraph(), false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			p := run(t, c.d, c.g)
+			if got := fired(p, "cp-kv-cache-interleave-fits-block"); got != c.want {
+				t.Fatalf("rule fired=%v, want %v\n%s", got, c.want, p.Error())
+			}
+			if c.want && !strings.Contains(p.Error(), "block_size 64") {
+				t.Errorf("message should name the block size: %s", p.Error())
+			}
+		})
 	}
 }

@@ -14,11 +14,10 @@
 // Three rules shape the schema, each preventing a class of error rather than
 // catching it later:
 //
-// Derived quantities have no field. Expert-parallel width is tensor-parallel times
-// the larger of prefill-context-parallel and data-parallel width; an engine builds
-// the group that way and rejects the combination that would make the product
-// ambiguous. A deployment that could state EP independently could describe a layout
-// no engine would run, so the field does not exist.
+// Derived quantities have no field. Expert-parallel width is the product of the
+// tensor-, prefill-context- and data-parallel widths, because that is the group the
+// engine builds. A deployment that could state EP independently could describe a
+// layout no engine would run, so the field does not exist.
 //
 // Requested settings are distinct from resolved ones. A collective backend and an
 // async-scheduling preference are requests: crossing a node boundary without
@@ -27,9 +26,11 @@
 // resolver reports what it resolved, so a reader is never misled by a request.
 //
 // Engine settings are per pool. A prefill/decode-disaggregated deployment runs two
-// engines with different backends and different graph modes; one shared engine
-// block would describe neither.
+// kinds of engine with different backends and different graph modes; one shared
+// engine block would describe neither.
 package deployment
+
+import "math"
 
 // Deployment is the tunable configuration applied to a Scenario: the pools that lay
 // the model out, the offload hierarchy, and prefill-to-decode transfer.
@@ -57,7 +58,11 @@ var roles = map[Role]bool{RoleColocated: true, RolePrefill: true, RoleDecode: tr
 // Valid reports whether r is a recognized role.
 func (r Role) Valid() bool { return roles[r] }
 
-// Pool is one engine: a role, a node count, a parallelism layout, and settings.
+// Pool is the nodes serving one role: a role, a node count, a parallelism layout, and
+// settings. It may hold more than one engine, each running that layout with those
+// settings — llm-d runs a LeaderWorkerSet of `replicas` groups, each group one engine
+// over `size` nodes, so a 36-node prefill pool of dp 8 is 36 one-node engines. Nodes is
+// therefore the pool's whole extent, which one engine's layout may occupy only part of.
 type Pool struct {
 	Role     Role        `yaml:"role"`
 	Nodes    int         `yaml:"nodes"`
@@ -86,22 +91,36 @@ type Parallelism struct {
 // ExpertParallelWidth returns the derived EP degree, or 1 when expert parallelism
 // is off. It is a function rather than a field precisely so no file can disagree
 // with it.
+//
+// The width is tp x pcp x dp: the engine lays ranks out DP x PP x PCP x TP and builds
+// the expert group over the DP, PCP and TP axes together (initialize_model_parallel,
+// the same at v0.29.0 and later). An unset or non-positive width counts as one, the
+// same floor every other reader of these fields applies.
+//
+// An earlier form was tp x max(dp, pcp). That agrees with the product exactly when one
+// of dp and pcp is at most 1, which was every deployment this schema admitted while
+// prefill-context parallelism and data parallelism could not be combined — so the
+// product changes no width that could previously validate. It differs once both exceed
+// 1, which the engine supports from e6dc16cebd and llm-d deploys (DP 4 x PCP 8 is an
+// expert group of 32, not 8).
+//
+// The product saturates at the largest int instead of wrapping, so an absurd layout
+// reads as an absurdly wide group rather than a small or negative one.
 func (p Parallelism) ExpertParallelWidth() int {
 	if !p.EnableExpertParallel {
 		return 1
 	}
-	wide := p.DP
-	if p.PCP > wide {
-		wide = p.PCP
+	width := 1
+	for _, w := range []int{p.TP, p.PCP, p.DP} {
+		if w < 1 {
+			w = 1
+		}
+		if width > math.MaxInt/w {
+			return math.MaxInt
+		}
+		width *= w
 	}
-	if wide < 1 {
-		wide = 1
-	}
-	tp := p.TP
-	if tp < 1 {
-		tp = 1
-	}
-	return tp * wide
+	return width
 }
 
 // Engine is the per-pool settings that change step time or occupancy. Values are
@@ -204,6 +223,36 @@ type Engine struct {
 	DBO         *DBO         `yaml:"dbo,omitempty"`
 	EPLB        *EPLB        `yaml:"eplb,omitempty"`
 	Speculative *Speculative `yaml:"speculative,omitempty"`
+
+	// The decode-context-parallel knobs. Each changes what a DCP decode step costs, and
+	// each is a REQUEST: the engine fills an unstated one with its default, and a model
+	// may override the first two from its own configuration hook (set_dcp_defaults), so
+	// the value that runs is the resolver's to report. They have no effect when dcp is 1.
+	//
+	// DCPCommBackend selects the collectives a DCP decode layer runs: "ag_rs" is a query
+	// all-gather, an LSE all-gather and an output reduce-scatter; "a2a" replaces the last
+	// two with one all-to-all. Empty takes the engine default, "ag_rs". Which names a
+	// release accepts is that release's rules pack's to say.
+	DCPCommBackend string `yaml:"dcp_comm_backend,omitempty"`
+	// DCPQReplicate requests replicating the MLA query projection at load time, so each
+	// rank materialises the full group-local head set and skips the query all-gather, at
+	// the cost of computing the projection redundantly.
+	//
+	// Tri-state: nil lets the engine (or the model's hook) decide, which by default is
+	// false.
+	DCPQReplicate *bool `yaml:"dcp_q_replicate,omitempty"`
+	// CPKVCacheInterleaveSize is how many consecutive tokens one DCP rank holds before
+	// the next rank takes over, which sets each rank's share of a sequence: 1 stripes
+	// token by token, block_size block by block.
+	//
+	// Zero means unstated, which is not the same request as 1 even though 1 is the
+	// default. With a KV connector configured the engine pins the size to the block
+	// size, and when it does depends on the release: v0.29.0 pins it under any KV
+	// connector, stated or not; v0.31.0 only under NIXL, and only when unstated. So the
+	// size that runs is the resolver's to report, and stating 1 is a different request
+	// from stating nothing. The deprecated dcp_kv_cache_interleave_size it replaced is
+	// deliberately not carried.
+	CPKVCacheInterleaveSize int `yaml:"cp_kv_cache_interleave_size,omitempty"`
 }
 
 // DBO is dual-batch overlap: splitting a batch so one microbatch's communication

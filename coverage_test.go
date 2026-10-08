@@ -250,6 +250,30 @@ func TestCorpusDeploymentsAreExpressible(t *testing.T) {
 			}, nil),
 		},
 		{
+			// From the curvebender llm-d manifests (glm-5.3 rits-roce-h100-canary): a
+			// LeaderWorkerSet of 4 pods, one vLLM per pod, prefill at DP 4 x PCP 8 with
+			// DCP 8 at TP 1 — an expert group of 32 — and decode at DP 16 x TP 2. The
+			// canary ran an engine that supports PCP with DP, which v0.29.0 does not, so
+			// this case asserts field validation only: the v0.29 rule refuses it, and
+			// should, for a scenario pinned to that release.
+			what: "llm-d prefill-context parallelism with data parallelism",
+			b: corpus("glm-5.3-pcp-canary", 8, 8, "ib-400g", []deployment.Pool{
+				pool(deployment.RolePrefill, 4, deployment.Parallelism{TP: 1, PP: 1,
+					DP: 4, DPLocal: 1, PCP: 8, DCP: 8, EnableExpertParallel: true},
+					deployment.Engine{All2AllBackend: "deepep_high_throughput",
+						CacheDType: "fp8", BlockSize: 64, GPUMemoryUtilization: 0.9,
+						// The manifest passes --dcp-comm-backend ag_rs and leaves the
+						// other two knobs to the engine.
+						DCPCommBackend: "ag_rs"}),
+				pool(deployment.RoleDecode, 4, deployment.Parallelism{TP: 2, PP: 1,
+					DP: 16, DPLocal: 4, EnableExpertParallel: true},
+					deployment.Engine{All2AllBackend: "deepep_low_latency",
+						CacheDType: "fp8", BlockSize: 64, GPUMemoryUtilization: 0.9}),
+			}, func(s *scenario.Scenario, d *deployment.Deployment) {
+				d.PDTransfer = &deployment.PDTransfer{Connector: "nixl"}
+			}),
+		},
+		{
 			what: "GB200-class three-tier topology",
 			b: corpus("dsr1-gb200", 18, 4, "ib-400g", []deployment.Pool{
 				pool(deployment.RoleColocated, 18, deployment.Parallelism{TP: 1, PP: 1,
