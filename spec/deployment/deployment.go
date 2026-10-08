@@ -14,11 +14,10 @@
 // Three rules shape the schema, each preventing a class of error rather than
 // catching it later:
 //
-// Derived quantities have no field. Expert-parallel width is tensor-parallel times
-// the larger of prefill-context-parallel and data-parallel width; an engine builds
-// the group that way and rejects the combination that would make the product
-// ambiguous. A deployment that could state EP independently could describe a layout
-// no engine would run, so the field does not exist.
+// Derived quantities have no field. Expert-parallel width is the product of the
+// tensor-, prefill-context- and data-parallel widths, because that is the group the
+// engine builds. A deployment that could state EP independently could describe a
+// layout no engine would run, so the field does not exist.
 //
 // Requested settings are distinct from resolved ones. A collective backend and an
 // async-scheduling preference are requests: crossing a node boundary without
