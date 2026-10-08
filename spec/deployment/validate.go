@@ -2,6 +2,7 @@ package deployment
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/inference-sim/blis-schemas/internal/validate"
 )
@@ -143,10 +144,21 @@ func validateParallelism(p *validate.Problems, at string, pl Parallelism) {
 	// Prefill- and decode-context parallelism shard one sequence. Combining
 	// prefill-context parallelism with data parallelism makes the expert group's
 	// extent ambiguous, and engines reject it.
+	//
+	// Upstream has since narrowed this. It was a version-agnostic config check; it is
+	// now raised per platform ("PCP does not support data parallelism on CUDA yet"),
+	// which makes it an accelerator-specific limitation rather than a structural one,
+	// and so arguably a rules-pack concern rather than a field check. It is left here
+	// because moving a pre-existing check would change which deployments validate,
+	// which is not this change's business — but two things depend on it, and a reader
+	// re-scoping it later must handle both: the problem reported just below, and
+	// ExpertParallelWidth's use of max(dp, pcp), whose agreement with the engine's
+	// tp x pcp x dp product holds only where one of the two is guaranteed to be 1.
 	if pl.PCP > 1 && pl.DP > 1 {
 		p.Field(at+".parallel.pcp",
 			"prefill-context parallelism and data parallelism cannot both exceed 1")
 	}
+	validateDecodeContextParallel(p, at, pl)
 	if pl.DPLocal > pl.DP && pl.DP > 0 {
 		p.Field(at+".parallel.dp_local", "%d exceeds dp %d", pl.DPLocal, pl.DP)
 	}
@@ -156,6 +168,79 @@ func validateParallelism(p *validate.Problems, at string, pl Parallelism) {
 	if pl.EnableExpertParallel && pl.ExpertParallelWidth() < 2 {
 		p.Warnf("%s.parallel: expert parallelism is enabled but the derived width is 1, so no expert sharding occurs", at)
 	}
+}
+
+// validateDecodeContextParallel constrains decode-context-parallel width against the
+// group it is carved out of. DCP has no ranks of its own: it reuses the tensor-parallel
+// ranks when prefill-context parallelism is off, and the TP x PCP block when it is on.
+// A width that does not partition that group describes no layout, so it is refused when
+// the document loads rather than priced downstream.
+//
+// Two rules, mutually exclusive on whether PCP is enabled:
+//
+//   - PCP off: the DCP group must partition the TP group, so tp % dcp == 0.
+//   - PCP on: DCP may be off, span the PCP axis, or span the whole TP x PCP block.
+//     Nothing between, because any other width would straddle the two axes.
+//
+// Both are structural — they follow from how the group is built, need no coefficients
+// and no model graph — which is why they are field checks here rather than a
+// version-scoped rule. They mirror what the engine itself refuses at startup.
+func validateDecodeContextParallel(p *validate.Problems, at string, pl Parallelism) {
+	// Both widths are omitempty, so an absent field arrives as 0 meaning "not enabled".
+	// The rules are stated over enabled widths, so normalise before applying them —
+	// otherwise tp % dcp divides by zero for every deployment that simply omits dcp.
+	pcp, dcp := pl.PCP, pl.DCP
+	if pcp < 1 {
+		pcp = 1
+	}
+	if dcp < 1 {
+		dcp = 1
+	}
+	// Problems accumulates rather than aborting, so a tp below 1 has already been
+	// recorded above and execution continues into here with it unchanged. These rules
+	// are stated over a real rank group, and there is none below a tp of 1, so a
+	// second problem about how dcp divides it would only obscure the one real fault:
+	// leave it to the check that already named it.
+	//
+	// What keeps the modulus safe is the dcp floor above, not this guard — tp is the
+	// dividend here, so a zero tp divides cleanly by anything. Removing the floor
+	// panics; removing this guard does not, it just reports a nonsense group.
+	if pl.TP < 1 {
+		return
+	}
+	if pcp == 1 {
+		if pl.TP%dcp != 0 {
+			p.Field(at+".parallel.dcp",
+				"decode-context parallelism reuses the tensor-parallel ranks when prefill-context parallelism is off, so tp %d must be divisible by dcp %d",
+				pl.TP, dcp)
+		}
+		return
+	}
+	// Name the admissible set rather than only the violation: the reader's next
+	// question is which widths would work.
+	if dcp != 1 && dcp != pcp && dcp != pl.TP*pcp {
+		p.Field(at+".parallel.dcp",
+			"with prefill-context parallelism enabled, decode-context parallelism must be disabled, span the pcp axis, or span the full tp x pcp axis; got tp %d, pcp %d, dcp %d, so the admissible widths are %v",
+			pl.TP, pcp, dcp, admissibleDCP(pl.TP, pcp))
+	}
+}
+
+// admissibleDCP returns the sorted, deduplicated widths the PCP-enabled rule allows.
+// Deduplication matters because at tp 1 the full TP x PCP block IS the pcp axis, so a
+// literal three-element list would repeat a width and read as though it were three
+// distinct choices. It is only ever called with pcp above 1, which is the branch that
+// has an admissible set to name.
+func admissibleDCP(tp, pcp int) []int {
+	seen := map[int]bool{}
+	var out []int
+	for _, w := range []int{1, pcp, tp * pcp} {
+		if !seen[w] {
+			seen[w] = true
+			out = append(out, w)
+		}
+	}
+	sort.Ints(out)
+	return out
 }
 
 func validateEngine(p *validate.Problems, at string, e Engine) {

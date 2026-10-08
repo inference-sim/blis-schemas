@@ -2,6 +2,7 @@ package deployment
 
 import (
 	"math"
+	"strings"
 	"testing"
 )
 
@@ -224,5 +225,117 @@ func TestValidateAgainstClusterStorage(t *testing.T) {
 	// that would fail above passes, preserving pre-inventory behavior.
 	if p := withOffload("optane").ValidateAgainstCluster(ClusterConstraints{Nodes: 1, GPUsPerNode: 8}); !p.OK() {
 		t.Errorf("an undeclared inventory should not constrain offload:\n%s", p.Error())
+	}
+}
+
+// TestDecodeContextParallelWidth covers the two rules that constrain decode-context
+// parallelism against the rank group it is carved out of. Every case below is a
+// Parallelism block alone, because that is all the rules read: no cluster, no model,
+// no coefficients. The accepted cases are as much the point as the rejected ones —
+// dcp is omitempty, so an absent field must stay valid rather than divide by zero.
+func TestDecodeContextParallelWidth(t *testing.T) {
+	cases := []struct {
+		name   string
+		p      Parallelism
+		reject bool
+	}{
+		// PCP off: the dcp group must partition the tp group it reuses.
+		{"dcp absent", Parallelism{TP: 8, PP: 1, DP: 1}, false},
+		{"dcp disabled", Parallelism{TP: 8, PP: 1, DP: 1, DCP: 1}, false},
+		{"dcp divides tp", Parallelism{TP: 8, PP: 1, DP: 1, DCP: 2}, false},
+		{"dcp half of tp", Parallelism{TP: 8, PP: 1, DP: 1, DCP: 4}, false},
+		{"dcp equals tp", Parallelism{TP: 8, PP: 1, DP: 1, DCP: 8}, false},
+		{"dcp does not divide tp", Parallelism{TP: 8, PP: 1, DP: 1, DCP: 3}, true},
+		{"dcp wider than tp", Parallelism{TP: 8, PP: 1, DP: 1, DCP: 16}, true},
+
+		// PCP on: dcp may be off, span the pcp axis, or span the whole tp x pcp block.
+		{"pcp on, dcp disabled", Parallelism{TP: 4, PP: 1, DP: 1, PCP: 2, DCP: 1}, false},
+		{"pcp on, dcp spans pcp", Parallelism{TP: 4, PP: 1, DP: 1, PCP: 2, DCP: 2}, false},
+		{"pcp on, dcp spans tp x pcp", Parallelism{TP: 4, PP: 1, DP: 1, PCP: 2, DCP: 8}, false},
+		{"pcp on, dcp absent", Parallelism{TP: 4, PP: 1, DP: 1, PCP: 2}, false},
+		{"pcp on, dcp between the admissible widths", Parallelism{TP: 4, PP: 1, DP: 1, PCP: 2, DCP: 3}, true},
+		// 4 divides tp, which the pcp-off rule would accept; with pcp on it is not in
+		// {1, 2, 8}. This is the case that fails if the branch is written as one rule.
+		{"pcp on, dcp divides tp but is not admissible", Parallelism{TP: 4, PP: 1, DP: 1, PCP: 2, DCP: 4}, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			d := singleNodeDeployment()
+			d.Pools[0].Parallel = c.p
+			p := d.Validate()
+			if c.reject && p.OK() {
+				t.Fatalf("expected rejection of %+v, got none", c.p)
+			}
+			if !c.reject && !p.OK() {
+				t.Fatalf("expected %+v to validate:\n%s", c.p, p.Error())
+			}
+		})
+	}
+}
+
+// TestDecodeContextParallelWithInvalidTP pins the guard ordering. Problems accumulates
+// rather than aborting, so validation continues past the tp check with tp unchanged:
+// the divisibility rules must not be reached there, or a deployment already reported
+// for its tp gains a second problem about dcp that points a reader at the wrong field.
+//
+// Each case below is one the guard is the only thing preventing. The first two are
+// chosen because they DISTINGUISH a guarded implementation from an unguarded one:
+// delete the guard and each gains a dcp problem. A tp of 0 with dcp 4 and pcp absent
+// does not — 0 % 4 is 0, so the modulus branch is silent either way — which is why it
+// cannot be the only case here, though it is kept as the plain omitted-pcp shape.
+func TestDecodeContextParallelWithInvalidTP(t *testing.T) {
+	cases := []struct {
+		name string
+		p    Parallelism
+	}{
+		// Reaches the modulus branch and reports a negative group as divisible.
+		{"negative tp, pcp off", Parallelism{TP: -3, PP: 1, DP: 1, DCP: 2}},
+		// Reaches the membership branch and names an admissible set containing 0.
+		{"zero tp, pcp on", Parallelism{TP: 0, PP: 1, DP: 1, PCP: 2, DCP: 3}},
+		// Silent in either implementation; kept so the ordinary shape is covered.
+		{"zero tp, pcp off", Parallelism{TP: 0, PP: 1, DP: 1, DCP: 4}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			d := singleNodeDeployment()
+			d.Pools[0].Parallel = c.p
+			// Validate must return rather than panic, which is itself the assertion:
+			// a panic here fails the test.
+			p := d.Validate()
+			if p.OK() {
+				t.Fatal("a tp below 1 should be rejected")
+			}
+			sawTP := false
+			for _, problem := range p.All() {
+				if strings.Contains(problem.Path, "dcp") {
+					t.Errorf("a deployment already reported for tp should gain no dcp problem, got %s", problem)
+				}
+				if strings.HasSuffix(problem.Path, ".tp") {
+					sawTP = true
+				}
+			}
+			// The one real fault must still be named; a guard that suppressed
+			// everything would pass the check above for the wrong reason.
+			if !sawTP {
+				t.Errorf("expected the tp problem to be reported:\n%s", p.Error())
+			}
+		})
+	}
+}
+
+// TestNegativeContextParallelWidthDoesNotPanic covers the other way a width can arrive
+// outside the enabled range. A negative dcp is reported by the non-negativity check;
+// normalising it to 1 for the divisibility rule keeps that one problem from becoming
+// two, and keeps the modulus away from a negative divisor.
+func TestNegativeContextParallelWidthDoesNotPanic(t *testing.T) {
+	for _, pl := range []Parallelism{
+		{TP: 8, PP: 1, DP: 1, DCP: -1},
+		{TP: 8, PP: 1, DP: 1, PCP: -1},
+	} {
+		d := singleNodeDeployment()
+		d.Pools[0].Parallel = pl
+		if p := d.Validate(); p.OK() {
+			t.Errorf("a negative context-parallel width should be rejected: %+v", pl)
+		}
 	}
 }
