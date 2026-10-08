@@ -2,7 +2,7 @@ package deployment
 
 import (
 	"fmt"
-	"math"
+	"math/big"
 	"sort"
 
 	"github.com/inference-sim/blis-schemas/internal/validate"
@@ -49,9 +49,9 @@ type ClusterConstraints struct {
 // ValidateAgainstCluster adds the field-level checks that couple a deployment to the
 // available-hardware inventory it is placed on: that its pools' node counts sum to the
 // nodes the cluster declares, that each data-parallel-local width divides a node's GPU
-// count, that no engine needs more GPUs than its pool owns (or than a node holds, for
-// the replicas it places there), and that every offload tier names a storage class the
-// cluster actually lists.
+// count, that no engine needs more GPUs than its pool owns or places a local replica
+// past the end of a node, and that every offload tier names a storage class the cluster
+// actually lists.
 //
 // Pools fill the cluster exactly rather than take a subset of it: a deployment lays out
 // the whole cluster it is handed, so the inventory is that cluster's full extent and not
@@ -101,34 +101,47 @@ func (d *Deployment) ValidateAgainstCluster(c ClusterConstraints) *validate.Prob
 }
 
 // validateRankFit refuses an engine that needs more GPUs than it has been given. Every
-// rank is one device, so a layout's footprint is its rank count; nothing in the
-// divisibility or node-sum checks relates the two, which is how tp 8 with pcp 4 on a
-// single 8-GPU node validated while needing 32.
+// rank is one device — the engine's worker binds cuda:local_rank — so a layout's
+// footprint is its rank count; nothing in the divisibility or node-sum checks relates the
+// two, which is how tp 8 with pcp 4 on a single 8-GPU node validated while needing 32.
 //
-// There are two bounds, both against the engine and neither an equality:
+// There are two bounds. Both refuse only what is impossible; neither is an equality.
 //
 //   - The engine against its pool: pp x tp x pcp x dp ranks must not exceed the GPUs in
-//     the pool's nodes. DCP and expert parallelism add none — DCP reuses the
-//     tensor-parallel ranks and an expert group is carved across ranks that already
-//     exist — so neither enters the product.
-//   - The replicas placed on a node against that node: dp_local replicas of pp x tp x
-//     pcp ranks each must fit in gpus_per_node. The total cannot see this. tp 4 with
-//     dp 4 and dp_local 4 over two 8-GPU nodes totals 16 and fits, yet puts 16 ranks on
-//     one node of 8.
+//     the pool's nodes. This is the engine's own world_size_across_dp. DCP and expert
+//     parallelism add no ranks — DCP reuses the tensor-parallel ranks and an expert
+//     group is carved across ranks that already exist — so neither enters the product.
+//     It is an upper bound because the published corpus has pools whose layout uses
+//     fewer GPUs than the pool owns (the 36-node prefill pool is dp 8); equality would
+//     reject them. What the remainder is for is not this rule's question.
 //
-// Both are upper bounds because a pool is the set of nodes serving a role, not a single
-// engine: 36 one-node dp-8 engines behind a router is a 36-node pool whose layout is
-// dp 8, and an engine may leave devices idle. Requiring equality would reject those, so
-// only the impossible case is refused — an engine larger than the room it has.
+//   - The local replicas against one node: the last must START on the node. The engine
+//     places local data-parallel replica i at device i x world, where world is
+//     pp x tp x pcp, however a replica's own ranks are split across nodes — so replica
+//     dp_local-1 starts at (dp_local-1) x world and needs at least one device there.
+//     The total cannot see this: tp 4, dp 4, dp_local 4 over two 8-GPU nodes totals 16
+//     and fits the pool, yet its last local replica would start at device 12.
 //
-// The rank counts mirror the engine's own: world size is pp x tp x pcp per data-parallel
-// replica, and local data-parallel rank i takes devices [i x world, (i+1) x world).
+//     This is the bound that holds for EVERY node split, which is why it is the one
+//     asserted. A replica that sits on one node needs the stronger dp_local x world, but
+//     a replica may also be spread across nodes, and how is not something this schema
+//     carries, so the stronger bound would refuse layouts the engine runs. The weaker
+//     one still refuses every layout no split can rescue — including a replica wider
+//     than a node with dp_local 2 or more, where the second would start past the end.
 //
-// A width the checks above already reported as malformed describes no layout, so this
-// declines to run over it rather than invent a rank count and file a second problem
-// naming the wrong field. An unset pcp is the one zero that is meaningful: it means off,
-// and counts as one. A cluster that states no GPU count constrains nothing, the way an
-// undeclared storage inventory does.
+// The placement rule is read from the engine (get_physical_gpu_ids_for_local_dp_rank),
+// identical at v0.29.0 and at the later 119937c6f1.
+//
+// A width the checks above already reported as malformed describes no layout, so each
+// bound declines to run over it rather than invent a count and file a second problem
+// naming the wrong field. That matters for more than tidiness: two negative widths
+// multiply to a large positive one. An unset pcp is the one zero that is meaningful — it
+// means off, and counts as one. A cluster or pool that states no room constrains
+// nothing, the way an undeclared storage inventory does.
+//
+// Counts are exact (math/big) rather than int: a width absurd enough to overflow must
+// still compare correctly against a pool that is also absurdly large, and a message must
+// never print a clamped number as though it were the real one.
 func validateRankFit(p *validate.Problems, at string, pool Pool, c ClusterConstraints) {
 	pl := pool.Parallel
 	if pl.TP < 1 || pl.PP < 1 || pl.DP < 1 || pl.PCP < 0 ||
@@ -139,39 +152,34 @@ func validateRankFit(p *validate.Problems, at string, pool Pool, c ClusterConstr
 	if pcp < 1 {
 		pcp = 1
 	}
-	// Saturating products: a width absurd enough to overflow must read as too many,
-	// not wrap to a small or negative count that passes.
-	replica := mulSat(mulSat(pl.PP, pl.TP), pcp)
-	ranks := mulSat(replica, pl.DP)
-	gpus := mulSat(pool.Nodes, c.GPUsPerNode)
-
-	if ranks > gpus {
+	world := product(pl.PP, pl.TP, pcp)
+	ranks := new(big.Int).Mul(world, big.NewInt(int64(pl.DP)))
+	gpus := product(pool.Nodes, c.GPUsPerNode)
+	if ranks.Cmp(gpus) > 0 {
 		p.Field(at+".parallel",
-			"needs %d GPUs (pp %d x tp %d x pcp %d x dp %d, one per rank) but the pool's %d node(s) of %d GPUs provide %d",
+			"needs %s GPUs (pp %d x tp %d x pcp %d x dp %d, one per rank) but the pool's %d node(s) of %d GPUs provide %s",
 			ranks, pl.PP, pl.TP, pcp, pl.DP, pool.Nodes, c.GPUsPerNode, gpus)
 	}
-	// Only when one replica fits inside a node. A replica wider than a node spans nodes,
-	// and how many of its ranks sit on each depends on a node split this schema does not
-	// carry, so no per-node bound is asserted there.
-	if pl.DPLocal > 0 && replica <= c.GPUsPerNode {
-		if local := mulSat(pl.DPLocal, replica); local > c.GPUsPerNode {
-			p.Field(at+".parallel.dp_local",
-				"%d replicas of %d GPUs (pp %d x tp %d x pcp %d) need %d GPUs on one node but a node has %d",
-				pl.DPLocal, replica, pl.PP, pl.TP, pcp, local, c.GPUsPerNode)
-		}
+
+	// dp_local above dp, or negative, is reported elsewhere; it states no replica count.
+	if pl.DPLocal < 2 || pl.DPLocal > pl.DP {
+		return
+	}
+	last := new(big.Int).Mul(big.NewInt(int64(pl.DPLocal-1)), world)
+	if last.Cmp(big.NewInt(int64(c.GPUsPerNode))) >= 0 {
+		p.Field(at+".parallel.dp_local",
+			"%d local replicas of %s GPUs (pp %d x tp %d x pcp %d) are placed one after another from device 0, so the last would start at device %s, but a node has %d",
+			pl.DPLocal, world, pl.PP, pl.TP, pcp, last, c.GPUsPerNode)
 	}
 }
 
-// mulSat multiplies two non-negative ints, saturating at the largest int rather than
-// wrapping.
-func mulSat(a, b int) int {
-	if a == 0 || b == 0 {
-		return 0
+// product multiplies non-negative ints exactly.
+func product(xs ...int) *big.Int {
+	out := big.NewInt(1)
+	for _, x := range xs {
+		out.Mul(out, big.NewInt(int64(x)))
 	}
-	if a > math.MaxInt/b {
-		return math.MaxInt
-	}
-	return a * b
+	return out
 }
 
 func (d *Deployment) validatePools(p *validate.Problems) {
@@ -237,6 +245,10 @@ func validateParallelism(p *validate.Problems, at string, pl Parallelism) {
 			"prefill-context parallelism and data parallelism cannot both exceed 1")
 	}
 	validateDecodeContextParallel(p, at, pl)
+	if pl.DPLocal < 0 {
+		// The engine constrains it ge=0; zero is unset here, as there.
+		p.Field(at+".parallel.dp_local", "must not be negative, got %d", pl.DPLocal)
+	}
 	if pl.DPLocal > pl.DP && pl.DP > 0 {
 		p.Field(at+".parallel.dp_local", "%d exceeds dp %d", pl.DPLocal, pl.DP)
 	}

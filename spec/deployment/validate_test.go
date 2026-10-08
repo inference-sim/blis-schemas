@@ -390,38 +390,37 @@ func TestNegativeContextParallelWidth(t *testing.T) {
 	}
 }
 
-// TestAdmissibleDCP covers the rendered set directly, not just the verdict it informs.
-// Issue #39 asks the PCP-on message to name the admissible widths rather than only the
-// violation, so the set IS part of the contract: a reader's next question after "3 is
-// wrong" is "then what works". Only its verdict was exercised before, which left the
-// dedup and the sort free to regress.
+// TestPCPOnMessageNamesTheAdmissibleSet pins the set a reader is told they may use,
+// read from the problem Validate reports. Issue #39 asks for the admissible widths
+// rather than only the violation, because a reader's next question after "3 is wrong"
+// is "then what works".
 //
-// The tp 1 row is the one that motivates deduplicating at all: there the full TP x PCP
-// block IS the pcp axis, so a literal three-element list would print the same width
-// twice and read as though it were three distinct choices. No case elsewhere in this
-// file has tp 1 with pcp above 1, so without this row that rationale is untested.
-func TestAdmissibleDCP(t *testing.T) {
+// The set must be ascending and must not repeat a width. The tp 1 row is the one that
+// makes repetition possible: the full TP x PCP block IS the pcp axis there, so a naive
+// three-element list would print "[1 2 2]" and read as three distinct choices.
+func TestPCPOnMessageNamesTheAdmissibleSet(t *testing.T) {
 	cases := []struct {
-		tp, pcp int
-		want    []int
+		tp, pcp, dcp int
+		want         string
 	}{
-		{4, 2, []int{1, 2, 8}},
-		{8, 2, []int{1, 2, 16}},
-		{1, 2, []int{1, 2}}, // the block equals the axis; two widths, not three
-		{2, 3, []int{1, 3, 6}},
+		{4, 2, 3, "[1 2 8]"},
+		{8, 2, 3, "[1 2 16]"},
+		{1, 2, 3, "[1 2]"}, // the block equals the axis: two widths, not three
+		{2, 3, 4, "[1 3 6]"},
 	}
 	for _, c := range cases {
 		t.Run(fmt.Sprintf("tp%d_pcp%d", c.tp, c.pcp), func(t *testing.T) {
-			got := admissibleDCP(c.tp, c.pcp)
-			if len(got) != len(c.want) {
-				t.Fatalf("admissibleDCP(%d, %d) = %v, want %v", c.tp, c.pcp, got, c.want)
-			}
-			for i := range got {
-				if got[i] != c.want[i] {
-					t.Fatalf("admissibleDCP(%d, %d) = %v, want %v (ascending, deduplicated)",
-						c.tp, c.pcp, got, c.want)
+			d := singleNodeDeployment()
+			d.Pools[0].Parallel = Parallelism{TP: c.tp, PP: 1, DP: 1, PCP: c.pcp, DCP: c.dcp}
+			for _, problem := range d.Validate().All() {
+				if problem.Path == "pools[0].parallel.dcp" {
+					if !strings.Contains(problem.Message, "admissible widths are "+c.want) {
+						t.Errorf("want the admissible set %s, got: %s", c.want, problem.Message)
+					}
+					return
 				}
 			}
+			t.Fatalf("tp %d pcp %d dcp %d should be rejected at parallel.dcp", c.tp, c.pcp, c.dcp)
 		})
 	}
 }
@@ -612,13 +611,15 @@ func TestRankFitMessageNamesTheArithmetic(t *testing.T) {
 	}
 }
 
-// TestRankFitPerNode covers the bound the total cannot see. Local data-parallel replicas
-// are placed on one node, each taking its own pp x tp x pcp devices, so dp_local of them
-// need dp_local times that on a single node. The engine hands local rank i the devices
-// [i x world, (i+1) x world), so rank dp_local-1 reaches past the node's end.
+// TestRankFitPerNode covers the bound the total cannot see. The engine places local
+// data-parallel replica i at device i x world (world = pp x tp x pcp), however each
+// replica's own ranks are split across nodes, so the last local replica must at least
+// START on the node. The first case is the discriminator: it totals 16 on a pool of 16
+// and passes the pool bound, and only this one refuses it.
 //
-// The first case is the discriminator: it TOTALS 16 on a pool of 16 and passes the pool
-// bound, and only the per-node bound refuses it.
+// The accepted cases pin that the bound is the one that holds for every node split, not
+// the stronger dp_local x world that assumes a replica sits on one node — which would
+// refuse layouts the engine runs.
 func TestRankFitPerNode(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -634,31 +635,114 @@ func TestRankFitPerNode(t *testing.T) {
 			Parallelism{TP: 1, PP: 1, DP: 16, DPLocal: 8}, 2, 8, false},
 		{"pp and pcp count toward the replica",
 			Parallelism{TP: 2, PP: 2, DP: 4, PCP: 1, DPLocal: 4}, 2, 8, true},
-		// A replica wider than a node spans nodes, so how many of its ranks sit on each
-		// is not the schema's to say. No per-node bound is asserted; the total still is.
-		{"replica wider than a node is not bounded per node",
+		{"last replica would start exactly at the node's end",
+			Parallelism{TP: 4, PP: 1, DP: 2, DPLocal: 2}, 1, 4, true},
+
+		// A replica wider than a node with two local replicas: the second starts at
+		// device 16 on an 8-GPU node whatever the split, and the engine raises. This
+		// validated before, because the per-node bound exempted wide replicas.
+		{"wide replica with two local replicas",
+			Parallelism{TP: 16, PP: 1, DP: 4, DPLocal: 2}, 8, 8, true},
+		// One local replica of any width places nothing after it.
+		{"wide replica with one local replica",
 			Parallelism{TP: 8, PP: 2, DP: 1, DPLocal: 1}, 2, 8, false},
+
+		// A replica split across nodes: tp 6 over three nodes puts two ranks on each, and
+		// the second local replica takes devices [6, 8). The engine runs this; the
+		// stronger one-node bound (2 x 6 > 8) would have refused it.
+		{"replica split across nodes",
+			Parallelism{TP: 6, PP: 1, DP: 2, DPLocal: 2}, 3, 8, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			p := rankFit(c.pl, c.nodes, c.gpus)
-			if !c.reject {
-				if !p.OK() {
-					t.Fatalf("%+v on %d x %d should fit:\n%s", c.pl, c.nodes, c.gpus, p.Error())
-				}
-				return
-			}
+			fired := ""
 			// Matched on the message as well as the path: the pre-existing "does not
-			// divide gpus_per_node" check files at the same path, and either would
-			// otherwise satisfy this for the wrong reason.
+			// divide gpus_per_node" and "exceeds dp" checks file at the same path, and
+			// either would otherwise satisfy this for the wrong reason.
 			for _, problem := range p.All() {
 				if problem.Path == "pools[0].parallel.dp_local" &&
-					strings.Contains(problem.Message, "on one node") {
-					return
+					strings.Contains(problem.Message, "would start at device") {
+					fired = problem.Message
 				}
 			}
-			t.Errorf("expected a per-node problem at pools[0].parallel.dp_local, got:\n%s", p.Error())
+			if c.reject && fired == "" {
+				t.Fatalf("%+v on %d x %d: expected the per-node bound to fire, got:\n%s",
+					c.pl, c.nodes, c.gpus, p.Error())
+			}
+			if !c.reject && fired != "" {
+				t.Fatalf("%+v on %d x %d should fit, got: %s", c.pl, c.nodes, c.gpus, fired)
+			}
 		})
+	}
+}
+
+// TestRankFitPerNodeMessage pins the arithmetic a reader acts on: where the last local
+// replica would start and how big a node is.
+func TestRankFitPerNodeMessage(t *testing.T) {
+	p := rankFit(Parallelism{TP: 16, PP: 1, DP: 4, DPLocal: 2}, 8, 8)
+	for _, problem := range p.All() {
+		if problem.Path == "pools[0].parallel.dp_local" {
+			for _, want := range []string{"2 local replicas", "16 GPUs", "start at device 16", "a node has 8"} {
+				if !strings.Contains(problem.Message, want) {
+					t.Errorf("message does not contain %q: %s", want, problem.Message)
+				}
+			}
+			return
+		}
+	}
+	t.Fatalf("no per-node problem:\n%s", p.Error())
+}
+
+// TestRankFitDoesNotRecountAReportedDPLocal: dp_local above dp is already reported, and
+// states no replica count, so the per-node bound must not file a second problem that
+// counts replicas which do not exist.
+func TestRankFitDoesNotRecountAReportedDPLocal(t *testing.T) {
+	d := singleNodeDeployment()
+	d.Pools[0].Parallel = Parallelism{TP: 2, PP: 1, DP: 2, DPLocal: 8}
+	if p := d.Validate(); p.OK() {
+		t.Fatal("dp_local above dp should be reported by Validate")
+	}
+	for _, problem := range d.ValidateAgainstCluster(ClusterConstraints{Nodes: 1, GPUsPerNode: 8}).All() {
+		if strings.Contains(problem.Message, "would start at device") {
+			t.Errorf("per-node bound ran over a dp_local already reported: %s", problem)
+		}
+	}
+}
+
+// TestNegativeDPLocal: the engine constrains data_parallel_size_local ge=0, and a
+// negative one was silently accepted here.
+func TestNegativeDPLocal(t *testing.T) {
+	d := singleNodeDeployment()
+	d.Pools[0].Parallel = Parallelism{TP: 8, PP: 1, DP: 1, DPLocal: -1}
+	p := d.Validate()
+	for _, problem := range p.Errors() {
+		if problem.Path == "pools[0].parallel.dp_local" && strings.Contains(problem.Message, "negative") {
+			return
+		}
+	}
+	t.Fatalf("a negative dp_local should be rejected, got:\n%s", p.Error())
+}
+
+// TestRankFitIsExactAtExtremes: with int arithmetic that saturated, both sides clamped to
+// the same maximum and compared equal, so an engine needing 3 x MaxInt GPUs "fit" a pool
+// of 2 x MaxInt. Counts are exact, so the comparison and the printed figures are right.
+func TestRankFitIsExactAtExtremes(t *testing.T) {
+	p := rankFit(Parallelism{TP: math.MaxInt, PP: 1, DP: 3}, math.MaxInt, 2)
+	var msg string
+	for _, problem := range p.All() {
+		if problem.Path == "pools[0].parallel" {
+			msg = problem.Message
+		}
+	}
+	if msg == "" {
+		t.Fatalf("3 x MaxInt ranks on 2 x MaxInt GPUs must be refused, got:\n%s", p.Error())
+	}
+	// 3 x (2^63-1) and 2 x (2^63-1), printed in full rather than clamped.
+	for _, want := range []string{"27670116110564327421", "18446744073709551614"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("message should print the exact count %s: %s", want, msg)
+		}
 	}
 }
 
