@@ -261,7 +261,10 @@ func TestCorpusDeploymentsAreExpressible(t *testing.T) {
 				pool(deployment.RolePrefill, 4, deployment.Parallelism{TP: 1, PP: 1,
 					DP: 4, DPLocal: 1, PCP: 8, DCP: 8, EnableExpertParallel: true},
 					deployment.Engine{All2AllBackend: "deepep_high_throughput",
-						CacheDType: "fp8", BlockSize: 64, GPUMemoryUtilization: 0.9}),
+						CacheDType: "fp8", BlockSize: 64, GPUMemoryUtilization: 0.9,
+						// The manifest passes --dcp-comm-backend ag_rs and leaves the
+						// other two knobs to the engine.
+						DCPCommBackend: "ag_rs"}),
 				pool(deployment.RoleDecode, 4, deployment.Parallelism{TP: 2, PP: 1,
 					DP: 16, DPLocal: 4, EnableExpertParallel: true},
 					deployment.Engine{All2AllBackend: "deepep_low_latency",

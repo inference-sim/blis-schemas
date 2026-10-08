@@ -536,6 +536,7 @@ func validateEngine(p *validate.Problems, at string, e Engine) {
 	for field, v := range map[string]int{
 		"block_size": e.BlockSize, "max_num_batched_tokens": e.MaxNumBatchedTokens,
 		"max_num_seqs": e.MaxNumSeqs, "max_model_len": e.MaxModelLen,
+		"cp_kv_cache_interleave_size": e.CPKVCacheInterleaveSize,
 	} {
 		if v < 0 {
 			p.Field(at+".engine."+field, "must not be negative")

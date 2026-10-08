@@ -106,6 +106,9 @@ func TestRejects(t *testing.T) {
 			d.Pools[0].Engine.GPUMemoryUtilization = math.NaN()
 		}},
 		{"negative block size", func(d *Deployment) { d.Pools[0].Engine.BlockSize = -1 }},
+		{"negative interleave size", func(d *Deployment) {
+			d.Pools[0].Engine.CPKVCacheInterleaveSize = -1
+		}},
 		{"prefill without decode", func(d *Deployment) {
 			d.Pools = d.Pools[:1]
 		}},

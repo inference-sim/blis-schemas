@@ -55,6 +55,8 @@ func TestSmallVocabularies(t *testing.T) {
 			"PIECEWISE"})
 	assertSet(t, "MambaCacheModes", p.MambaCacheModes,
 		[]string{"align", "all", "none"})
+	assertSet(t, "DCPCommBackends", p.DCPCommBackends,
+		[]string{"a2a", "ag_rs"})
 	// Seventeen cache dtypes. The count is the point: a narrower set silently
 	// rejects formats the engine accepts, including nvfp4.
 	if len(p.CacheDTypes) != 17 {

@@ -461,6 +461,67 @@ RDMA: true
 	}
 }
 
+// TestLoadDeploymentDCPKnobs: a deployment can state each of the engine's three
+// decode-context-parallel knobs under the engine's own names, and an omitted one stays
+// unstated rather than being read as a value. The prefill pool is the shape of the
+// curvebender glm-5.3 canary, which passes --dcp-comm-backend ag_rs.
+func TestLoadDeploymentDCPKnobs(t *testing.T) {
+	path := write(t, "d.yaml", `
+kind: Deployment
+name: glm-5.3-dcp
+pools:
+  - role: colocated
+    nodes: 4
+    parallel:
+      tp: 1
+      pp: 1
+      dp: 4
+      dp_local: 1
+      pcp: 8
+      dcp: 8
+    engine:
+      block_size: 64
+      dcp_comm_backend: a2a
+      dcp_q_replicate: true
+      cp_kv_cache_interleave_size: 16
+  - role: colocated
+    nodes: 1
+    parallel:
+      tp: 8
+      pp: 1
+      dp: 1
+      dcp: 8
+    engine:
+      dcp_q_replicate: false
+`)
+	d, err := LoadDeployment(path)
+	if err != nil {
+		t.Fatalf("LoadDeployment: %v", err)
+	}
+	e := d.Pools[0].Engine
+	if e.DCPCommBackend != "a2a" {
+		t.Errorf("dcp_comm_backend = %q, want a2a", e.DCPCommBackend)
+	}
+	if e.DCPQReplicate == nil || !*e.DCPQReplicate {
+		t.Errorf("dcp_q_replicate = %v, want true", e.DCPQReplicate)
+	}
+	if e.CPKVCacheInterleaveSize != 16 {
+		t.Errorf("cp_kv_cache_interleave_size = %d, want 16", e.CPKVCacheInterleaveSize)
+	}
+	// Tri-state: false is a stated request, distinct from unstated.
+	e2 := d.Pools[1].Engine
+	if e2.DCPQReplicate == nil || *e2.DCPQReplicate {
+		t.Errorf("dcp_q_replicate = %v, want a stated false", e2.DCPQReplicate)
+	}
+	if e2.DCPCommBackend != "" || e2.CPKVCacheInterleaveSize != 0 {
+		t.Errorf("omitted knobs must stay unstated, got backend %q, interleave %d",
+			e2.DCPCommBackend, e2.CPKVCacheInterleaveSize)
+	}
+	if p := d.Validate(); !p.OK() {
+		t.Fatalf("the knobs are well formed and should validate:\n%s", p.Error())
+	}
+}
+
 func TestLoadDeployment(t *testing.T) {
 	path := write(t, "d.yaml", `
 kind: Deployment

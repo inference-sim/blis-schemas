@@ -76,6 +76,10 @@ type Pack struct {
 	AsyncCompatibleSpec map[string]bool
 	// OffloadSpecs are the registered offloading spec names.
 	OffloadSpecs map[string]bool
+	// DCPCommBackends are the decode-context-parallel collective sets the engine accepts,
+	// from its DCPCommBackend literal. A closed literal rather than a registry, so an
+	// unknown name is an error.
+	DCPCommBackends map[string]bool
 
 	// Quantizations are the weight-format names the engine serves, from its
 	// QuantizationMethods literal. A name outside the set is priced against the wrong

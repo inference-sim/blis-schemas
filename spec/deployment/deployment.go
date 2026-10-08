@@ -224,6 +224,36 @@ type Engine struct {
 	DBO         *DBO         `yaml:"dbo,omitempty"`
 	EPLB        *EPLB        `yaml:"eplb,omitempty"`
 	Speculative *Speculative `yaml:"speculative,omitempty"`
+
+	// The decode-context-parallel knobs. Each changes what a DCP decode step costs, and
+	// each is a REQUEST: the engine fills an unstated one with its default, and a model
+	// may override the first two from its own configuration hook (set_dcp_defaults), so
+	// the value that runs is the resolver's to report. They have no effect when dcp is 1.
+	//
+	// DCPCommBackend selects the collectives a DCP decode layer runs: "ag_rs" is a query
+	// all-gather, an LSE all-gather and an output reduce-scatter; "a2a" replaces the last
+	// two with one all-to-all. Empty takes the engine default, "ag_rs". Which names a
+	// release accepts is that release's rules pack's to say.
+	DCPCommBackend string `yaml:"dcp_comm_backend,omitempty"`
+	// DCPQReplicate requests replicating the MLA query projection at load time, so each
+	// rank materialises the full group-local head set and skips the query all-gather, at
+	// the cost of computing the projection redundantly.
+	//
+	// Tri-state: nil lets the engine (or the model's hook) decide, which by default is
+	// false.
+	DCPQReplicate *bool `yaml:"dcp_q_replicate,omitempty"`
+	// CPKVCacheInterleaveSize is how many consecutive tokens one DCP rank holds before
+	// the next rank takes over, which sets each rank's share of a sequence: 1 stripes
+	// token by token, block_size block by block.
+	//
+	// Zero means unstated, which is not the same request as 1 even though 1 is the
+	// default. With a KV connector configured the engine pins the size to the block
+	// size, and when it does depends on the release: v0.29.0 pins it under any KV
+	// connector, stated or not; v0.31.0 only under NIXL, and only when unstated. So the
+	// size that runs is the resolver's to report, and stating 1 is a different request
+	// from stating nothing. The deprecated dcp_kv_cache_interleave_size it replaced is
+	// deliberately not carried.
+	CPKVCacheInterleaveSize int `yaml:"cp_kv_cache_interleave_size,omitempty"`
 }
 
 // DBO is dual-batch overlap: splitting a batch so one microbatch's communication
