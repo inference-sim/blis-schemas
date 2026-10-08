@@ -45,6 +45,12 @@ type Set struct {
 
 // UnmarshalYAML reads the registry's nested entry form into a flat list.
 func (s *Set) UnmarshalYAML(node *yaml.Node) error {
+	// Unknown top-level keys are rejected here: a custom unmarshal does not inherit the
+	// decoder's KnownFields, so `backend:` or `extends:` (or a typo) would otherwise decode
+	// to nothing silently. This matches blis-registry's strict top-level parse.
+	if err := validate.RejectUnknownKeys(node, Set{}, nil); err != nil {
+		return err
+	}
 	// An alias type without this method, so decoding it does not recurse.
 	type setShape struct {
 		Kind         string      `yaml:"kind"`
@@ -65,13 +71,43 @@ func (s *Set) UnmarshalYAML(node *yaml.Node) error {
 		if err := validate.RejectUnknownKeys(item.Content[1], Entry{}, nil); err != nil {
 			return fmt.Errorf("coefficients[%d] (%s): %w", i, item.Content[0].Value, err)
 		}
+		// fitted's Go zero value (false) is itself valid, so a plain decode cannot tell an
+		// absent `fitted:` from an intentional `fitted: false`. The registry requires the
+		// field present — it records a real provenance distinction (a datasheet figure is
+		// not fitted; a curve fit is) — so enforce presence at the node here, keeping
+		// Entry.Fitted a plain bool for every consumer that reads it.
+		if !nodeHasKey(item.Content[1], "fitted") {
+			return fmt.Errorf("coefficients[%d] (%s): missing required field %q",
+				i, item.Content[0].Value, "fitted")
+		}
 		if err := item.Content[1].Decode(&e); err != nil {
 			return fmt.Errorf("coefficients[%d] (%s): %w", i, item.Content[0].Value, err)
+		}
+		// A present `sources:` must be a non-empty list, matching the registry's validator.
+		// Presence is read from the node because an absent key and `sources: []` both decode
+		// to an empty slice, and only the latter is an error.
+		if nodeHasKey(item.Content[1], "sources") && len(e.Sources) == 0 {
+			return fmt.Errorf("coefficients[%d] (%s): sources, when present, must be a non-empty list",
+				i, item.Content[0].Value)
 		}
 		e.Name = item.Content[0].Value
 		s.Coefficients = append(s.Coefficients, e)
 	}
 	return nil
+}
+
+// nodeHasKey reports whether a mapping node declares key. It is how a required entry field
+// whose decoded zero value is itself valid (fitted: false) is told apart from absent.
+func nodeHasKey(node *yaml.Node, key string) bool {
+	if node.Kind != yaml.MappingNode {
+		return false
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Value == key {
+			return true
+		}
+	}
+	return false
 }
 
 // Entry is one coefficient. Value, Units, Method, Fitted and Scope are required:
@@ -142,6 +178,23 @@ type Source struct {
 	Role vocab.SourceRole `yaml:"role"`
 }
 
+// UnmarshalYAML rejects unknown keys in a source object before decoding, so a stray field
+// (a typo, or a key the registry's own validator forbids) is an error rather than silently
+// dropped — the custom unmarshal that gives the entry its name would otherwise lose the
+// decoder's KnownFields for the nested source nodes too.
+func (s *Source) UnmarshalYAML(node *yaml.Node) error {
+	if err := validate.RejectUnknownKeys(node, Source{}, nil); err != nil {
+		return err
+	}
+	type sourceShape Source // no UnmarshalYAML, so decoding does not recurse
+	var raw sourceShape
+	if err := node.Decode(&raw); err != nil {
+		return err
+	}
+	*s = Source(raw)
+	return nil
+}
+
 // Scope bounds where an entry holds. An empty scope is not "everywhere" but "not
 // stated", and validation rejects it: a coefficient whose applicability is unknown
 // cannot be applied safely.
@@ -155,6 +208,24 @@ type Scope struct {
 	TP           []int    `yaml:"tp,omitempty"`
 	EP           []int    `yaml:"ep,omitempty"`
 	NodesSpanned []int    `yaml:"nodes_spanned,omitempty"`
+}
+
+// UnmarshalYAML rejects unknown scope keys before decoding. The typed fields alone would
+// silently drop a key the resolver does not know — a custom unmarshal does not inherit the
+// decoder's KnownFields — so an unrecognized dimension would read as "no such scoping"
+// rather than an error. This restores the strict check, matching blis-registry's own
+// validator.
+func (s *Scope) UnmarshalYAML(node *yaml.Node) error {
+	if err := validate.RejectUnknownKeys(node, Scope{}, nil); err != nil {
+		return err
+	}
+	type scopeShape Scope // no UnmarshalYAML, so decoding does not recurse
+	var raw scopeShape
+	if err := node.Decode(&raw); err != nil {
+		return err
+	}
+	*s = Scope(raw)
+	return nil
 }
 
 // Empty reports whether no dimension is stated.
