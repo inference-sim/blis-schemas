@@ -181,15 +181,16 @@ func validateRankFit(p *validate.Problems, at string, pool Pool, c ClusterConstr
 			pl.DPLocal, world, pl.PP, pl.TP, pcp, last, c.GPUsPerNode)
 		return
 	}
-	// The last replica starts on the node; its share must end there too. world fits an
-	// int64 here, since the pool bound held and every factor is an int.
+	// The last replica starts on the node; its share must end there too. Nothing here
+	// fits a machine word by assumption — the pool's capacity is itself an exact product
+	// and may exceed one, so world may too — so the search is exact throughout.
 	groups := pl.DP / pl.DPLocal // the engine's data_parallel_node_size
 	maxSplit := pool.Nodes / groups
 	if maxSplit < 1 {
 		maxSplit = 1 // n = 1 always gives a split of 1
 	}
-	room := int64(c.GPUsPerNode) - last.Int64()
-	switch placeable(world.Int64(), int64(maxSplit), room) {
+	room := new(big.Int).Sub(gpn, last) // positive: last < gpn
+	switch placeable(world, big.NewInt(int64(maxSplit)), room) {
 	case placeNo:
 		p.Field(at+".parallel",
 			"no node count up to the pool's %d lets the engine place %d local replicas of %s GPUs (pp %d x tp %d x pcp %d) on a %d-GPU node: replica i starts at device i x %s, so the last leaves %d GPUs for its share of the replica, and every split the pool allows (a divisor of %s over at most %d nodes) leaves a larger share",
@@ -213,32 +214,45 @@ const (
 const placeableSearchLimit = 1 << 20
 
 // placeable reports whether some split k — a divisor of world, at most maxSplit — leaves
-// a per-node share world/k of at most room. It searches whichever of the two ranges is
-// shorter: the splits themselves, or the shares.
-func placeable(world, maxSplit, room int64) placement {
-	lo := (world + room - 1) / room // the smallest split whose share fits
+// a per-node share world/k of at most room. All three are exact: world is a product of
+// widths and may exceed any machine word. It searches whichever of the two ranges is
+// shorter, the splits themselves or the shares, and declines to answer past
+// placeableSearchLimit steps.
+func placeable(world, maxSplit, room *big.Int) placement {
+	one := big.NewInt(1)
+	// lo = ceil(world / room), the smallest split whose share fits.
+	lo, rem := new(big.Int).QuoRem(world, room, new(big.Int))
+	if rem.Sign() != 0 {
+		lo.Add(lo, one)
+	}
 	hi := maxSplit
-	if world < hi {
+	if world.Cmp(hi) < 0 {
 		hi = world
 	}
-	if lo > hi {
+	if lo.Cmp(hi) > 0 {
 		return placeNo
 	}
+	splits := new(big.Int).Sub(hi, lo)
+	splits.Add(splits, one)
 	shares := room
-	if world < shares {
+	if world.Cmp(shares) < 0 {
 		shares = world
 	}
+	limit := big.NewInt(placeableSearchLimit)
+	mod := new(big.Int)
 	switch {
-	case hi-lo+1 <= shares && hi-lo+1 <= placeableSearchLimit:
-		for k := lo; k <= hi; k++ {
-			if world%k == 0 {
+	case splits.Cmp(shares) <= 0 && splits.Cmp(limit) <= 0:
+		for k := new(big.Int).Set(lo); k.Cmp(hi) <= 0; k.Add(k, one) {
+			if mod.Mod(world, k).Sign() == 0 {
 				return placeYes
 			}
 		}
-	case shares <= placeableSearchLimit:
-		for share := int64(1); share <= shares; share++ {
-			if world%share == 0 {
-				if k := world / share; k >= lo && k <= hi {
+	case shares.Cmp(limit) <= 0:
+		k := new(big.Int)
+		for share := big.NewInt(1); share.Cmp(shares) <= 0; share.Add(share, one) {
+			if mod.Mod(world, share).Sign() == 0 {
+				k.Quo(world, share)
+				if k.Cmp(lo) >= 0 && k.Cmp(hi) <= 0 {
 					return placeYes
 				}
 			}

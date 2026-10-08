@@ -443,3 +443,132 @@ func TestScalingReplicasWithTheirNodesPreservesFit(t *testing.T) {
 		}
 	}
 }
+
+// engineCanPlaceExact is engineCanPlace in arbitrary precision, for layouts whose counts
+// exceed a machine word. It is the same simulation — every engine node count, the split
+// it implies, the divisibility the executor asserts, and the last replica's device range
+// — over big integers, so it shares nothing with the rule's search either.
+func engineCanPlaceExact(world *big.Int, dp, dpLocal, nodes int, gpusPerNode *big.Int) bool {
+	for n := 1; n <= nodes; n++ {
+		split := int64(1)
+		if n > 1 {
+			groups := dp / dpLocal
+			if n%groups != 0 {
+				continue
+			}
+			split = int64(n / groups)
+		}
+		k := big.NewInt(split)
+		share, rem := new(big.Int).QuoRem(world, k, new(big.Int))
+		if rem.Sign() != 0 {
+			continue
+		}
+		end := new(big.Int).Mul(big.NewInt(int64(dpLocal-1)), world)
+		end.Add(end, share)
+		if end.Cmp(gpusPerNode) <= 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// TestPerNodeBoundIsExactAtTheEdgesOfInt draws widths and node sizes around the largest
+// int, where any machine-word step wraps, and compares the per-node verdict with the
+// exact simulation wherever the pool bound holds.
+func TestPerNodeBoundIsExactAtTheEdgesOfInt(t *testing.T) {
+	r := rand.New(rand.NewSource(29))
+	edge := func() int {
+		switch r.Intn(4) {
+		case 0:
+			return math.MaxInt - r.Intn(3)
+		case 1:
+			return math.MaxInt/(2+r.Intn(4)) + r.Intn(3)
+		case 2:
+			return 1 << (r.Intn(62) + 1)
+		default:
+			return 1 + r.Intn(8)
+		}
+	}
+	considered, refusedN := 0, 0
+	for i := 0; i < 20000; i++ {
+		dp := 1 + r.Intn(4)
+		pl := Parallelism{TP: edge(), PP: 1 + r.Intn(3), DP: dp, PCP: r.Intn(3), DPLocal: 1 + r.Intn(dp)}
+		nodes, gpn := 1+r.Intn(8), edge()
+		pool, node := fitVerdict(pl, nodes, gpn)
+		if pool {
+			continue
+		}
+		considered++
+		world := big.NewInt(int64(pl.TP))
+		world.Mul(world, big.NewInt(int64(pl.PP)))
+		world.Mul(world, big.NewInt(int64(max(pl.PCP, 1))))
+		want := !engineCanPlaceExact(world, dp, pl.DPLocal, nodes, big.NewInt(int64(gpn)))
+		if node {
+			refusedN++
+		}
+		if node != want {
+			t.Fatalf("%+v on %d x %d (world %s): validator refuses=%v, engine cannot place=%v",
+				pl, nodes, gpn, world, node, want)
+		}
+	}
+	if considered == 0 || refusedN == 0 || refusedN == considered {
+		t.Fatalf("degenerate sample: %d of %d refused", refusedN, considered)
+	}
+}
+
+// FuzzRankFit holds two properties for any widths and room at all: validation returns
+// rather than panicking, and wherever the inputs are small enough to simulate, the verdict
+// agrees with the engine's placement. The seeds are the layouts review found at the edges
+// of int. `go test` runs the seeds; `go test -fuzz=FuzzRankFit` explores beyond them.
+func FuzzRankFit(f *testing.F) {
+	f.Add(math.MaxInt, 1, 1, 0, 1, 1, math.MaxInt)
+	f.Add(math.MaxInt, 2, 1, 0, 1, 2, math.MaxInt)
+	f.Add(math.MaxInt, 1, 3, 0, 2, 1, 8)
+	f.Add(6, 1, 2, 0, 2, 2, 8)
+	f.Add(6, 1, 2, 0, 2, 3, 8)
+	f.Add(-2, -50, 1, 0, 0, 1, 8)
+	f.Add(1, 1, 4, 8, 1, 4, 8)
+	f.Fuzz(func(t *testing.T, tp, pp, dp, pcp, dpLocal, nodes, gpn int) {
+		pl := Parallelism{TP: tp, PP: pp, DP: dp, PCP: pcp, DPLocal: dpLocal}
+		pool, node := fitVerdict(pl, nodes, gpn) // must not panic
+		small := tp >= 1 && tp <= 64 && pp >= 1 && pp <= 4 && dp >= 1 && dp <= 32 &&
+			pcp >= 0 && pcp <= 8 && dpLocal >= 1 && dpLocal <= dp &&
+			nodes >= 1 && nodes <= 16 && gpn >= 1 && gpn <= 64
+		if !small || pool {
+			return
+		}
+		world := tp * pp * max(pcp, 1)
+		if want := !engineCanPlace(world, dp, dpLocal, nodes, gpn, false); node != want {
+			t.Fatalf("%+v on %d x %d: validator refuses=%v, engine cannot place=%v", pl, nodes, gpn, node, want)
+		}
+	})
+}
+
+// FuzzParallelismValidation holds, for any widths and any room: field validation and the
+// cluster checks return rather than panic, the derived expert width is at least one, and
+// wherever the engine's DCP rule is defined (every width at least one) the validator's
+// DCP verdict is the engine's, computed exactly.
+func FuzzParallelismValidation(f *testing.F) {
+	f.Add(math.MaxInt, 1, 1, 3, math.MaxInt-2, 0, true, 1, 8)
+	f.Add(math.MaxInt, math.MaxInt, math.MaxInt, math.MaxInt, math.MaxInt, math.MaxInt, true, math.MaxInt, math.MaxInt)
+	f.Add(math.MinInt, math.MinInt, math.MinInt, math.MinInt, math.MinInt, math.MinInt, true, math.MinInt, math.MinInt)
+	f.Add(1, 1, 4, 8, 8, 1, true, 4, 8)
+	f.Add(0, 0, 0, 0, 0, 0, false, 0, 0)
+	f.Fuzz(func(t *testing.T, tp, pp, dp, pcp, dcp, dpLocal int, ep bool, nodes, gpn int) {
+		pl := Parallelism{TP: tp, PP: pp, DP: dp, PCP: pcp, DCP: dcp, DPLocal: dpLocal,
+			EnableExpertParallel: ep}
+		d := singleNodeDeployment()
+		d.Pools[0].Nodes = nodes
+		d.Pools[0].Parallel = pl
+		d.Validate()
+		d.ValidateAgainstCluster(ClusterConstraints{Nodes: nodes, GPUsPerNode: gpn})
+		if w := pl.ExpertParallelWidth(); w < 1 {
+			t.Fatalf("%+v: expert width %d", pl, w)
+		}
+		if tp >= 1 && pp >= 1 && dp >= 1 && pcp >= 1 && dcp >= 1 {
+			if got, want := !dcpRejected(pl), engineAcceptsDCP(tp, pcp, dcp); got != want {
+				t.Fatalf("%+v: validator accepts=%v, engine accepts=%v", pl, got, want)
+			}
+		}
+	})
+}

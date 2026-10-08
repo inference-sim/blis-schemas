@@ -842,3 +842,46 @@ func TestDCPCompareIsExact(t *testing.T) {
 		}
 	}
 }
+
+// TestRankFitAtTheEdgesOfInt pins two layouts from review whose counts exceed a machine
+// word. The pool's capacity is an exact product and may exceed int64, so a layout that
+// fits it may have a replica that does too; no step may assume otherwise.
+func TestRankFitAtTheEdgesOfInt(t *testing.T) {
+	cases := []struct {
+		name        string
+		pl          Parallelism
+		nodes, gpus int
+	}{
+		// One replica of MaxInt ranks on one node of MaxInt GPUs: it fits exactly. The
+		// ceiling of world/room once overflowed to a split of 0 and divided by it.
+		{"replica exactly fills a MaxInt node", Parallelism{TP: math.MaxInt, PP: 1, DP: 1, DPLocal: 1}, 1, math.MaxInt},
+		// A replica of 2 x MaxInt ranks split over two MaxInt nodes fits exactly: a split
+		// of 2 leaves each node MaxInt. Truncating world to int64 once made it -2, and the
+		// layout was refused.
+		{"replica of 2 x MaxInt split over two nodes", Parallelism{TP: math.MaxInt, PP: 2, DP: 1, DPLocal: 1}, 2, math.MaxInt},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if p := rankFit(c.pl, c.nodes, c.gpus); !p.OK() {
+				t.Fatalf("%+v on %d x %d fits exactly and must be accepted:\n%s", c.pl, c.nodes, c.gpus, p.Error())
+			}
+		})
+	}
+	// And the same replica one node short is refused, with the exact figures printed.
+	p := rankFit(Parallelism{TP: math.MaxInt, PP: 2, DP: 1, DPLocal: 1}, 1, math.MaxInt)
+	if !strings.Contains(p.Error(), "needs 18446744073709551614 GPUs") {
+		t.Fatalf("2 x MaxInt ranks on one MaxInt node must be refused exactly:\n%s", p.Error())
+	}
+}
+
+// TestPerNodeNeverRefusesWithoutProof: the divisor search is bounded, so past its limit
+// the rule gives no verdict rather than a refusal — a layout is refused only when the
+// rule has shown no split places it. This one IS placeable (a split of 2^21 divides a
+// replica of 2^61 and leaves each node 2^40), but both of the search's ranges are far
+// past the limit. It must be accepted.
+func TestPerNodeNeverRefusesWithoutProof(t *testing.T) {
+	pl := Parallelism{TP: 1 << 61, PP: 1, DP: 1, DPLocal: 1}
+	if p := rankFit(pl, 1<<30, 1<<40); !p.OK() {
+		t.Fatalf("a placeable layout beyond the search limit must not be refused:\n%s", p.Error())
+	}
+}
