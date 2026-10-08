@@ -216,6 +216,19 @@ func ruleList(p *rules.Pack) []rules.Rule {
 			},
 		},
 		{
+			Name:    "pcp-excludes-data-parallelism",
+			Because: "this release refuses prefill-context parallelism combined with data parallelism at startup (\"PCP does not support data parallelism yet\", vllm/config/parallel.py), so such a layout does not run; later releases support it from e6dc16cebd, which is why the refusal is here and not a field check",
+			Check: func(in rules.Input, out *validate.Problems) {
+				forEachPool(in, func(at string, pool deployment.Pool) {
+					if pool.Parallel.PCP > 1 && pool.Parallel.DP > 1 {
+						out.RuleErrorf("pcp-excludes-data-parallelism",
+							"%s: pcp %d with dp %d; engine %s refuses prefill-context parallelism combined with data parallelism",
+							at, pool.Parallel.PCP, pool.Parallel.DP, Version)
+					}
+				})
+			},
+		},
+		{
 			Name:    "expert-divisibility-under-eplb",
 			Because: "with load balancing on, the engine asserts that physical experts divide the expert-parallel width, so an indivisible layout does not start",
 			Check: func(in rules.Input, out *validate.Problems) {

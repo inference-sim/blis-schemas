@@ -31,6 +31,8 @@
 // block would describe neither.
 package deployment
 
+import "math"
+
 // Deployment is the tunable configuration applied to a Scenario: the pools that lay
 // the model out, the offload hierarchy, and prefill-to-decode transfer.
 type Deployment struct {
@@ -86,22 +88,36 @@ type Parallelism struct {
 // ExpertParallelWidth returns the derived EP degree, or 1 when expert parallelism
 // is off. It is a function rather than a field precisely so no file can disagree
 // with it.
+//
+// The width is tp x pcp x dp: the engine lays ranks out DP x PP x PCP x TP and builds
+// the expert group over the DP, PCP and TP axes together (initialize_model_parallel,
+// the same at v0.29.0 and later). An unset or non-positive width counts as one, the
+// same floor every other reader of these fields applies.
+//
+// An earlier form was tp x max(dp, pcp). That agrees with the product exactly when one
+// of dp and pcp is at most 1, which was every deployment this schema admitted while
+// prefill-context parallelism and data parallelism could not be combined — so the
+// product changes no width that could previously validate. It differs once both exceed
+// 1, which the engine supports from e6dc16cebd and llm-d deploys (DP 4 x PCP 8 is an
+// expert group of 32, not 8).
+//
+// The product saturates at the largest int instead of wrapping, so an absurd layout
+// reads as an absurdly wide group rather than a small or negative one.
 func (p Parallelism) ExpertParallelWidth() int {
 	if !p.EnableExpertParallel {
 		return 1
 	}
-	wide := p.DP
-	if p.PCP > wide {
-		wide = p.PCP
+	width := 1
+	for _, w := range []int{p.TP, p.PCP, p.DP} {
+		if w < 1 {
+			w = 1
+		}
+		if width > math.MaxInt/w {
+			return math.MaxInt
+		}
+		width *= w
 	}
-	if wide < 1 {
-		wide = 1
-	}
-	tp := p.TP
-	if tp < 1 {
-		tp = 1
-	}
-	return tp * wide
+	return width
 }
 
 // Engine is the per-pool settings that change step time or occupancy. Values are

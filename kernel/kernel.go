@@ -299,8 +299,8 @@ type Resolution struct {
 	TensorParallelWidth int
 	DataParallelWidth   int
 	// ExpertParallelWidth is derived from the other two and the prefill-context
-	// width rather than requested: tp x max(dp, pcp), or 1 when expert parallelism
-	// is off. It is reported and not recomputed here because two of the facts it
+	// width rather than requested: tp x pcp x dp, or 1 when expert parallelism is
+	// off. It is reported and not recomputed here because two of the facts it
 	// needs — whether expert parallelism is enabled at all, and the prefill-context
 	// width — are not part of this value, so a consumer recomputing it from the two
 	// fields above may get a different answer. Expert parallelism off is the sharpest

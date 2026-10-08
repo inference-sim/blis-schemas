@@ -242,6 +242,32 @@ func TestEngineMustFitItsPool(t *testing.T) {
 	}
 }
 
+// TestPCPWithDPIsAVersionVerdict pins which layer answers whether prefill-context
+// parallelism may be combined with data parallelism. The schema admits it, because later
+// engines run it and llm-d deploys it; a scenario pinned to v0.29.0, which refuses it at
+// startup, is told so by that release's rules — as a rule problem, not a field one.
+func TestPCPWithDPIsAVersionVerdict(t *testing.T) {
+	b := bundle()
+	b.Scenario.Cluster.Nodes = 4
+	b.Scenario.Cluster.Fabric = "ib-400g"
+	b.Deployment.Pools[0].Nodes = 4
+	b.Deployment.Pools[0].Parallel = deployment.Parallelism{TP: 1, PP: 1, DP: 4, DPLocal: 1,
+		PCP: 8, DCP: 8}
+	rep := Validate(b)
+	if !rep.Field.OK() {
+		t.Fatalf("field validation must admit DP 4 x PCP 8:\n%s", renderAll(rep))
+	}
+	found := false
+	for _, p := range rep.Rule.Errors() {
+		if p.Rule == "pcp-excludes-data-parallelism" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the v0.29 rule should refuse DP 4 x PCP 8:\n%s", renderAll(rep))
+	}
+}
+
 func renderAll(r Report) string {
 	var b strings.Builder
 	for _, p := range r.Problems() {

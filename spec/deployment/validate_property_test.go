@@ -31,50 +31,83 @@ func dcpRejected(pl Parallelism) bool {
 	return false
 }
 
-// fitVerdict reports which of the two rank-fit bounds refused a layout.
+// fitVerdict reports which of the two rank-fit bounds refused a layout. The per-node
+// bound speaks only when the pool bound did not, so a test that relates two layouts
+// should compare refused(), which is what a user sees.
 func fitVerdict(pl Parallelism, nodes, gpusPerNode int) (pool, node bool) {
-	for _, p := range rankFit(pl, nodes, gpusPerNode).Errors() {
-		switch {
-		case p.Path == "pools[0].parallel" && strings.Contains(p.Message, "GPUs (pp"):
+	p := rankFit(pl, nodes, gpusPerNode)
+	for _, problem := range p.Errors() {
+		// The split refusal shares this path, so match the pool bound's own opening.
+		if problem.Path == "pools[0].parallel" && strings.HasPrefix(problem.Message, "needs ") {
 			pool = true
-		case p.Path == "pools[0].parallel.dp_local" && strings.Contains(p.Message, "would start at device"):
-			node = true
 		}
 	}
+	node = perNodeRefusal(p) != ""
 	return pool, node
+}
+
+func refused(pl Parallelism, nodes, gpusPerNode int) bool {
+	pool, node := fitVerdict(pl, nodes, gpusPerNode)
+	return pool || node
 }
 
 // --- engine models ------------------------------------------------------------------
 
 // engineAcceptsDCP is the tp/pcp/dcp block of vllm/config/parallel.py, transcribed from
-// the engine's source (lines 563-577 at 119937c6f1; 544-561 at 700a10be0b, identical).
-// The engine's fields are constrained ge=1, so it is defined only for widths of one or
-// more.
+// the engine's source (identical at v0.29.0 and 119937c6f1, apart from the PCP/DP line
+// the later release dropped). Python integers do not overflow, so the block is exact.
 func engineAcceptsDCP(tp, pcp, dcp int) bool {
 	if pcp == 1 {
 		return tp%dcp == 0 // "DCP reuses the TP ranks when PCP is disabled."
 	}
-	return dcp == 1 || dcp == pcp || dcp == tp*pcp
+	block := new(big.Int).Mul(big.NewInt(int64(tp)), big.NewInt(int64(pcp)))
+	return dcp == 1 || dcp == pcp || block.Cmp(big.NewInt(int64(dcp))) == 0
 }
 
-// enginePlacesOnOneNode simulates get_physical_gpu_ids_for_local_dp_rank: local replica
-// i is given devices [i*world, i*world + world/k), where k is the number of nodes one
-// replica's ranks are spread over (k divides world). It is written as a search over every
-// split, device range by device range, so it shares no arithmetic with the rule.
-func enginePlacesOnOneNode(world, dpLocal, gpusPerNode int) bool {
-	for k := 1; k <= world; k++ {
-		if world%k != 0 {
+// engineCanPlace simulates how the engine places one node's local replicas, for every
+// engine node count n the pool allows, device range by device range:
+//
+//   - nnodes_within_dp is 1 when n is 1, else n // (dp // dp_local). v0.29.0 takes the
+//     floor (and a split of 0 cannot run); later releases raise unless it divides.
+//   - The multiprocessing executor asserts the replica divides evenly over that split.
+//   - Local replica i takes [i*world, i*world + world/split).
+//
+// It shares no arithmetic with the rule, which reasons about the smallest split instead.
+func engineCanPlace(world, dp, dpLocal, nodes, gpusPerNode int, v029 bool) bool {
+	for n := 1; n <= nodes; n++ {
+		split := 1
+		if n > 1 {
+			groups := dp / dpLocal
+			if !v029 && n%groups != 0 {
+				continue
+			}
+			split = n / groups
+		}
+		if split == 0 || world%split != 0 {
 			continue
 		}
-		perNode, fits := world/k, true
+		share, fits := world/split, true
 		for i := 0; i < dpLocal && fits; i++ {
-			fits = i*world+perNode <= gpusPerNode
+			fits = i*world+share <= gpusPerNode
 		}
 		if fits {
 			return true
 		}
 	}
 	return false
+}
+
+// engineExpertGroup counts the ranks in rank 0's expert group by building the engine's
+// rank layout — ranks ordered DP x PP x PCP x TP — and collecting every rank that shares
+// rank 0's pipeline stage, which is how initialize_model_parallel groups them.
+func engineExpertGroup(tp, pp, pcp, dp int) int {
+	n := 0
+	for r := 0; r < dp*pp*pcp*tp; r++ {
+		if (r/(pcp*tp))%pp == 0 { // same pipeline stage as rank 0
+			n++
+		}
+	}
+	return n
 }
 
 // --- differential: the rules agree with the engine ---------------------------------
@@ -101,34 +134,112 @@ func TestDCPMatchesTheEngine(t *testing.T) {
 	if cases != 8192 {
 		t.Fatalf("grid covered %d cases, want 8192", cases)
 	}
+	// Widths whose block overflows an int, where wrapping would invent a match.
+	r := rand.New(rand.NewSource(5))
+	edge := func() int {
+		switch r.Intn(3) {
+		case 0:
+			return math.MaxInt - r.Intn(4)
+		case 1:
+			return 1 << (31 + r.Intn(32))
+		default:
+			return 1 + r.Intn(8)
+		}
+	}
+	for i := 0; i < 20000; i++ {
+		tp, pcp := edge(), 2+r.Intn(6)
+		dcp := []int{1, pcp, tp * pcp, edge(), tp}[r.Intn(5)] // tp*pcp may wrap: that is the point
+		if dcp < 1 {
+			continue
+		}
+		got := !dcpRejected(Parallelism{TP: tp, PP: 1, DP: 1, PCP: pcp, DCP: dcp})
+		if want := engineAcceptsDCP(tp, pcp, dcp); got != want {
+			t.Fatalf("tp %d pcp %d dcp %d: validator accepts=%v, engine accepts=%v", tp, pcp, dcp, got, want)
+		}
+	}
 }
 
-// TestPerNodeBoundMatchesEnginePlacement: the per-node bound refuses a layout exactly
-// when no node split lets the engine place every local replica on one node — so it
-// never refuses a layout the engine can run, and never admits one it cannot.
+// TestExpertParallelWidthMatchesTheEngine compares the derived width with the size of
+// the expert group the engine builds, over every small layout.
+func TestExpertParallelWidthMatchesTheEngine(t *testing.T) {
+	for tp := 1; tp <= 8; tp++ {
+		for pp := 1; pp <= 3; pp++ {
+			for pcp := 1; pcp <= 8; pcp++ {
+				for dp := 1; dp <= 8; dp++ {
+					pl := Parallelism{TP: tp, PP: pp, PCP: pcp, DP: dp, EnableExpertParallel: true}
+					if got, want := pl.ExpertParallelWidth(), engineExpertGroup(tp, pp, pcp, dp); got != want {
+						t.Fatalf("%+v: width %d, engine group %d", pl, got, want)
+					}
+				}
+			}
+		}
+	}
+}
+
+// TestExpertParallelWidthUnchangedWhereItWasValid: the width used to be tp x max(dp, pcp).
+// Wherever one of dp and pcp is at most 1 — every layout field validation admitted while
+// the two could not be combined — the product must give exactly that, so no existing
+// deployment's width moves.
+func TestExpertParallelWidthUnchangedWhereItWasValid(t *testing.T) {
+	old := func(p Parallelism) int {
+		wide := max(p.DP, p.PCP, 1)
+		return max(p.TP, 1) * wide
+	}
+	for tp := 0; tp <= 16; tp++ {
+		for wide := 0; wide <= 64; wide++ {
+			for _, pl := range []Parallelism{
+				{TP: tp, DP: wide, PCP: 0}, {TP: tp, DP: wide, PCP: 1},
+				{TP: tp, DP: 0, PCP: wide}, {TP: tp, DP: 1, PCP: wide},
+			} {
+				pl.EnableExpertParallel = true
+				if got, want := pl.ExpertParallelWidth(), old(pl); got != want {
+					t.Fatalf("%+v: width %d, previously %d", pl, got, want)
+				}
+			}
+		}
+	}
+}
+
+// TestPerNodeBoundMatchesEnginePlacement: where the pool bound holds, the per-node bound
+// refuses a layout exactly when no engine node count up to the pool's lets the engine
+// place every local replica on one node. It is checked against the simulation under both
+// v0.29.0's and later semantics, which must agree — the rule claims the set of placeable
+// layouts did not change.
 func TestPerNodeBoundMatchesEnginePlacement(t *testing.T) {
 	r := rand.New(rand.NewSource(3))
-	refused := 0
+	refusedN, considered := 0, 0
 	const n = 20000
 	for i := 0; i < n; i++ {
 		gpn := []int{1, 2, 4, 8, 16}[r.Intn(5)]
 		dp := 1 + r.Intn(16)
 		pl := Parallelism{TP: 1 + r.Intn(16), PP: 1 + r.Intn(3), DP: dp, PCP: r.Intn(3),
 			DPLocal: 1 + r.Intn(dp)}
+		nodes := 1 + r.Intn(12)
 		world := pl.TP * pl.PP * max(pl.PCP, 1)
-		want := !enginePlacesOnOneNode(world, pl.DPLocal, gpn)
-		_, got := fitVerdict(pl, 1+r.Intn(64), gpn)
-		if got {
-			refused++
+		pool, node := fitVerdict(pl, nodes, gpn)
+		if pool {
+			if node {
+				t.Fatalf("%+v on %d x %d: per-node bound spoke after the pool bound", pl, nodes, gpn)
+			}
+			continue
 		}
-		if got != want {
-			t.Fatalf("%+v on %d-GPU nodes (world %d): validator refuses=%v, engine cannot place=%v",
-				pl, gpn, world, got, want)
+		considered++
+		head := engineCanPlace(world, dp, pl.DPLocal, nodes, gpn, false)
+		v029 := engineCanPlace(world, dp, pl.DPLocal, nodes, gpn, true)
+		if head != v029 {
+			t.Fatalf("%+v on %d x %d (world %d): releases disagree, later=%v v0.29.0=%v",
+				pl, nodes, gpn, world, head, v029)
+		}
+		if node {
+			refusedN++
+		}
+		if node != !head {
+			t.Fatalf("%+v on %d x %d (world %d): validator refuses=%v, engine can place=%v",
+				pl, nodes, gpn, world, node, head)
 		}
 	}
-	// Guard against a generator that only ever produces one verdict.
-	if refused == 0 || refused == n {
-		t.Fatalf("degenerate sample: %d of %d refused", refused, n)
+	if refusedN == 0 || refusedN == considered {
+		t.Fatalf("degenerate sample: %d of %d refused", refusedN, considered)
 	}
 }
 
@@ -226,10 +337,11 @@ func TestMoreRoomNeverAddsARankFitProblem(t *testing.T) {
 	r := rand.New(rand.NewSource(11))
 	for i := 0; i < 20000; i++ {
 		pl, nodes, gpn := randomLayout(r)
-		pool, node := fitVerdict(pl, nodes, gpn)
+		if refused(pl, nodes, gpn) {
+			continue
+		}
 		for _, room := range [][2]int{{nodes + 1 + r.Intn(8), gpn}, {nodes, gpn * 2}} {
-			p2, n2 := fitVerdict(pl, room[0], room[1])
-			if (p2 && !pool) || (n2 && !node) {
+			if refused(pl, room[0], room[1]) {
 				t.Fatalf("%+v: fits %d x %d but not %d x %d", pl, nodes, gpn, room[0], room[1])
 			}
 		}
@@ -237,28 +349,39 @@ func TestMoreRoomNeverAddsARankFitProblem(t *testing.T) {
 }
 
 // TestWiderLayoutsNeverLoseARankFitProblem: whatever does not fit still does not fit when
-// any width grows. Growing dp alone cannot move the per-node bound (it reads dp_local and
-// the replica), so that bound is only checked for the replica's own widths.
+// a width grows. Growing dp alone changes how replicas split over nodes (dp / dp_local
+// node groups), so it is only checked against the pool bound, which it can only worsen.
 func TestWiderLayoutsNeverLoseARankFitProblem(t *testing.T) {
 	r := rand.New(rand.NewSource(13))
 	grow := map[string]func(*Parallelism){
 		"tp":  func(p *Parallelism) { p.TP++ },
 		"pp":  func(p *Parallelism) { p.PP++ },
 		"pcp": func(p *Parallelism) { p.PCP = max(p.PCP, 1) + 1 },
-		"dp":  func(p *Parallelism) { p.DP++ },
 	}
 	for i := 0; i < 20000; i++ {
 		pl, nodes, gpn := randomLayout(r)
-		pool, node := fitVerdict(pl, nodes, gpn)
+		pool, _ := fitVerdict(pl, nodes, gpn)
+		if pool {
+			wider := pl
+			wider.DP++
+			if p2, _ := fitVerdict(wider, nodes, gpn); !p2 {
+				t.Fatalf("%+v exceeds %d x %d, but growing dp made it fit", pl, nodes, gpn)
+			}
+		}
+		if !refused(pl, nodes, gpn) {
+			continue
+		}
 		for axis, g := range grow {
 			wider := pl
 			g(&wider)
-			p2, n2 := fitVerdict(wider, nodes, gpn)
-			if pool && !p2 {
-				t.Fatalf("%+v exceeds %d x %d, but growing %s made it fit", pl, nodes, gpn, axis)
-			}
-			if node && !n2 && axis != "dp" {
-				t.Fatalf("%+v cannot be placed on a %d-GPU node, but growing %s placed it", pl, gpn, axis)
+			// A wider replica can only start later and need more: if no split placed the
+			// narrower one, none places this — unless the wider width admits a split the
+			// narrower did not (tp 9 has no split of 2; tp 10 does). That is placement,
+			// not room, so only the pool bound is monotone here.
+			if pool {
+				if p2, _ := fitVerdict(wider, nodes, gpn); !p2 {
+					t.Fatalf("%+v exceeds %d x %d, but growing %s made it fit", pl, nodes, gpn, axis)
+				}
 			}
 		}
 	}

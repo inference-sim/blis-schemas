@@ -82,6 +82,7 @@ func TestPackRuleSet(t *testing.T) {
 		"expert-imbalance-without-eplb",
 		"mamba-cache-mode-matches-model",
 		"offload-spec-known",
+		"pcp-excludes-data-parallelism",
 		"quantization-known",
 		"sequence-parallel-moe-implied",
 		"speculative-method-known",
@@ -356,5 +357,33 @@ func TestEvictionPolicyKnown(t *testing.T) {
 	s.Offload.EvictionPolicy = "arc"
 	if p := run(t, s, graniteGraph()); fired(p, "eviction-policy-known") {
 		t.Errorf("rule fired on an in-tree policy:\n%s", p.Error())
+	}
+}
+
+// TestPCPExcludesDataParallelism: this release refuses the combination at startup, so a
+// v0.29 scenario that asks for it is reported — by the version's own rule, because the
+// schema admits it for releases that run it. Each axis alone is fine.
+func TestPCPExcludesDataParallelism(t *testing.T) {
+	cases := []struct {
+		name string
+		pl   deployment.Parallelism
+		want bool
+	}{
+		{"pcp with dp", deployment.Parallelism{TP: 1, PP: 1, DP: 4, PCP: 8}, true},
+		{"pcp alone", deployment.Parallelism{TP: 1, PP: 1, DP: 1, PCP: 8}, false},
+		{"dp alone", deployment.Parallelism{TP: 1, PP: 1, DP: 8}, false},
+		{"pcp unset with dp", deployment.Parallelism{TP: 1, PP: 1, DP: 8, PCP: 0}, false},
+		{"pcp 1 with dp", deployment.Parallelism{TP: 1, PP: 1, DP: 8, PCP: 1}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			p := run(t, dep(colocated(c.pl, deployment.Engine{})), nil)
+			if got := fired(p, "pcp-excludes-data-parallelism"); got != c.want {
+				t.Fatalf("%+v: rule fired=%v, want %v\n%s", c.pl, got, c.want, p.Error())
+			}
+			if c.want && !strings.Contains(p.Error(), "pcp 8 with dp 4") {
+				t.Errorf("message should name both widths: %s", p.Error())
+			}
+		})
 	}
 }

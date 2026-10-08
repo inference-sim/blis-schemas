@@ -71,6 +71,11 @@ func TestExpertParallelWidthIsDerived(t *testing.T) {
 		{"tp2 dp8", Parallelism{TP: 2, DP: 8, EnableExpertParallel: true}, 16},
 		{"pcp wider than dp", Parallelism{TP: 2, DP: 1, PCP: 4, EnableExpertParallel: true}, 8},
 		{"zero guards", Parallelism{EnableExpertParallel: true}, 1},
+		// The llm-d glm-5.3 canary: the engine's expert group spans DP x PCP x TP, which
+		// its manifest records as EP32. The max form would have said 8.
+		{"pcp with dp", Parallelism{TP: 1, DP: 4, PCP: 8, EnableExpertParallel: true}, 32},
+		{"tp pcp and dp", Parallelism{TP: 2, DP: 4, PCP: 2, EnableExpertParallel: true}, 16},
+		{"saturates", Parallelism{TP: math.MaxInt, DP: 2, EnableExpertParallel: true}, math.MaxInt},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -91,10 +96,6 @@ func TestRejects(t *testing.T) {
 		{"no pools", func(d *Deployment) { d.Pools = nil }},
 		{"unknown role", func(d *Deployment) { d.Pools[0].Role = "warmup" }},
 		{"zero tp", func(d *Deployment) { d.Pools[0].Parallel.TP = 0 }},
-		{"pcp and dp both above one", func(d *Deployment) {
-			d.Pools[0].Parallel.PCP = 2
-			d.Pools[0].Parallel.DP = 8
-		}},
 		{"dp_local exceeds dp", func(d *Deployment) {
 			d.Pools[0].Parallel.DPLocal = 99
 		}},
@@ -467,44 +468,26 @@ func TestDecodeContextParallelMessagesNameTheFacts(t *testing.T) {
 	}
 }
 
-// TestDCPAlongsideThePCPDPConflict pins how the new rules compose with the pre-existing
-// PCP/DP check, which no other case covers. Both problems are true of the document as
-// written and each names the right field, so both are reported — that is the
-// accumulating problem list working as designed.
-//
-// It is worth pinning because the pair is CONTINGENT in a way that looks like a bug and
-// is not: fixing pcp to 1 also clears the dcp problem (4 divides tp 4), while fixing dp
-// to 1 leaves it standing. An author sees both constraints and converges in one round
-// either way, which is the property that matters. What would be a defect is a dcp
-// verdict computed from a width the document does not state — see
-// TestNegativeContextParallelWidth, where the rules decline rather than guess.
-func TestDCPAlongsideThePCPDPConflict(t *testing.T) {
+// TestPCPWithDPIsNotAFieldProblem: whether prefill-context parallelism may be combined
+// with data parallelism depends on the engine release, so field validation must admit
+// it. The engine supports it from e6dc16cebd and llm-d deploys it — the glm-5.3 canary
+// runs DP 4 x PCP 8 x DCP 8 at TP 1 — so a field check refusing it would reject a real
+// deployment for every engine version. v0.29.0's refusal lives in its rules pack.
+func TestPCPWithDPIsNotAFieldProblem(t *testing.T) {
 	d := singleNodeDeployment()
-	d.Pools[0].Parallel = Parallelism{TP: 4, PP: 1, DP: 8, PCP: 2, DCP: 4}
-	p := d.Validate()
-	if p.OK() {
-		t.Fatal("expected rejection")
+	d.Pools[0].Nodes = 4
+	d.Pools[0].Parallel = Parallelism{TP: 1, PP: 1, DP: 4, PCP: 8, DCP: 8, DPLocal: 1,
+		EnableExpertParallel: true}
+	if p := d.Validate(); !p.OK() {
+		t.Fatalf("DP 4 x PCP 8 should be admitted by field validation:\n%s", p.Error())
 	}
-	want := map[string]bool{
-		"pools[0].parallel.pcp": false, // pcp and dp cannot both exceed 1
-		"pools[0].parallel.dcp": false, // 4 is not in {1, 2, 8} with pcp on
+	if p := d.ValidateAgainstCluster(ClusterConstraints{Nodes: 4, GPUsPerNode: 8}); !p.OK() {
+		t.Fatalf("DP 4 x PCP 8 on four 8-GPU nodes should fit:\n%s", p.Error())
 	}
-	for _, problem := range p.All() {
-		if _, ok := want[problem.Path]; ok {
-			want[problem.Path] = true
-		}
-	}
-	for path, seen := range want {
-		if !seen {
-			t.Errorf("expected a problem at %s, got:\n%s", path, p.Error())
-		}
-	}
-	// Correcting the conflict the other way leaves a document that is fully valid,
-	// which is what makes the dcp problem above contingent rather than spurious.
-	d2 := singleNodeDeployment()
-	d2.Pools[0].Parallel = Parallelism{TP: 4, PP: 1, DP: 1, PCP: 1, DCP: 4}
-	if p2 := d2.Validate(); !p2.OK() {
-		t.Errorf("dcp 4 divides tp 4 with pcp off and should validate:\n%s", p2.Error())
+	// The DCP rules still apply with data parallelism present.
+	d.Pools[0].Parallel.DCP = 3
+	if p := d.Validate(); p.OK() {
+		t.Fatal("dcp 3 is not in {1, 8} and should be rejected whatever dp is")
 	}
 }
 
@@ -611,15 +594,24 @@ func TestRankFitMessageNamesTheArithmetic(t *testing.T) {
 	}
 }
 
+// perNodeRefusal returns the per-node problem, if any. There are two messages — the last
+// local replica starts past the node, or no split the pool allows leaves its share on the
+// node — and they are matched on content, because the older dp_local checks share a path.
+func perNodeRefusal(p *validate.Problems) string {
+	for _, problem := range p.Errors() {
+		if strings.Contains(problem.Message, "would start at device") ||
+			strings.Contains(problem.Message, "no node count up to") {
+			return problem.Message
+		}
+	}
+	return ""
+}
+
 // TestRankFitPerNode covers the bound the total cannot see. The engine places local
-// data-parallel replica i at device i x world (world = pp x tp x pcp), however each
-// replica's own ranks are split across nodes, so the last local replica must at least
-// START on the node. The first case is the discriminator: it totals 16 on a pool of 16
-// and passes the pool bound, and only this one refuses it.
-//
-// The accepted cases pin that the bound is the one that holds for every node split, not
-// the stronger dp_local x world that assumes a replica sits on one node — which would
-// refuse layouts the engine runs.
+// data-parallel replica i at devices [i x world, i x world + share), where world is
+// pp x tp x pcp and share is that replica's part on one node, fixed by the engine's
+// node count. A layout is refused when no node count up to the pool's lets every
+// local replica's devices lie on the node.
 func TestRankFitPerNode(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -627,53 +619,88 @@ func TestRankFitPerNode(t *testing.T) {
 		nodes, gpus int
 		reject      bool
 	}{
+		// The total cannot see this one: 16 ranks on 16 GPUs, last replica at device 12.
 		{"fits the pool but not a node",
 			Parallelism{TP: 4, PP: 1, DP: 4, DPLocal: 4}, 2, 8, true},
 		{"replicas fill a node exactly",
 			Parallelism{TP: 4, PP: 1, DP: 4, DPLocal: 2}, 2, 8, false},
-		{"tp1 replicas, the wide-EP shape",
-			Parallelism{TP: 1, PP: 1, DP: 16, DPLocal: 8}, 2, 8, false},
 		{"pp and pcp count toward the replica",
 			Parallelism{TP: 2, PP: 2, DP: 4, PCP: 1, DPLocal: 4}, 2, 8, true},
 		{"last replica would start exactly at the node's end",
-			Parallelism{TP: 4, PP: 1, DP: 2, DPLocal: 2}, 1, 4, true},
-
-		// A replica wider than a node with two local replicas: the second starts at
-		// device 16 on an 8-GPU node whatever the split, and the engine raises. This
-		// validated before, because the per-node bound exempted wide replicas.
+			Parallelism{TP: 4, PP: 1, DP: 2, DPLocal: 2}, 2, 4, true},
 		{"wide replica with two local replicas",
 			Parallelism{TP: 16, PP: 1, DP: 4, DPLocal: 2}, 8, 8, true},
-		// One local replica of any width places nothing after it.
-		{"wide replica with one local replica",
+		{"wide replica with one local replica, split over the pool",
 			Parallelism{TP: 8, PP: 2, DP: 1, DPLocal: 1}, 2, 8, false},
 
-		// A replica split across nodes: tp 6 over three nodes puts two ranks on each, and
-		// the second local replica takes devices [6, 8). The engine runs this; the
-		// stronger one-node bound (2 x 6 > 8) would have refused it.
-		{"replica split across nodes",
-			Parallelism{TP: 6, PP: 1, DP: 2, DPLocal: 2}, 3, 8, false},
+		// From review: tp 6 with two local replicas. On three nodes each replica splits
+		// 2 / 2 / 2 and the second takes devices [6, 8). On two nodes no split works —
+		// one node puts the second at [6, 12), two nodes at [6, 9) — and the engine
+		// raises. Only the node count differs.
+		{"tp6 dp_local 2 on three nodes", Parallelism{TP: 6, PP: 1, DP: 2, DPLocal: 2}, 3, 8, false},
+		{"tp6 dp_local 2 on two nodes", Parallelism{TP: 6, PP: 1, DP: 2, DPLocal: 2}, 2, 8, true},
+		// One local replica of 12 on 8-GPU nodes must split over two nodes, which with two
+		// node groups (dp 2 / dp_local 1) needs an engine of four: the pool has three.
+		{"split needs more nodes than the pool has",
+			Parallelism{TP: 12, PP: 1, DP: 2, DPLocal: 1}, 3, 8, true},
+		{"the same split with the nodes it needs",
+			Parallelism{TP: 12, PP: 1, DP: 2, DPLocal: 1}, 4, 8, false},
+		// A split must divide the replica: tp 9 cannot be shared evenly by two nodes.
+		{"no even split exists", Parallelism{TP: 9, PP: 1, DP: 1, DPLocal: 1}, 2, 8, true},
+		{"three nodes split it evenly", Parallelism{TP: 9, PP: 1, DP: 1, DPLocal: 1}, 3, 8, false},
+
+		// llm-d shapes, from the curvebender manifests: one vLLM per pod, dp_local
+		// replicas of tp each on every node. All must fit.
+		{"llm-d wide-EP decode, LWS size 2", Parallelism{TP: 1, PP: 1, DP: 16, DPLocal: 8,
+			EnableExpertParallel: true}, 2, 8, false},
+		{"llm-d wide-EP prefill, 3 x LWS size 2", Parallelism{TP: 1, PP: 1, DP: 16, DPLocal: 8,
+			EnableExpertParallel: true}, 6, 8, false},
+		{"llm-d glm-5.2 decode, LWS size 4", Parallelism{TP: 1, PP: 1, DP: 32, DPLocal: 8,
+			EnableExpertParallel: true}, 4, 8, false},
+		{"llm-d canary DP4 x PCP8", Parallelism{TP: 1, PP: 1, DP: 4, PCP: 8, DCP: 8, DPLocal: 1,
+			EnableExpertParallel: true}, 4, 8, false},
+		{"llm-d decode DP16 x TP2", Parallelism{TP: 2, PP: 1, DP: 16, DPLocal: 4,
+			EnableExpertParallel: true}, 4, 8, false},
+
+		// dp_local unset: the engine infers it from the launch, so no verdict is given.
+		{"dp_local unset", Parallelism{TP: 4, PP: 1, DP: 4}, 2, 8, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			p := rankFit(c.pl, c.nodes, c.gpus)
-			fired := ""
-			// Matched on the message as well as the path: the pre-existing "does not
-			// divide gpus_per_node" and "exceeds dp" checks file at the same path, and
-			// either would otherwise satisfy this for the wrong reason.
-			for _, problem := range p.All() {
-				if problem.Path == "pools[0].parallel.dp_local" &&
-					strings.Contains(problem.Message, "would start at device") {
-					fired = problem.Message
-				}
-			}
-			if c.reject && fired == "" {
+			got := perNodeRefusal(p)
+			if c.reject && got == "" {
 				t.Fatalf("%+v on %d x %d: expected the per-node bound to fire, got:\n%s",
 					c.pl, c.nodes, c.gpus, p.Error())
 			}
-			if !c.reject && fired != "" {
-				t.Fatalf("%+v on %d x %d should fit, got: %s", c.pl, c.nodes, c.gpus, fired)
+			if !c.reject && !p.OK() {
+				t.Fatalf("%+v on %d x %d should fit, got:\n%s", c.pl, c.nodes, c.gpus, p.Error())
 			}
 		})
+	}
+}
+
+// TestRankFitPerNodeSplitMessage pins what the split-case message tells a reader: the
+// node count it searched up to, the replica size, and the room the last replica has.
+func TestRankFitPerNodeSplitMessage(t *testing.T) {
+	msg := perNodeRefusal(rankFit(Parallelism{TP: 6, PP: 1, DP: 2, DPLocal: 2}, 2, 8))
+	for _, want := range []string{"up to the pool's 2", "2 local replicas of 6 GPUs", "8-GPU node", "leaves 2 GPUs"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("message does not contain %q: %s", want, msg)
+		}
+	}
+}
+
+// TestPerNodeDeclinesWhenThePoolBoundFired: an engine that does not fit its pool at all
+// is told so once. The per-node bound would otherwise add a second refusal of the same
+// layout, pointing at dp_local when the fix may be any width or the node count.
+func TestPerNodeDeclinesWhenThePoolBoundFired(t *testing.T) {
+	p := rankFit(Parallelism{TP: 16, PP: 1, DP: 4, DPLocal: 2}, 1, 8)
+	if p.OK() {
+		t.Fatal("64 ranks on 8 GPUs must be refused")
+	}
+	if got := perNodeRefusal(p); got != "" {
+		t.Errorf("per-node bound fired after the pool bound: %s", got)
 	}
 }
 
@@ -784,5 +811,34 @@ func TestRankFitDeclinesOnMalformedInput(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestDCPCompareIsExact: the engine's tp x pcp is Python arithmetic and cannot overflow,
+// so neither may ours. With int arithmetic, tp MaxInt and pcp 3 wrap to MaxInt-2, and a
+// dcp of MaxInt-2 would be admitted as "the full block" while the engine rejects it.
+func TestDCPCompareIsExact(t *testing.T) {
+	d := singleNodeDeployment()
+	d.Pools[0].Parallel = Parallelism{TP: math.MaxInt, PP: 1, DP: 1, PCP: 3, DCP: math.MaxInt - 2}
+	var msg string
+	for _, problem := range d.Validate().Errors() {
+		if problem.Path == "pools[0].parallel.dcp" {
+			msg = problem.Message
+		}
+	}
+	if msg == "" {
+		t.Fatal("dcp MaxInt-2 is not tp x pcp = 3 x MaxInt and must be rejected")
+	}
+	// The set printed is the engine's: 1, 3, and the exact block.
+	if want := "[1 3 27670116110564327421]"; !strings.Contains(msg, want) {
+		t.Errorf("admissible set should be %s: %s", want, msg)
+	}
+	// And the exact block itself is not mistaken for anything else: tp 2^31, pcp 2^31
+	// has a block of 2^62, which fits an int, and a dcp of that width is admitted.
+	d.Pools[0].Parallel = Parallelism{TP: 1 << 31, PP: 1, DP: 1, PCP: 1 << 31, DCP: 1 << 62}
+	for _, problem := range d.Validate().Errors() {
+		if problem.Path == "pools[0].parallel.dcp" {
+			t.Errorf("dcp equal to the full block must be admitted: %s", problem)
+		}
 	}
 }
