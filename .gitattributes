@@ -1,0 +1,2 @@
+# Generated pages are compared byte for byte with what docgen writes, which is LF.
+docs/generated/** text eol=lf
