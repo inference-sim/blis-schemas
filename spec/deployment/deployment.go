@@ -270,7 +270,7 @@ type DBO struct {
 }
 
 // EPLB is expert-parallel load balancing. NumRedundantExperts is not cosmetic: with
-// EPLB enabled the physical expert count must divide the EP width, so this field
+// EPLB enabled the EP width must divide the physical expert count, so this field
 // decides whether a layout is feasible at all.
 type EPLB struct {
 	Enabled             bool `yaml:"enable_eplb"`

@@ -279,7 +279,7 @@ func ruleList(p *rules.Pack) []rules.Rule {
 		},
 		{
 			Name:    "expert-divisibility-under-eplb",
-			Because: "with load balancing on, the engine asserts that physical experts divide the expert-parallel width, so an indivisible layout does not start",
+			Because: "with load balancing on, the engine asserts that the expert-parallel width divides the physical expert count, so an indivisible layout does not start",
 			Check: func(in rules.Input, out *validate.Problems) {
 				if in.Model == nil {
 					return
@@ -301,7 +301,7 @@ func ruleList(p *rules.Pack) []rules.Rule {
 					if physical%ep != 0 {
 						need := (ep - physical%ep) % ep
 						out.RuleErrorf("expert-divisibility-under-eplb",
-							"%s: %d experts plus %d redundant is %d, which does not divide expert-parallel width %d; %d more redundant experts would",
+							"%s: %d experts plus %d redundant is %d, which expert-parallel width %d does not divide; %d more redundant experts would make it divide",
 							at, experts, e.EPLB.NumRedundantExperts, physical, ep, need)
 					}
 				})
@@ -309,7 +309,7 @@ func ruleList(p *rules.Pack) []rules.Rule {
 		},
 		{
 			Name:    "expert-imbalance-without-eplb",
-			Because: "without load balancing an indivisible split is legal but uneven, and the resulting static imbalance is a step-time term rather than an error",
+			Because: "without load balancing an indivisible split is legal but uneven, and the resulting static imbalance is a step-time term rather than an error; a width larger than the expert count leaves ranks with no experts, which is an error",
 			Check: func(in rules.Input, out *validate.Problems) {
 				if in.Model == nil {
 					return
@@ -398,7 +398,7 @@ func ruleList(p *rules.Pack) []rules.Rule {
 		},
 		{
 			Name:    "connector-known",
-			Because: "the connector names the offload/PD-transfer implementation whose spec decides whether a fetch consumes SMs or a copy engine, so an unknown name leaves the transfer on no modelled resource; a warning because the KV connector registry is extensible out of tree",
+			Because: "the connector names the offload/PD-transfer implementation whose spec decides whether a fetch consumes SMs or a copy engine, so an unknown name leaves the transfer on no modeled resource; a warning because the KV connector registry is extensible out of tree",
 			Check: func(in rules.Input, out *validate.Problems) {
 				if in.Deployment == nil {
 					return
@@ -457,7 +457,7 @@ func ruleList(p *rules.Pack) []rules.Rule {
 		},
 		{
 			Name:    "cascade-attention-is-opt-in",
-			Because: "cascade attention changes the attention primitive itself, and a deployment that leaves it unstated gets the engine default rather than the faster path",
+			Because: "cascade attention is off unless requested, and a request for it alongside speculative decoding, with async scheduling left to the engine, is one the engine overrides once async scheduling resolves on",
 			Check: func(in rules.Input, out *validate.Problems) {
 				if !p.CascadeAttnOptIn {
 					return
