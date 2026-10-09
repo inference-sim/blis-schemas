@@ -1,0 +1,146 @@
+site_name: blis-schemas
+site_description: >-
+  Go schemas and validators for the BLIS cost model: the shapes of the documents that
+  describe a model, its hardware, its coefficients, a deployment, and a measured run.
+site_url: https://inference-sim.github.io/blis-schemas/
+repo_url: https://github.com/inference-sim/blis-schemas
+repo_name: inference-sim/blis-schemas
+edit_uri: edit/main/docs/
+copyright: Apache 2.0 · part of <a href="https://github.com/inference-sim">BLIS</a>
+
+# docs/examples/, docs/figures/ and docs/generated/ are included into pages by the snippets
+# extension, not rendered on their own.
+exclude_docs: |
+  examples/
+  figures/
+  generated/
+  requirements.txt
+
+# Fail the strict build on anything that would leave a reader at a dead end: a page missing
+# from the navigation, a link to a page that does not exist, or a link to a heading that
+# does not exist.
+validation:
+  nav:
+    omitted_files: warn
+    not_found: warn
+    absolute_links: warn
+  links:
+    not_found: warn
+    anchors: warn
+    absolute_links: warn
+    unrecognized_links: warn
+
+theme:
+  name: material
+  font:
+    text: IBM Plex Sans
+    code: IBM Plex Mono
+  icon:
+    repo: fontawesome/brands/github
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: white
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: black
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.indexes
+    - navigation.top
+    - navigation.footer
+    - search.highlight
+    - search.suggest
+    - content.code.copy
+    - content.action.edit
+    - toc.follow
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      # Puts language-<name> on each block, which the stylesheet uses to wrap program output.
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.snippets:
+      # Paths in a snippet are relative to the repository root, so a page can include a
+      # committed example, a vendored catalog file or a Go example by its real path.
+      base_path: ["."]
+      check_paths: true
+      dedent_subsections: true
+
+plugins:
+  - search
+  # Every version's pages name the latest release's copy as canonical, so search engines
+  # index one version rather than all of them.
+  - mike:
+      canonical_version: latest
+
+extra:
+  version:
+    provider: mike
+    default: latest
+    alias: true
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/inference-sim/blis-schemas
+
+extra_css:
+  - stylesheets/extra.css
+
+nav:
+  - Home: index.md
+  - Concepts:
+      - concepts/index.md
+      - The BLIS repositories: concepts/repositories.md
+      - Documents: concepts/documents.md
+      - Validation: concepts/validation.md
+      - Contracts: concepts/contracts.md
+  - Guides:
+      - guides/index.md
+      - Validate a catalog or registry: guides/checkouts.md
+      - Write a scenario and a deployment: guides/authoring.md
+      - Validate documents from Go: guides/go.md
+  - Reference:
+      - reference/index.md
+      - Scenario: reference/scenario.md
+      - Deployment: reference/deployment.md
+      - Workload: reference/workload.md
+      - Model graph: reference/model.md
+      - Hardware: reference/hardware.md
+      - Coefficient set: reference/coefficients.md
+      - Evaluation run: reference/evaluation.md
+      - Kernel interface: reference/kernel.md
+      - Vocabularies: reference/vocabularies.md
+      - Rules packs: reference/rules.md
+      - Command line: reference/cli.md
+  - Design notes:
+      - design/index.md
+      - Why a model is a graph: design/model-graph.md
+      - Where the kernel stops: design/kernel-boundary.md
+      - Parallel layouts: design/layouts.md
+  - Contributing:
+      - contributing/index.md
+      - A new engine release: contributing/engine-release.md
+      - Documentation and releases: contributing/documentation.md

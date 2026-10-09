@@ -9,3 +9,7 @@
 # re-include it (and its subtree) — a compiled binary never lives under testdata.
 !/cmd/*/testdata/
 !/cmd/*/testdata/**
+
+# mkdocs build output
+/site/
+/.venv/

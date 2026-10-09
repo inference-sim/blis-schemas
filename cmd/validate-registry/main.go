@@ -25,9 +25,10 @@
 // to route this command through blisschemas.Validate(Bundle{Coefficients: ...}) so it
 // enforces coefficient-level rules.
 //
-// Unlike validate-catalog it does not check that a file's name matches the set's name:
-// the registry has no filename-equals-name convention (cost-model-primitives.yaml holds a
-// set named for its cost model, not its file), so there is nothing to check.
+// Unlike validate-catalog it does not check that a file's name matches the set's name. By
+// convention the two are equal in every committed set, and a scenario refers to a set by its
+// file name (ValidateAgainstCatalog resolves coefficients/<name>.yaml), but no gate enforces
+// the convention today.
 package main
 
 import (
