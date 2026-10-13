@@ -559,3 +559,44 @@ func TestV41SequenceParallelDataMatchSource(t *testing.T) {
 		t.Errorf("the pack's V4.1 condition is %+v, the engine's is %+v", got, want)
 	}
 }
+
+// The model-sequence-parallel-collectives rule rests on two facts: DeepSeek-V4's and V4.1's
+// model code never reads the engine-wide use_sequence_parallel_moe, and FusedMoE skips its
+// final tensor-parallel all-reduce when the model makes it sequence-parallel.
+func TestModelSequenceParallelCollectivesMatchSource(t *testing.T) {
+	root := vllmSource(t)
+	for _, dir := range []string{"deepseek_v4", "deepseek_v41"} {
+		base := filepath.Join(root, "vllm", "models", dir)
+		if _, err := os.Stat(base); err != nil {
+			t.Fatalf("%s: %v", base, err)
+		}
+		err := filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() || !strings.HasSuffix(path, ".py") {
+				return err
+			}
+			b, err := os.ReadFile(path)
+			if err == nil && strings.Contains(string(b), "use_sequence_parallel_moe") {
+				t.Errorf("%s reads use_sequence_parallel_moe; the rule's premise no longer holds", path)
+			}
+			return err
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	runner := readSource(t, root, "vllm", "model_executor", "layers", "fused_moe", "runner", "moe_runner.py")
+	i := strings.Index(runner, "def _maybe_reduce_final_output(")
+	if i < 0 {
+		t.Fatal("_maybe_reduce_final_output not found; FusedMoE's reduction may have moved")
+	}
+	body := runner[i:]
+	body = body[:strings.Index(body, "return states")]
+	if !strings.Contains(body, "not self.moe_config.is_sequence_parallel") ||
+		!strings.Contains(body, "tensor_model_parallel_all_reduce(states)") {
+		t.Error("FusedMoE's final all-reduce no longer depends on sequence parallelism")
+	}
+	v41 := readSource(t, root, "vllm", "models", "deepseek_v41", "nvidia", "model.py")
+	if !strings.Contains(v41, "use_sequence_parallel=self.use_sequence_parallel,") {
+		t.Error("DeepSeek-V4.1 no longer passes its own sequence-parallel flag to its MoE")
+	}
+}

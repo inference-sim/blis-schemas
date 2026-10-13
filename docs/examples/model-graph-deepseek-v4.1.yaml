@@ -1,7 +1,8 @@
 # DeepSeek-V4.1-Flash, abridged to show the keys a V4.1 graph needs. The catalog's
 # derived graph carries every node; this one keeps the nodes whose keys are new and drops
-# norms, RoPE launches, mHC, the router, the MoE reduction and similar work, the draft's
-# embedding alias and confidence head, and the SM100 attention path's different launches. Each figure here is from the
+# norms, RoPE launches, mHC, the router and similar work, the draft's embedding alias and
+# confidence head, and the SM100 attention path's different launches. Its collectives are
+# shown in full on the first layer kind only. Each figure here is from the
 # model's config.json or from vLLM v0.31.0's source, as the schema's doc comments cite.
 kind: ModelGraph
 name: deepseek-v4.1-flash
@@ -55,7 +56,11 @@ layer_kinds:
   - {op: GroupedGEMM, role: experts, n: 2304, k: 5120, experts: 384, top_k: 6,
      weight_dtype: mxfp4}
   - {op: All2All, role: moe_dispatch_combine, emit: expert_parallel}
-  edges: [[0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [5, 6], [5, 7], [6, 8], [7, 8], [8, 9]]
+  # The MoE's tensor-parallel reduction follows the model's own sequence parallelism, not
+  # the engine-wide sequence-parallel-MoE rule, which V4.1 never consults: FusedMoE skips
+  # it when the model makes the MoE sequence-parallel.
+  - {op: AllReduce, role: mlp_out, emit: tensor_parallel_unless_sequence_parallel}
+  edges: [[0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [5, 6], [5, 7], [6, 8], [7, 8], [8, 9], [9, 10]]
 - id: swa_engram
   nodes:
   - {op: Gather, role: engram_lookup, rows: 384006168, row_bytes: 264, rows_per_token: 24,

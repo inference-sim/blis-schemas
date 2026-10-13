@@ -76,6 +76,9 @@
 `sequence-parallel-architecture-known`
 :   *warning.* A graph's sequence_parallel emit conditions are decided by its architecture's own code, so on an architecture this release has no such rule for they never fire and the graph prices tensor parallelism alone.
 
+`model-sequence-parallel-collectives`
+:   *error or warning.* An architecture that decides its own sequence parallelism never consults the engine-wide sequence-parallel-MoE rule -- DeepSeek-V4.1 passes its own _use_sequence_parallel to its MoE and shared expert, and FusedMoE then skips the final tensor-parallel all-reduce (vllm/model_executor/layers/fused_moe/runner/moe_runner.py, "Skipped when sequence-parallel is active") -- so a decoder-layer reduction conditioned on that rule fires or not on the wrong layouts; and a plain tensor-parallel all-reduce inside a decoder layer is replaced under the model's sequence parallelism, which shards the residual stream by token.
+
 `moonep-requirements`
 :   *error.* This release refuses the moonep all2all backend at startup for a quantized model, a model whose dtype is not BF16, and with EPLB (vllm/config/vllm.py), so such a pool does not run; its refusal of a non-linear expert placement needs no check, because a deployment cannot state one and the default is linear.
 

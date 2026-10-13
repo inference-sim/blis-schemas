@@ -128,6 +128,12 @@ omitted `emit` reads as.
 The last two may also sit on a non-collective node, for a node whose layout sequence
 parallelism changes and which the graph therefore states once for each mode.
 
+A model that decides its own sequence parallelism never consults the engine-wide rule
+`tensor_parallel_unless_sp_moe` names, so its decoder-layer reductions, the MoE's
+included, use `tensor_parallel_unless_sequence_parallel`. DeepSeek-V4.1 passes its own flag
+to its MoE, and vLLM's FusedMoE then skips the final tensor-parallel all-reduce. The
+0.31.0 rules pack reports the engine-wide condition on such a model as an error.
+
 ### Modalities
 
 A graph's `modality`. An omitted `modality` means `text_only`.

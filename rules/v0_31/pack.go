@@ -756,6 +756,36 @@ func ruleList(p *rules.Pack) []rules.Rule {
 			},
 		},
 		{
+			Name:    "model-sequence-parallel-collectives",
+			Because: "an architecture that decides its own sequence parallelism never consults the engine-wide sequence-parallel-MoE rule -- DeepSeek-V4.1 passes its own _use_sequence_parallel to its MoE and shared expert, and FusedMoE then skips the final tensor-parallel all-reduce (vllm/model_executor/layers/fused_moe/runner/moe_runner.py, \"Skipped when sequence-parallel is active\") -- so a decoder-layer reduction conditioned on that rule fires or not on the wrong layouts; and a plain tensor-parallel all-reduce inside a decoder layer is replaced under the model's sequence parallelism, which shards the residual stream by token",
+			Check: func(in rules.Input, out *validate.Problems) {
+				if in.Model == nil {
+					return
+				}
+				arch := in.Model.Global.Architecture
+				if _, ok := p.ModelSequenceParallelRules[arch]; !ok {
+					return
+				}
+				// Only decoder layers run on the sharded stream: the embedding reduces before
+				// the stream is sharded and the head after it is gathered back.
+				for i, lk := range in.Model.LayerKinds {
+					for j, n := range lk.Nodes {
+						at := fmt.Sprintf("model layer_kinds[%d].nodes[%d]", i, j)
+						switch {
+						case n.Emit == model.EmitTensorParallelUnlessSequenceParallelMoE:
+							out.RuleErrorf("model-sequence-parallel-collectives",
+								"%s.emit: %q, but %s decides sequence parallelism itself and never consults that rule in engine %s; use %q",
+								at, n.Emit, arch, p.Version, model.EmitTensorParallelUnlessSequenceParallel)
+						case n.Op == model.OpAllReduce && n.Emit == model.EmitTensorParallel:
+							out.RuleWarnf("model-sequence-parallel-collectives",
+								"%s: a tensor-parallel all-reduce in a decoder layer of %s, which engine %s replaces under the model's sequence parallelism; emit it %q, with its replacement under %q",
+								at, arch, p.Version, model.EmitTensorParallelUnlessSequenceParallel, model.EmitSequenceParallel)
+						}
+					}
+				}
+			},
+		},
+		{
 			Name:    "moonep-requirements",
 			Because: "this release refuses the moonep all2all backend at startup for a quantized model, a model whose dtype is not BF16, and with EPLB (vllm/config/vllm.py), so such a pool does not run; its refusal of a non-linear expert placement needs no check, because a deployment cannot state one and the default is linear",
 			Check: func(in rules.Input, out *validate.Problems) {

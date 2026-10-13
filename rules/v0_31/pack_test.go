@@ -90,6 +90,7 @@ func TestPackRuleSet(t *testing.T) {
 		"expert-imbalance-without-eplb",
 		"mamba-cache-mode-matches-model",
 		"max-model-len-within-context-window",
+		"model-sequence-parallel-collectives",
 		"moonep-requirements",
 		"offload-spec-known",
 		"quantization-known",
@@ -872,6 +873,51 @@ func TestCacheRecordDTypesKnown(t *testing.T) {
 			if got := fired(p, "cache-record-dtypes-known"); got != want {
 				t.Errorf("%q (override %v): fired=%v, want %v\n%s", key, inOverride, got, want, p.Error())
 			}
+		}
+	}
+}
+
+// On an architecture with its own sequence parallelism, a decoder-layer reduction keyed
+// to the engine-wide MoE rule is an error and a plain tensor-parallel all-reduce a
+// warning; the same graph on an architecture without one draws neither, and neither does
+// a head collective, which runs after the stream is gathered back.
+func TestModelSequenceParallelCollectives(t *testing.T) {
+	pl := deployment.Parallelism{TP: 8, PP: 1, DP: 1}
+	graph := func(arch string, emit model.EmitCondition, inHead bool) *model.Graph {
+		g := graniteGraph()
+		g.Global.Architecture = arch
+		n := model.Node{Op: model.OpAllReduce, Role: "mlp_out", Emit: emit}
+		if inHead {
+			g.Head = append(g.Head, n)
+		} else {
+			g.LayerKinds[0].Nodes = append(g.LayerKinds[0].Nodes, n)
+		}
+		return g
+	}
+	severity := func(g *model.Graph) string {
+		for _, pr := range run(t, dep(colocated(pl, deployment.Engine{})), g).All() {
+			if pr.Rule == "model-sequence-parallel-collectives" {
+				return string(pr.Severity)
+			}
+		}
+		return ""
+	}
+	v41 := rules.ArchDeepseekV41
+	for _, c := range []struct {
+		arch   string
+		emit   model.EmitCondition
+		inHead bool
+		want   string
+	}{
+		{v41, model.EmitTensorParallelUnlessSequenceParallelMoE, false, "error"},
+		{v41, model.EmitTensorParallel, false, "warning"},
+		{v41, model.EmitTensorParallelUnlessSequenceParallel, false, ""},
+		{v41, model.EmitTensorParallel, true, ""},
+		{"DeepseekV3ForCausalLM", model.EmitTensorParallelUnlessSequenceParallelMoE, false, ""},
+		{"DeepseekV3ForCausalLM", model.EmitTensorParallel, false, ""},
+	} {
+		if got := severity(graph(c.arch, c.emit, c.inHead)); got != c.want {
+			t.Errorf("%s %q (head %v): got %q, want %q", c.arch, c.emit, c.inHead, got, c.want)
 		}
 	}
 }
