@@ -91,8 +91,12 @@ func TestForCapabilityIsAPureOverlay(t *testing.T) {
 	g.Speculator.Head[0].Aliases = ""
 	g.Speculator.Head[0].Role = "fused_wqa_wkv"
 	g.LayerKinds[0].Nodes[1].Caches[1].BytesByCacheDType = map[string]int{"nvfp4_ds_mla": 288}
+	g.LayerKinds[1].Nodes[0].Caches[1].BytesByCacheDType = map[string]int{"nvfp4_ds_mla": 288}
 	g.ArchOverrides[0].Caches = append(g.ArchOverrides[0].Caches,
 		CacheOverride{Name: "compressed", BytesByCacheDType: map[string]int{"fp8_ds_mla": 528}})
+	if p := g.Validate(); !p.OK() {
+		t.Fatalf("the base graph is invalid:\n%s", p.Error())
+	}
 	before := snapshot(t, g)
 
 	base := *g
@@ -118,6 +122,9 @@ func TestForCapabilityIsAPureOverlay(t *testing.T) {
 		if len(r.ArchOverrides) != 0 {
 			t.Fatalf("family %d: overrides survive resolution", major)
 		}
+		if p := r.Validate(); !p.OK() {
+			t.Fatalf("family %d resolved to an invalid graph:\n%s", major, p.Error())
+		}
 		// Writes through every pointer and map the copy shares a type with.
 		r.Global.WeightScale.Bytes = 99
 		r.Head[0].WeightDType = DTypeFP32
@@ -139,11 +146,11 @@ func TestForCapabilityIsAPureOverlay(t *testing.T) {
 	if got := r.LayerKinds[0].Nodes[1].Caches[1].BytesByCacheDType; got["nvfp4_ds_mla"] != 288 || got["fp8_ds_mla"] != 528 {
 		t.Errorf("a cache override's records should merge over the base's: %v", got)
 	}
-	// Readers take a restated entry size, because they state what they read, but never
-	// the owner's storage.
+	// Readers take the restated entry and per-dtype records, since they state what they
+	// read, but never the owner's paging.
 	reader := r.LayerKinds[1].Nodes[0].Caches[1]
-	if reader.BytesPerEntry != 584 || reader.BytesByCacheDType != nil {
-		t.Errorf("the reader picked up storage fields: %+v", reader)
+	if reader.PageAlignment != 0 || reader.EntryBytes("fp8_ds_mla") != r.LayerKinds[0].Nodes[1].Caches[1].EntryBytes("fp8_ds_mla") {
+		t.Errorf("the reader's record diverged from its owner's or took its paging: %+v", reader)
 	}
 }
 

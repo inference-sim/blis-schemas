@@ -224,7 +224,7 @@ A deployment is invalid if
   large to hold;
 - `gpu_memory_utilization` is not finite or lies outside [0, 1];
 - `disable_custom_all_reduce` is true while `allreduce_backend` is `custom`;
-- an enabled `dbo` states a negative threshold, or an enabled `eplb` a negative
+- `dbo` states a negative threshold, or an enabled `eplb` a negative
   `num_redundant_experts`;
 - `speculative` is present with an empty `method` or with `num_spec_tokens` below 1;
 - `offload` is present with no tiers, a tier is unnamed or named twice, a tier's `bytes`

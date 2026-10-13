@@ -45,8 +45,9 @@ type NodeOverride struct {
 
 // CacheOverride restates the record of every cache named Name. A field left zero keeps
 // the base graph's value; BytesByCacheDType entries are merged over the base's.
-// BytesPerEntry is restated on readers too, since a reader states the entry it reads;
-// PageAlignment and BytesByCacheDType describe storage and reach the owners only.
+// BytesPerEntry and BytesByCacheDType are restated on readers too, since a reader states
+// the entry it reads and must keep matching its owner; PageAlignment describes how the
+// owner pages the cache and reaches the owners only.
 type CacheOverride struct {
 	Name              string         `yaml:"name"`
 	BytesPerEntry     int            `yaml:"bytes_per_entry,omitempty"`
@@ -114,10 +115,7 @@ func (g *Graph) apply(o ArchOverride) error {
 				if co.BytesPerEntry != 0 {
 					c.BytesPerEntry = co.BytesPerEntry
 				}
-				if !c.Owned {
-					continue
-				}
-				if co.PageAlignment != 0 {
+				if co.PageAlignment != 0 && c.Owned {
 					c.PageAlignment = co.PageAlignment
 				}
 				if len(co.BytesByCacheDType) > 0 {

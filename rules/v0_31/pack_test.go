@@ -80,7 +80,7 @@ func TestPackRuleSet(t *testing.T) {
 		"dbo-thresholds-at-least-microbatches",
 		"dbo-thresholds-stated-when-enabled",
 		"dcp-comm-backend-known",
-		"deepseek-v41-requires-dspark",
+		"deepseek-v41-refuses-mtp",
 		"engram-config-valid",
 		"engram-excludes-dbo",
 		"engram-residency-default",
@@ -750,7 +750,7 @@ func TestModelSequenceParallelProperties(t *testing.T) {
 
 // Every MTP-family method is refused for DeepSeek-V4.1, through the deployment or the
 // graph, and accepted for an architecture the engine serves MTP on; dspark is accepted.
-func TestDeepseekV41RequiresDSpark(t *testing.T) {
+func TestDeepseekV41RefusesMTP(t *testing.T) {
 	pl := deployment.Parallelism{TP: 8, PP: 1, DP: 1}
 	v41 := graniteGraph()
 	v41.Global.Architecture = rules.ArchDeepseekV41
@@ -758,21 +758,21 @@ func TestDeepseekV41RequiresDSpark(t *testing.T) {
 	v3.Global.Architecture = "DeepseekV3ForCausalLM"
 	for _, m := range mtpMethods {
 		e := deployment.Engine{Speculative: &deployment.Speculative{Method: m, NumSpecTokens: 1}}
-		if p := run(t, dep(colocated(pl, e)), v41); !fired(p, "deepseek-v41-requires-dspark") {
+		if p := run(t, dep(colocated(pl, e)), v41); !fired(p, "deepseek-v41-refuses-mtp") {
 			t.Errorf("%s on V4.1 accepted", m)
 		}
-		if p := run(t, dep(colocated(pl, e)), v3); fired(p, "deepseek-v41-requires-dspark") {
+		if p := run(t, dep(colocated(pl, e)), v3); fired(p, "deepseek-v41-refuses-mtp") {
 			t.Errorf("%s refused for another architecture", m)
 		}
 	}
 	e := deployment.Engine{Speculative: &deployment.Speculative{Method: "dspark", NumSpecTokens: 5}}
-	if p := run(t, dep(colocated(pl, e)), v41); fired(p, "deepseek-v41-requires-dspark") {
+	if p := run(t, dep(colocated(pl, e)), v41); fired(p, "deepseek-v41-refuses-mtp") {
 		t.Errorf("dspark refused on V4.1:\n%s", p.Error())
 	}
 	g := graniteGraph()
 	g.Global.Architecture = rules.ArchDeepseekV41
 	g.Speculator = &model.Speculator{Method: "mtp", NumSpec: 1, Stack: g.Stack}
-	if p := run(t, dep(colocated(pl, deployment.Engine{})), g); !fired(p, "deepseek-v41-requires-dspark") {
+	if p := run(t, dep(colocated(pl, deployment.Engine{})), g); !fired(p, "deepseek-v41-refuses-mtp") {
 		t.Errorf("an MTP speculator in the graph accepted on V4.1:\n%s", p.Error())
 	}
 }
@@ -867,7 +867,7 @@ func TestCacheRecordDTypesKnown(t *testing.T) {
 		return g
 	}
 	for _, inOverride := range []bool{false, true} {
-		for key, want := range map[string]bool{"nvfp4_ds_mla": false, "fp8": false, "nvfp4_ds_ml": true, "e4m3": true} {
+		for key, want := range map[string]bool{"nvfp4_ds_mla": false, "fp8": false, "nvfp4_ds_ml": true, "e4m3": true, "auto": true} {
 			p := run(t, dep(colocated(pl, deployment.Engine{})), withRecord(key, inOverride))
 			if got := fired(p, "cache-record-dtypes-known"); got != want {
 				t.Errorf("%q (override %v): fired=%v, want %v\n%s", key, inOverride, got, want, p.Error())

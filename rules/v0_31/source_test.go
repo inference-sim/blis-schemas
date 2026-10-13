@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/inference-sim/blis-schemas/rules"
 )
 
 // This file re-derives the pack's constants from an engine checkout, when one is
@@ -428,8 +430,9 @@ func TestStartupRefusalsMatchSource(t *testing.T) {
 	for _, c := range []struct{ rule, src, text string }{
 		{"engram-config-valid", engram, "EngramConfig requires a model with supported Engram"},
 		{"engram-config-valid", engram, "use_thp requires cpu_offload=True and dp_shared_memory=False"},
-		{"deepseek-v41-requires-dspark", spec, "DeepSeek V4.1 has no classic-MTP draft"},
-		{"deepseek-v41-requires-dspark", spec, `if hf_config.model_type in ("deepseek_v4", "deepseek_v41"):`},
+		{"deepseek-v41-refuses-mtp", spec, "DeepSeek V4.1 has no classic-MTP draft"},
+		{"deepseek-v41-refuses-mtp", spec, `if hf_config.model_type in ("deepseek_v4", "deepseek_v41"):`},
+		{"deepseek-v41-refuses-mtp", spec, `if self.method in get_args(MTPModelTypes) and self.method != "mtp":`},
 		{"moonep-requirements", cfg, "The moonep all2all backend currently supports BF16 models"},
 		{"engram-config-valid", engram, "dp_shared_memory requires cpu_offload=True"},
 		{"engram-config-valid", engram, "dp_shared_memory requires data_parallel_size > 1."},
@@ -535,5 +538,24 @@ func TestEngramMatchSource(t *testing.T) {
 	}
 	if got := m[1] == "True"; got != Pack().EngramCPUOffloadDefault {
 		t.Errorf("EngramCPUOffloadDefault: pack has %v, the engine declares %s", Pack().EngramCPUOffloadDefault, m[1])
+	}
+}
+
+// The deepseek-v41-refuses-mtp rule refuses exactly the MTPModelTypes names, so that list
+// is checked against the engine on its own, not only as part of SpeculativeMethods.
+func TestMTPMethodsMatchSource(t *testing.T) {
+	root := vllmSource(t)
+	src := readSource(t, root, "vllm", "config", "speculative.py")
+	assertSameSet(t, "mtpMethods", set(mtpMethods...), literalMembers(t, src, "MTPModelTypes"))
+}
+
+// The pack's DeepSeek-V4.1 condition is the one the source pin above describes: each of
+// the four requirements is on.
+func TestV41SequenceParallelDataMatchSource(t *testing.T) {
+	vllmSource(t)
+	want := rules.SequenceParallelCondition{PipelineParallelOne: true, ExpertParallel: true,
+		TensorParallelAboveOne: true, MegaMoEOrDataParallelAboveOne: true}
+	if got := Pack().ModelSequenceParallelRules[rules.ArchDeepseekV41]; got != want {
+		t.Errorf("the pack's V4.1 condition is %+v, the engine's is %+v", got, want)
 	}
 }

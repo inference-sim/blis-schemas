@@ -570,7 +570,8 @@ func validateEngine(p *validate.Problems, at string, e Engine) {
 		p.Field(at+".engine.gpu_memory_utilization",
 			"must lie in [0, 1] (0 means unset), got %v", e.GPUMemoryUtilization)
 	}
-	if e.DBO != nil && e.DBO.Enabled {
+	// The engine types both thresholds Field(ge=0) whether or not overlap is enabled.
+	if e.DBO != nil {
 		for field, v := range map[string]*int{
 			"dbo_decode_token_threshold":  e.DBO.DecodeTokenThreshold,
 			"dbo_prefill_token_threshold": e.DBO.PrefillTokenThreshold,

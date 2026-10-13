@@ -71,6 +71,8 @@ func (m *MaxModelLen) UnmarshalYAML(n *yaml.Node) error {
 	return nil
 }
 
+var digitGroups = regexp.MustCompile(`^[+-]?[0-9]+(_[0-9]+)+$`)
+
 var humanReadable = regexp.MustCompile(`^(\d+(?:\.\d+)?)([kKmMgGtT])$`)
 
 func parseHumanReadableIntOrAuto(s string) (int, error) {
@@ -103,6 +105,10 @@ func parseHumanReadableIntOrAuto(s string) (int, error) {
 			return 0, errTooLarge
 		}
 		return i << shift, nil
+	}
+	// Python's int() takes digit-group underscores (PEP 515): 1_000, never _1 or 1__0.
+	if digitGroups.MatchString(v) {
+		v = strings.ReplaceAll(v, "_", "")
 	}
 	i, err := strconv.Atoi(v)
 	if errors.Is(err, strconv.ErrRange) {

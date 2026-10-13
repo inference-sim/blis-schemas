@@ -72,6 +72,7 @@ func TestPackRuleSet(t *testing.T) {
 	want := []string{
 		"all2all-backend-known",
 		"allreduce-backend-known",
+		"cache-record-dtypes-known",
 		"cascade-attention-is-opt-in",
 		"connector-known",
 		"cp-kv-cache-interleave-fits-block",
@@ -548,6 +549,19 @@ func TestEnumValuesForMambaAndMoE(t *testing.T) {
 	} {
 		if got := fired(run(t, dep(colocated(pl, c.e)), graniteGraph()), "enum-values-known"); got != c.want {
 			t.Errorf("%+v: rule fired=%v, want %v", c.e, got, c.want)
+		}
+	}
+}
+
+// 0.29.0 has no nvfp4_ds_mla, so a V4.1 record keyed by it can never be read there.
+func TestCacheRecordDTypesKnownIn029(t *testing.T) {
+	pl := deployment.Parallelism{TP: 8, PP: 1, DP: 1}
+	for key, want := range map[string]bool{"fp8_ds_mla": false, "nvfp4_ds_mla": true, "auto": true} {
+		g := graniteGraph()
+		g.LayerKinds[0].Nodes[0].Caches = []model.Cache{{Name: "kv", Kind: model.CacheKV, Owned: true,
+			BytesPerEntry: 256, BytesByCacheDType: map[string]int{key: 128}}}
+		if got := fired(run(t, dep(colocated(pl, deployment.Engine{})), g), "cache-record-dtypes-known"); got != want {
+			t.Errorf("%q: fired=%v, want %v", key, got, want)
 		}
 	}
 }

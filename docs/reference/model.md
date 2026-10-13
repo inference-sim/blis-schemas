@@ -254,16 +254,17 @@ caches add memory, transfer volume and offload volume.
 | `kind` | string | yes | One of the [cache kinds](vocabularies.md#cache-kinds). |
 | `owned` | boolean | no | Whether this layer allocates the cache. Omitted means false: the layer reads another's. |
 | `bytes_per_entry` | integer | yes | One stored entry, scales and in-record padding included, under the cache dtype the graph's base description assumes. Which dtype runs is the cost model's to resolve. On a cache the layer reads, the entry it reads, which must equal its owner's. |
-| `bytes_by_cache_dtype` | mapping | no | The entry size under cache dtypes whose record differs, keyed by the engine's cache-dtype name; each positive. The 0.31.0 rules pack checks the names. Owned caches only. |
+| `bytes_by_cache_dtype` | mapping | no | The entry size under cache dtypes whose record differs, keyed by the engine's cache-dtype name; each positive. The rules pack checks the names. |
 | `tokens_per_entry` | integer | no | Context tokens one entry covers. Omitted means 1. A `kv` or `index` cache must match the node's `compress_ratio`, or 1 when it has none. |
 | `window` | integer | for `window` | Tokens a window cache retains. Must match the node's `window`. |
-| `entries` | integer | for `state` | Entries a state cache holds per request. Owned caches only. |
+| `entries` | integer | for `state` | Entries a state cache holds per request. |
 | `block_size` | integer | no | Page size in tokens, where the model fixes it rather than taking the engine's `block_size`. Owned caches only. |
 | `page_alignment` | integer | no | Each page's bytes are rounded up to a multiple of this. Owned caches only. |
 
-A cache the layer reads but does not own states only what it reads: its name, kind, entry
-size, tokens per entry and window. How it is stored is the owner's to state, so the storage
-keys are refused on a reader rather than allowed to disagree with the owner.
+A cache the layer reads but does not own states what it reads: its kind, its entry under
+every cache dtype, tokens per entry, window and entries. Each must equal its owner's, so a
+read is priced with the record the owner stores. How the owner pages the cache,
+`block_size` and `page_alignment`, is the owner's alone and is refused on a reader.
 
 DeepSeek-V4.1-Flash is the case caches exist for. Only layers 2, 8, 14 and 20 own a
 compressed cache, and the ratio-2 ones hold one entry per two tokens. Every layer's sliding
@@ -322,7 +323,7 @@ in `spec/model` applies these rules, so every consumer gets the same number.
 | `name` | string | yes | Every cache with this name. At least one must exist. |
 | `bytes_per_entry` | integer | no | The record on this architecture, for owners and readers alike. |
 | `page_alignment` | integer | no | The page alignment on this architecture, for owners. |
-| `bytes_by_cache_dtype` | mapping | no | Entries merged over the owning cache's. |
+| `bytes_by_cache_dtype` | mapping | no | Entries merged over each named cache's, owners and readers alike. |
 
 The base graph describes the architecture the catalog prices by default.
 `Graph.ForCapability` returns the graph with the matching override applied and none left,
@@ -382,8 +383,8 @@ A graph is invalid if
 - a `speculator` lacks a `method`, a `pattern`, at least one draft token or a repeat of at
   least 1, has an unrecognized `drafting`, a `sequential_head` without `parallel_block`, or
   a `stack` or `context_stack` naming a layer kind that is not declared;
-- a cache a layer reads but does not own has no owner earlier in its stack, or its owner
-  states a different kind, entry size or tokens per entry;
+- a cache a layer reads but does not own has no owner earlier in its stack, or differs from
+  its owner in kind, entry size under any cache dtype, tokens per entry, window or entries;
 - an `aliases` reference does not resolve to exactly one weight-holding node of the same
   shape, names a layer kind the stacks run more than once, or names a node that is itself
   an alias;
@@ -412,8 +413,8 @@ A node is invalid if
   an unrecognized `kind`, a non-positive `bytes_per_entry` or a negative size; a `window`
   cache lacks a positive `window`, or a `state` cache positive `entries`; either key is set
   on another kind; a `bytes_by_cache_dtype` entry is unnamed or not positive; a cache the
-  layer does not own states a storage key; or a cache disagrees with the node's `window` or
-  `compress_ratio`;
+  layer does not own states `block_size` or `page_alignment`; or a cache disagrees with the
+  node's `window` or `compress_ratio`;
 - a `Gather` lacks a positive `rows`, `row_bytes`, `rows_per_token` or
   `out_bytes_per_token`, reads more rows per token than it has, or is split by `heads` with
   fewer than two; a `Gather` key is set on another primitive;

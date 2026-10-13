@@ -117,11 +117,15 @@ func TestV41FieldRejects(t *testing.T) {
 		{"empty per-dtype key", "caches[1].bytes_by_cache_dtype: a cache dtype name is empty", func(g *Graph) {
 			source(g)[1].Caches[1].BytesByCacheDType = map[string]int{"": 288}
 		}},
-		{"reader restating storage", "caches[1].page_alignment: describes storage", func(g *Graph) {
+		{"reader restating paging", "caches[1].page_alignment: describes how the owning layer pages", func(g *Graph) {
 			g.LayerKinds[1].Nodes[0].Caches[1].PageAlignment = 576
 		}},
-		{"reader restating a per-dtype record", "caches[1].bytes_by_cache_dtype: describes storage", func(g *Graph) {
-			g.LayerKinds[1].Nodes[0].Caches[1].BytesByCacheDType = map[string]int{"nvfp4_ds_mla": 288}
+		{"reader missing the owner's per-dtype record", "but layer 0 owns it", func(g *Graph) {
+			source(g)[1].Caches[1].BytesByCacheDType = map[string]int{"nvfp4_ds_mla": 288}
+		}},
+		{"reader with a different per-dtype record", "but layer 0 owns it", func(g *Graph) {
+			source(g)[1].Caches[1].BytesByCacheDType = map[string]int{"nvfp4_ds_mla": 288}
+			g.LayerKinds[1].Nodes[0].Caches[1].BytesByCacheDType = map[string]int{"nvfp4_ds_mla": 999}
 		}},
 		{"window cache on a node with no window", "caches[0].window: is 128 but the node reads a window of 0", func(g *Graph) {
 			source(g)[1].Window = 0
@@ -356,6 +360,52 @@ func TestArchOverrideReportsEveryMiss(t *testing.T) {
 	for _, want := range []string{"arch_overrides[0].nodes[0].role", "arch_overrides[0].nodes[1].role"} {
 		if !got[want] {
 			t.Errorf("no problem at %s; got %v", want, got)
+		}
+	}
+}
+
+// A layer that reads another's state cache states the entries it reads, and they must
+// equal the owner's; a reader cannot be refused for stating what its kind requires.
+func TestStateCacheReader(t *testing.T) {
+	g := v41Graph()
+	ring := Cache{Name: "ring", Kind: CacheState, Owned: true, BytesPerEntry: 4096, Entries: 8}
+	g.LayerKinds[0].Nodes[1].Caches = append(g.LayerKinds[0].Nodes[1].Caches, ring)
+	ring.Owned = false
+	g.LayerKinds[1].Nodes[0].Caches = append(g.LayerKinds[1].Nodes[0].Caches, ring)
+	if p := g.Validate(); !p.OK() {
+		t.Fatalf("a state-cache reader was refused:\n%s", p.Error())
+	}
+	g.LayerKinds[1].Nodes[0].Caches[2].Entries = 16
+	if p := g.Validate(); p.OK() {
+		t.Error("a reader of 16 entries from an 8-entry owner validated")
+	}
+}
+
+// A reader prices its read with the owner's record under every cache dtype, on every
+// architecture: for each family, the reader's entry equals the owner's under each dtype
+// either lists.
+func TestReadersReadTheOwnersRecord(t *testing.T) {
+	g := v41Graph()
+	g.LayerKinds[0].Nodes[1].Caches[1].BytesByCacheDType = map[string]int{"nvfp4_ds_mla": 288}
+	g.LayerKinds[1].Nodes[0].Caches[1].BytesByCacheDType = map[string]int{"nvfp4_ds_mla": 288}
+	g.ArchOverrides[0].Caches = append(g.ArchOverrides[0].Caches,
+		CacheOverride{Name: "compressed", BytesPerEntry: 528, BytesByCacheDType: map[string]int{"nvfp4_ds_mla": 256}})
+	if p := g.Validate(); !p.OK() {
+		t.Fatal(p.Error())
+	}
+	for _, major := range []int{9, 10} {
+		r, err := g.ForCapability(major)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p := r.Validate(); !p.OK() {
+			t.Fatalf("family %d:\n%s", major, p.Error())
+		}
+		owner, reader := r.LayerKinds[0].Nodes[1].Caches[1], r.LayerKinds[1].Nodes[0].Caches[1]
+		for _, dt := range []string{"fp8_ds_mla", "nvfp4_ds_mla", "auto"} {
+			if owner.EntryBytes(dt) != reader.EntryBytes(dt) {
+				t.Errorf("family %d %s: owner stores %d B, reader reads %d", major, dt, owner.EntryBytes(dt), reader.EntryBytes(dt))
+			}
 		}
 	}
 }

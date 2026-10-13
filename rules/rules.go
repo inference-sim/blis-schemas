@@ -280,6 +280,12 @@ func (p *Pack) ModelSequenceParallel(architecture string, pl deployment.Parallel
 // data: every requirement set must hold. It is a pack field rather than code so a release
 // that changes an architecture's condition is a new pack with different data, like every
 // other version fact here.
+//
+// It describes the CUDA model path. vLLM can load a different model module per platform:
+// DeepSeek-V4.1 on ROCm loads vllm/models/deepseek_v41/amd/, whose _use_sequence_parallel
+// always returns False ("The ROCm fused-MoE path currently uses ordinary tensor/expert
+// parallel"). A consumer pricing a ROCm pool takes such a model's sequence parallelism as
+// off.
 type SequenceParallelCondition struct {
 	PipelineParallelOne    bool // pipeline parallelism is exactly one
 	ExpertParallel         bool // expert parallelism is enabled

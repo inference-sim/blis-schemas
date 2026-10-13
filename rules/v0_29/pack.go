@@ -12,12 +12,14 @@
 package v0_29
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
 	"github.com/inference-sim/blis-schemas/internal/validate"
 	"github.com/inference-sim/blis-schemas/rules"
 	"github.com/inference-sim/blis-schemas/spec/deployment"
+	"github.com/inference-sim/blis-schemas/spec/model"
 )
 
 // Version is the engine release this pack describes.
@@ -506,6 +508,34 @@ func ruleList(p *rules.Pack) []rules.Rule {
 			},
 		},
 		{
+			Name:    "cache-record-dtypes-known",
+			Because: "a cache's per-dtype record is looked up by the cache dtype the engine runs, so an entry keyed by a name this release does not accept, or by auto, which always resolves to a concrete dtype, can never be read, and a misspelled nvfp4_ds_mla would leave its cache priced at the default record",
+			Check: func(in rules.Input, out *validate.Problems) {
+				if in.Model == nil {
+					return
+				}
+				check := func(at string, records map[string]int) {
+					for _, dt := range sortedIntKeys(records) {
+						if dt == "auto" || !p.CacheDTypes[dt] {
+							out.RuleErrorf("cache-record-dtypes-known",
+								"model %s.bytes_by_cache_dtype: %q is not a cache dtype engine %s accepts",
+								at, dt, p.Version)
+						}
+					}
+				}
+				in.Model.EachNode(func(at string, n model.Node) {
+					for i, c := range n.Caches {
+						check(fmt.Sprintf("%s.caches[%d]", at, i), c.BytesByCacheDType)
+					}
+				})
+				for i, o := range in.Model.ArchOverrides {
+					for j, c := range o.Caches {
+						check(fmt.Sprintf("arch_overrides[%d].caches[%d]", i, j), c.BytesByCacheDType)
+					}
+				}
+			},
+		},
+		{
 			Name:    "engram-config-unsupported",
 			Because: "this release has no Engram config (no vllm/config/engram.py, no --engram-config), so a launch line carrying one does not parse",
 			Check: func(in rules.Input, out *validate.Problems) {
@@ -538,6 +568,15 @@ func ruleList(p *rules.Pack) []rules.Rule {
 			},
 		},
 	}
+}
+
+func sortedIntKeys(m map[string]int) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func forEachPool(in rules.Input, fn func(at string, pool deployment.Pool)) {

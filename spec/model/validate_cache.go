@@ -64,18 +64,17 @@ func (n Node) validateNodeCaches(p *validate.Problems, at string) {
 				p.Field(ca+".bytes_by_cache_dtype."+dt, "must be positive, got %d", v)
 			}
 		}
-		// A cache another layer owns is stored by that layer, so how it is stored -- its
-		// pages, their alignment, its record under other cache dtypes, a state cache's
-		// size -- is the owner's to state. A reader states only what it reads, which
-		// validateCacheSharing checks against the owner; letting it restate storage would
-		// let the two disagree with nothing to say which one holds.
+		// A cache another layer owns is paged by that layer, so its page size and
+		// alignment are the owner's to state; a reader restating them could disagree with
+		// nothing to say which one holds. What a reader reads -- the entry, under each
+		// cache dtype, and how many tokens and entries it spans -- it states, and
+		// validateCacheSharing requires it to equal the owner's.
 		if !c.Owned {
 			for field, set := range map[string]bool{
-				"bytes_by_cache_dtype": len(c.BytesByCacheDType) > 0, "block_size": c.BlockSize != 0,
-				"page_alignment": c.PageAlignment != 0, "entries": c.Entries != 0,
+				"block_size": c.BlockSize != 0, "page_alignment": c.PageAlignment != 0,
 			} {
 				if set {
-					p.Field(ca+"."+field, "describes storage, which the owning layer states; remove it from a cache this layer does not own")
+					p.Field(ca+"."+field, "describes how the owning layer pages the cache; remove it from a cache this layer does not own")
 				}
 			}
 		}
@@ -153,11 +152,9 @@ func (g *Graph) validateCacheSharing(p *validate.Problems, field string, s Stack
 				switch {
 				case !found:
 					p.Field(at, "%s layer %d reads cache %q, but no earlier layer owns one", field, i, c.Name)
-				case src.Kind != c.Kind || src.BytesPerEntry != c.BytesPerEntry ||
-					src.EntryTokens() != c.EntryTokens() || src.Window != c.Window:
-					p.Field(at, "%s layer %d reads cache %q as %s, %d B per %d tokens, window %d, but layer %d owns it as %s, %d B per %d tokens, window %d",
-						field, i, c.Name, c.Kind, c.BytesPerEntry, c.EntryTokens(), c.Window,
-						ownerAt[c.Name], src.Kind, src.BytesPerEntry, src.EntryTokens(), src.Window)
+				case !sameRead(src, c):
+					p.Field(at, "%s layer %d reads cache %q as %s, but layer %d owns it as %s",
+						field, i, c.Name, readShape(c), ownerAt[c.Name], readShape(src))
 				default:
 					continue
 				}
@@ -188,4 +185,36 @@ func validateLayerCacheNames(p *validate.Problems, at string, lk LayerKind) {
 			seen[c.Name] = true
 		}
 	}
+}
+
+// sameRead reports whether a reader reads what its owner stores: the same kind of cache,
+// the same entry under every cache dtype either lists, and the same span.
+func sameRead(owner, reader Cache) bool {
+	if owner.Kind != reader.Kind || owner.EntryTokens() != reader.EntryTokens() ||
+		owner.Window != reader.Window || owner.Entries != reader.Entries ||
+		owner.BytesPerEntry != reader.BytesPerEntry {
+		return false
+	}
+	for _, m := range []map[string]int{owner.BytesByCacheDType, reader.BytesByCacheDType} {
+		for dt := range m {
+			if owner.EntryBytes(dt) != reader.EntryBytes(dt) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func readShape(c Cache) string {
+	s := fmt.Sprintf("%s, %d B per %d tokens", c.Kind, c.BytesPerEntry, c.EntryTokens())
+	if len(c.BytesByCacheDType) > 0 {
+		s += fmt.Sprintf(" (%v by cache dtype)", c.BytesByCacheDType)
+	}
+	if c.Window > 0 {
+		s += fmt.Sprintf(", window %d", c.Window)
+	}
+	if c.Entries > 0 {
+		s += fmt.Sprintf(", %d entries", c.Entries)
+	}
+	return s
 }

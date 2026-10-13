@@ -261,8 +261,8 @@ type Speculator struct {
 	// NumSpec is the tokens drafted per request per step. It is not the draft layer
 	// count: DeepSeek-V4.1's DSpark drafts dspark_block_size = 5 tokens through
 	// num_nextn_predict_layers = 3 layers (both from the checkpoint's configuration;
-	// v0.31.0 vllm/config/speculative.py defaults num_speculative_tokens to
-	// dspark_block_size).
+	// v0.31.0 vllm/config/speculative.py defaults num_speculative_tokens to the draft
+	// config's block_size, or dspark_block_size where it has none).
 	NumSpec int `yaml:"num_spec_tokens"`
 	// Drafting is how Stack runs. See Drafting.
 	Drafting Drafting `yaml:"drafting,omitempty"`

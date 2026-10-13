@@ -62,13 +62,13 @@
 :   *error or warning.* This release refuses an Engram config at startup on a model without Engram layers or of an architecture outside _NGRAM_LAYER_FIELDS, dp_shared_memory without cpu_offload or with one data-parallel rank, and use_thp without cpu_offload or with dp_shared_memory (vllm/config/engram.py); a graph with Engram lookups that names no architecture draws a warning, since the refusal turns on the architecture.
 
 `cache-record-dtypes-known`
-:   *error.* A cache's per-dtype record is looked up by the cache dtype the engine runs, so an entry keyed by a name this release does not accept can never be read, and a misspelled nvfp4_ds_mla would leave its cache priced at the default record.
+:   *error.* A cache's per-dtype record is looked up by the cache dtype the engine runs, so an entry keyed by a name this release does not accept, or by auto, which always resolves to a concrete dtype, can never be read, and a misspelled nvfp4_ds_mla would leave its cache priced at the default record.
 
 `engram-residency-default`
 :   *error.* A graph states where an Engram table lives when the deployment leaves cpu_offload alone, and this release's default is cpu_offload true, host memory (vllm/config/engram.py); a graph stating the other residency would price every such deployment against the wrong memory.
 
-`deepseek-v41-requires-dspark`
-:   *error.* This release refuses a multi-token-prediction draft for DeepSeek-V4.1 at startup: it rewrites the V4.1 draft config to deepseek_mtp, and an MTP-family method then raises "DeepSeek V4.1 has no classic-MTP draft" (vllm/config/speculative.py); dspark is the method it serves.
+`deepseek-v41-refuses-mtp`
+:   *error.* This release refuses a multi-token-prediction draft for DeepSeek-V4.1 at startup: it rewrites every MTP-family method name to mtp, rewrites the V4.1 draft config to deepseek_mtp, and then raises "DeepSeek V4.1 has no classic-MTP draft" (vllm/config/speculative.py); dspark is the method it serves. The one launch that escapes is a model path whose name selects another method first (one containing eagle-, eagle3, dflash or dspark), which a deployment does not record.
 
 `max-model-len-within-context-window`
 :   *warning.* This release refuses a stated max_model_len above the window it derives from the model configuration, unless the configuration's model_max_length admits it or VLLM_ALLOW_LONG_MAX_MODEL_LEN is set (vllm/config/model.py); a warning because the schema sees neither.
@@ -168,6 +168,9 @@
 
 `dbo-thresholds-stated-when-enabled`
 :   *warning.* Which threshold applies turns on batch uniformity, and an unstated threshold silently takes a default that differs by 16x between the two.
+
+`cache-record-dtypes-known`
+:   *error.* A cache's per-dtype record is looked up by the cache dtype the engine runs, so an entry keyed by a name this release does not accept, or by auto, which always resolves to a concrete dtype, can never be read, and a misspelled nvfp4_ds_mla would leave its cache priced at the default record.
 
 `engram-config-unsupported`
 :   *error.* This release has no Engram config (no vllm/config/engram.py, no --engram-config), so a launch line carrying one does not parse.

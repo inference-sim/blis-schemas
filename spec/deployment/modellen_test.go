@@ -29,6 +29,7 @@ func TestMaxModelLenDecodes(t *testing.T) {
 		{"{max_model_len: 128K}", 131072, false, 131072, true},
 		{"{max_model_len: 25.6k}", 25600, false, 25600, true},
 		{"{max_model_len: 1M}", 1 << 20, false, 1 << 20, true},
+		{"{max_model_len: 131_072}", 131072, false, 131072, true},
 		{"{max_model_len: '-1'}", MaxModelLenAuto, true, 0, false},
 	} {
 		var e Engine
@@ -41,7 +42,8 @@ func TestMaxModelLenDecodes(t *testing.T) {
 		}
 	}
 	for _, bad := range []string{"{max_model_len: atuo}", "{max_model_len: 1.5}",
-		"{max_model_len: [1]}", "{max_model_len: 1.5K}", "{max_model_len: 12kb}"} {
+		"{max_model_len: [1]}", "{max_model_len: 1.5K}", "{max_model_len: 12kb}",
+		"{max_model_len: 1__0}", "{max_model_len: _10}", "{max_model_len: 10_}"} {
 		var e Engine
 		if err := yaml.Unmarshal([]byte(bad), &e); err == nil || !strings.Contains(err.Error(), "max_model_len") {
 			t.Errorf("%s: want a max_model_len error, got %v (value %d)", bad, err, e.MaxModelLen)

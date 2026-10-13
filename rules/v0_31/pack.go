@@ -124,7 +124,8 @@ func Pack() *rules.Pack {
 		MegaMoEBackends: set("deep_gemm_mega_moe", "flashinfer_moe_ep_mega_deep_gemm",
 			"flashinfer_moe_ep_mega_cutedsl"),
 
-		// DeepSeek-V4.1's _use_sequence_parallel (vllm/models/deepseek_v41/nvidia/model.py):
+		// DeepSeek-V4.1's _use_sequence_parallel on CUDA (vllm/models/deepseek_v41/nvidia/
+		// model.py; the ROCm module's is always False, see SequenceParallelCondition):
 		// pipeline_parallel_size == 1 and enable_expert_parallel and tensor_parallel_size
 		// > 1 and (use_mega_moe or data_parallel_size > 1).
 		ModelSequenceParallelRules: map[string]rules.SequenceParallelCondition{
@@ -140,7 +141,7 @@ func Pack() *rules.Pack {
 		//
 		// Membership is not the whole story for DeepSeek-V4.1: the engine refuses every
 		// MTP-family method for it and serves dspark ("DeepSeek V4.1 has no classic-MTP
-		// draft"), which the deepseek-v41-requires-dspark rule enforces for a graph that
+		// draft"), which the deepseek-v41-refuses-mtp rule enforces for a graph that
 		// names its architecture.
 		SpeculativeMethods: set(append([]string{"ngram", "medusa", "mlp_speculator",
 			"draft_model", "suffix", "custom_class", "eagle", "eagle3",
@@ -641,14 +642,14 @@ func ruleList(p *rules.Pack) []rules.Rule {
 		},
 		{
 			Name:    "cache-record-dtypes-known",
-			Because: "a cache's per-dtype record is looked up by the cache dtype the engine runs, so an entry keyed by a name this release does not accept can never be read, and a misspelled nvfp4_ds_mla would leave its cache priced at the default record",
+			Because: "a cache's per-dtype record is looked up by the cache dtype the engine runs, so an entry keyed by a name this release does not accept, or by auto, which always resolves to a concrete dtype, can never be read, and a misspelled nvfp4_ds_mla would leave its cache priced at the default record",
 			Check: func(in rules.Input, out *validate.Problems) {
 				if in.Model == nil {
 					return
 				}
 				check := func(at string, records map[string]int) {
 					for _, dt := range sortedIntKeys(records) {
-						if !p.CacheDTypes[dt] {
+						if dt == "auto" || !p.CacheDTypes[dt] {
 							out.RuleErrorf("cache-record-dtypes-known",
 								"model %s.bytes_by_cache_dtype: %q is not a cache dtype engine %s accepts",
 								at, dt, p.Version)
@@ -691,8 +692,8 @@ func ruleList(p *rules.Pack) []rules.Rule {
 			},
 		},
 		{
-			Name:    "deepseek-v41-requires-dspark",
-			Because: "this release refuses a multi-token-prediction draft for DeepSeek-V4.1 at startup: it rewrites the V4.1 draft config to deepseek_mtp, and an MTP-family method then raises \"DeepSeek V4.1 has no classic-MTP draft\" (vllm/config/speculative.py); dspark is the method it serves",
+			Name:    "deepseek-v41-refuses-mtp",
+			Because: "this release refuses a multi-token-prediction draft for DeepSeek-V4.1 at startup: it rewrites every MTP-family method name to mtp, rewrites the V4.1 draft config to deepseek_mtp, and then raises \"DeepSeek V4.1 has no classic-MTP draft\" (vllm/config/speculative.py); dspark is the method it serves. The one launch that escapes is a model path whose name selects another method first (one containing eagle-, eagle3, dflash or dspark), which a deployment does not record",
 			Check: func(in rules.Input, out *validate.Problems) {
 				if in.Model == nil || in.Model.Global.Architecture != rules.ArchDeepseekV41 {
 					return
@@ -703,13 +704,13 @@ func ruleList(p *rules.Pack) []rules.Rule {
 				}
 				forEachEngine(in, func(at string, e deployment.Engine) {
 					if e.Speculative != nil && isMTP[e.Speculative.Method] {
-						out.RuleErrorf("deepseek-v41-requires-dspark",
+						out.RuleErrorf("deepseek-v41-refuses-mtp",
 							"%s.engine.speculative.method: %q on %s; engine %s refuses an MTP draft for it and serves dspark",
 							at, e.Speculative.Method, rules.ArchDeepseekV41, p.Version)
 					}
 				})
 				if s := in.Model.Speculator; s != nil && isMTP[s.Method] {
-					out.RuleErrorf("deepseek-v41-requires-dspark",
+					out.RuleErrorf("deepseek-v41-refuses-mtp",
 						"model.speculator.method: %q on %s; engine %s refuses an MTP draft for it and serves dspark",
 						s.Method, rules.ArchDeepseekV41, p.Version)
 				}
