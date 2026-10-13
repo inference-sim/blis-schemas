@@ -102,6 +102,7 @@ func TestV41FieldRejects(t *testing.T) {
 		{"entries on a kv cache", "only a state cache", func(g *Graph) { source(g)[1].Caches[1].Entries = 8 }},
 		{"kv granularity disagrees with the read", "reads at compress_ratio 2", func(g *Graph) { source(g)[1].Caches[1].TokensPerEntry = 1 }},
 		{"window cache wider than the read", "is 256 but the node reads a window of 128", func(g *Graph) { source(g)[1].Caches[0].Window = 256 }},
+		{"read wider than its window cache", "only a parallel-block draft layer reads past its window", func(g *Graph) { source(g)[1].Caches[0].Window = 64 }},
 		{"duplicate name in a layer", "duplicate cache name", func(g *Graph) {
 			source(g)[1].Caches = append(source(g)[1].Caches, source(g)[1].Caches[0])
 		}},
@@ -370,20 +371,45 @@ func TestArchOverrideReportsEveryMiss(t *testing.T) {
 	}
 }
 
-// A layer that reads another's state cache states the entries it reads, and they must
-// equal the owner's; a reader cannot be refused for stating what its kind requires.
-func TestStateCacheReader(t *testing.T) {
+// A state cache is its layer's own: a reader of one would drop its residency, and vLLM
+// has none, since every compressor owns its ring.
+func TestStateCacheReaderRefused(t *testing.T) {
 	g := v41Graph()
 	ring := Cache{Name: "ring", Kind: CacheState, Owned: true, BytesPerEntry: 4096, Entries: 8}
 	g.LayerKinds[0].Nodes[1].Caches = append(g.LayerKinds[0].Nodes[1].Caches, ring)
+	if p := g.Validate(); !p.OK() {
+		t.Fatalf("an owned ring was refused:\n%s", p.Error())
+	}
 	ring.Owned = false
 	g.LayerKinds[1].Nodes[0].Caches = append(g.LayerKinds[1].Nodes[0].Caches, ring)
-	if p := g.Validate(); !p.OK() {
-		t.Fatalf("a state-cache reader was refused:\n%s", p.Error())
+	if p := g.Validate(); p.OK() || !strings.Contains(p.Error(), "a state cache is its layer's own") {
+		t.Errorf("a ring read from another layer validated:\n%s", p.Error())
 	}
-	g.LayerKinds[1].Nodes[0].Caches[2].Entries = 16
-	if p := g.Validate(); p.OK() {
-		t.Error("a reader of 16 entries from an 8-entry owner validated")
+}
+
+// A sliding-window read is as wide as its cache's window, except on a layer only the
+// parallel-block draft runs, whose read is exactly window + num_spec_tokens.
+func TestDraftWindowRead(t *testing.T) {
+	g := v41Graph()
+	draft := func(window int) *Graph {
+		g := v41Graph()
+		g.LayerKinds[2].Nodes = append(g.LayerKinds[2].Nodes, Node{Op: OpAttention, AttentionKind: AttentionSparseMLA,
+			NumQHeads: 64, NumKVHeads: 1, HeadDim: 512, Window: window,
+			Caches: []Cache{{Name: "swa", Kind: CacheWindow, Owned: true, BytesPerEntry: 584, Window: 128}}})
+		return g
+	}
+	if p := draft(128 + g.Speculator.NumSpec).Validate(); !p.OK() {
+		t.Errorf("a draft read of window + num_spec was refused:\n%s", p.Error())
+	}
+	for _, w := range []int{4096, 129} {
+		if p := draft(w).Validate(); p.OK() || !strings.Contains(p.Error(), "plus its 5 block positions, 133") {
+			t.Errorf("a draft read of %d validated:\n%s", w, p.Error())
+		}
+	}
+	auto := draft(133)
+	auto.Speculator.Drafting, auto.Speculator.SequentialHead = DraftingAutoregressive, nil
+	if p := auto.Validate(); p.OK() {
+		t.Error("an autoregressive draft read past its window validated")
 	}
 }
 

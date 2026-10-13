@@ -258,8 +258,8 @@ caches add memory, transfer volume and offload volume.
 | `bytes_per_entry` | integer | yes | One stored entry, scales and in-record padding included, under the cache dtype the graph's base description assumes. Which dtype runs is the cost model's to resolve. On a cache the layer reads, the entry it reads, which must equal its owner's. |
 | `bytes_by_cache_dtype` | mapping | no | The entry size under cache dtypes whose record differs, keyed by the engine's cache-dtype name; each positive. The rules pack checks the names. |
 | `tokens_per_entry` | integer | no | Context tokens one entry covers. Omitted means 1. A `kv` or `index` cache must match the node's `compress_ratio`, or 1 when it has none. |
-| `window` | integer | for `window` | Tokens a window cache retains. At most the node's `window`, which can be wider: a DSpark draft query reads the window plus its block. |
-| `entries` | integer | for `state` | Entries a state cache holds per request. |
+| `window` | integer | for `window` | Tokens a window cache retains. Equal to the node's `window`, except on a layer only a `parallel_block` draft runs, whose read is the window plus `num_spec_tokens`: a DSpark draft query reads its whole block, non-causally. |
+| `entries` | integer | for `state` | Entries a state cache holds per request. A state cache is always owned. |
 | `block_size` | integer | no | Page size in tokens, where the model fixes it rather than taking the engine's `block_size`. Owned caches only. |
 | `page_alignment` | integer | no | Each page's bytes are rounded up to a multiple of this. Owned caches only. |
 
@@ -435,8 +435,8 @@ A node is invalid if
   an unrecognized `kind`, a non-positive `bytes_per_entry` or a negative size; a `window`
   cache lacks a positive `window`, or a `state` cache positive `entries`; either key is set
   on another kind; a `bytes_by_cache_dtype` entry is unnamed or not positive; a cache the
-  layer does not own states `block_size` or `page_alignment`; or a cache disagrees with the
-  node's `window` or `compress_ratio`;
+  layer does not own states `block_size` or `page_alignment`, or is a `state` cache; or a
+  cache disagrees with the node's `window` or `compress_ratio`;
 - a `Gather` lacks a positive `rows`, `row_bytes`, `rows_per_token` or
   `out_bytes_per_token`, reads more rows per token than it has, or is split by `heads` with
   fewer than two; a `Gather` key is set on another primitive;

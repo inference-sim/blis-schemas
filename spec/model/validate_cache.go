@@ -49,6 +49,13 @@ func (n Node) validateNodeCaches(p *validate.Problems, at string) {
 				p.Field(ca+".entries", "a state cache requires a positive entry count")
 			}
 		}
+		// Fixed per-request state is the writing layer's own: every vLLM compressor owns
+		// its ring (vllm/models/deepseek_v41/compressor.py), and a reader layer has no
+		// compressor to read one with. A state cache marked as read would silently drop
+		// the ring's residency, so it is refused.
+		if c.Kind == CacheState && !c.Owned {
+			p.Field(ca+".owned", "a state cache is its layer's own; it cannot be read from another layer")
+		}
 		if c.Window != 0 && c.Kind != CacheWindow {
 			p.Field(ca+".window", "only a window cache is bounded by a window")
 		}
@@ -99,11 +106,9 @@ func (n Node) validateNodeCaches(p *validate.Problems, at string) {
 					"is %d but the node reads at compress_ratio %d", c.EntryTokens(), ratio)
 			}
 		case CacheWindow:
-			// A sliding-window cache is read by a sliding-window read at least as wide.
-			// Wider is real: a DSpark draft query reads the trailing window plus every
-			// position of its block, non-causally (vllm/v1/attention/backends/mla/
-			// sparse_swa.py; compressor_utils.py get_dspark_swa_index_width: window +
-			// num_speculative_tokens).
+			// A sliding-window cache is read by a sliding-window read at least as wide; a
+			// wider one is allowed only where validateWindowReads finds the engine reads
+			// past the window.
 			if n.Window < 1 || c.Window > n.Window {
 				p.Field(at+".window", "is %d but the node reads a window of %d", c.Window, n.Window)
 			}
@@ -216,4 +221,46 @@ func readShape(c Cache) string {
 		s += fmt.Sprintf(", %d entries", c.Entries)
 	}
 	return s
+}
+
+// validateWindowReads requires a sliding-window read to be exactly as wide as the window
+// cache it reads, with one exception the engine makes: a parallel-block drafter's query
+// reads the trailing window plus every position of its block, non-causally, so its read is
+// window + num_spec_tokens (vllm/v1/attention/backends/mla/sparse_swa.py;
+// compressor_utils.py get_dspark_swa_index_width). That holds only for layer kinds the
+// draft stack alone runs; any other excess describes no read the engine makes.
+func (g *Graph) validateWindowReads(p *validate.Problems) {
+	draftOnly := map[string]bool{}
+	if s := g.Speculator; s != nil && s.Drafting == DraftingParallelBlock {
+		for _, id := range s.Stack.Expand() {
+			draftOnly[id] = true
+		}
+		other := g.Stack.Expand()
+		if s.ContextStack != nil {
+			other = append(other, s.ContextStack.Expand()...)
+		}
+		for _, id := range other {
+			delete(draftOnly, id)
+		}
+	}
+	for i, lk := range g.LayerKinds {
+		for j, n := range lk.Nodes {
+			for k, c := range n.Caches {
+				if c.Kind != CacheWindow || c.Window < 1 || n.Window <= c.Window {
+					continue
+				}
+				extra := n.Window - c.Window
+				if draftOnly[lk.ID] && extra == g.Speculator.NumSpec {
+					continue
+				}
+				at := fmt.Sprintf("layer_kinds[%d].nodes[%d].caches[%d].window", i, j, k)
+				if draftOnly[lk.ID] {
+					p.Field(at, "is %d and the read %d, but a parallel-block draft reads its window plus its %d block positions, %d",
+						c.Window, n.Window, g.Speculator.NumSpec, c.Window+g.Speculator.NumSpec)
+				} else {
+					p.Field(at, "is %d but the node reads a window of %d; only a parallel-block draft layer reads past its window", c.Window, n.Window)
+				}
+			}
+		}
+	}
 }

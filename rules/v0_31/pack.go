@@ -141,6 +141,12 @@ func Pack() *rules.Pack {
 		// serves the layout -- SM100, tp dividing the 8 output groups -- and FlashMLA's
 		// fp8_ds_mla otherwise. SM120 runs a plain-row FlashInfer cache, which no
 		// resolution here describes.
+		//
+		// TPDivides 8 is DeepSeek-V4.1-Flash's configuration, o_groups 8 over 64 heads:
+		// mega attention needs tp to divide both and to leave 8 heads per group
+		// (flash_mla_mega_attn.py is_available_for), which every width dividing 8 does
+		// here. The pack keys this by architecture, and a checkpoint of the same
+		// architecture with another o_groups or head count would need its own entry.
 		CacheDTypeResolutions: map[string]rules.CacheDTypeResolutions{
 			rules.ArchDeepseekV41: {
 				{CapabilityFamily: 10, Requested: []string{"auto", "fp8"}, ResolvesTo: "nvfp4_ds_mla", TPDivides: 8},
@@ -346,7 +352,7 @@ func ruleList(p *rules.Pack) []rules.Rule {
 					// which a cache with its own page size lowers. One test covers both
 					// halves of the assert: a size above the block leaves the block itself
 					// as the remainder.
-					blocks := effectiveBlocks(in.Model, stated)
+					blocks := effectiveBlocks(in.Model, stated, pool.Parallel.PCP)
 					failing := 0
 					for _, b := range blocks {
 						if b%size != 0 {
@@ -793,7 +799,7 @@ func ruleList(p *rules.Pack) []rules.Rule {
 					}
 					reported = true
 					out.RuleWarnf("sequence-parallel-architecture-known",
-						"model %s.emit: %q, but engine %s has no sequence-parallelism rule for architecture %q; architectures with one are %v",
+						"model %s.emit: %q, but engine %s has no sequence-parallelism rule for architecture %q; architectures with one are %v (their CUDA path; on ROCm it is always off)",
 						at, n.Emit, p.Version, in.Model.Global.Architecture, ruleArchitectures(p))
 				})
 			},
@@ -817,7 +823,7 @@ func ruleList(p *rules.Pack) []rules.Rule {
 						switch {
 						case n.Emit == model.EmitTensorParallelUnlessSequenceParallelMoE:
 							out.RuleErrorf("model-sequence-parallel-collectives",
-								"%s.emit: %q, but %s decides sequence parallelism itself and never consults that rule in engine %s; use %q",
+								"%s.emit: %q, but %s decides sequence parallelism itself and never consults that rule in engine %s; use %q (on ROCm its sequence parallelism is always off)",
 								at, n.Emit, arch, p.Version, model.EmitTensorParallelUnlessSequenceParallel)
 						case n.Op == model.OpAllReduce && n.Emit == model.EmitTensorParallel:
 							out.RuleWarnf("model-sequence-parallel-collectives",
@@ -1049,8 +1055,9 @@ func modelHasRecurrent(in rules.Input) bool {
 // groups that take part in prefix caching (vllm/v1/engine/core.py). A kv or index cache
 // with its own page size always does; a state cache never does; a window cache does unless
 // bounded replay is on, which needs the V2 model runner and no prefill-context
-// parallelism (vllm/models/deepseek_v41/attention.py), so either answer is possible.
-func effectiveBlocks(g *model.Graph, stated int) []int {
+// parallelism (vllm/models/deepseek_v41/attention.py). Under prefill-context parallelism
+// it certainly takes part; otherwise either answer is possible.
+func effectiveBlocks(g *model.Graph, stated, pcp int) []int {
 	sure, window := stated, stated
 	g.EachNode(func(_ string, n model.Node) {
 		for _, c := range n.Caches {
@@ -1061,7 +1068,11 @@ func effectiveBlocks(g *model.Graph, stated int) []int {
 			case model.CacheKV, model.CacheIndex:
 				sure = min(sure, c.BlockSize)
 			case model.CacheWindow:
-				window = min(window, c.BlockSize)
+				if pcp > 1 {
+					sure = min(sure, c.BlockSize)
+				} else {
+					window = min(window, c.BlockSize)
+				}
 			}
 		}
 	})

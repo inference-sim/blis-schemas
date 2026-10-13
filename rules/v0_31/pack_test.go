@@ -998,6 +998,16 @@ func TestInterleaveChecksTheEffectiveBlock(t *testing.T) {
 	if got := severity(model.CacheState); got != "" {
 		t.Errorf("a state cache never takes part in prefix caching: got %q", got)
 	}
+	// Under prefill-context parallelism bounded replay is off, so the window cache
+	// certainly takes part and the failure is certain.
+	pcpPool := colocated(deployment.Parallelism{TP: 8, PP: 1, DP: 1, DCP: 8, PCP: 2},
+		deployment.Engine{CPKVCacheInterleaveSize: 64, BlockSize: 256})
+	g := graniteGraph()
+	g.LayerKinds[0].Nodes[0].Window = 128
+	g.LayerKinds[0].Nodes[0].Caches = []model.Cache{{Name: "w", Kind: model.CacheWindow, Owned: true, BytesPerEntry: 584, Window: 128, BlockSize: 32}}
+	if p := run(t, dep(pcpPool), g); p.OK() {
+		t.Errorf("under pcp 2 the window cache's 32 is certain:\n%s", p.Error())
+	}
 }
 
 // On a moonep pool an FP16 checkpoint may be cast to BF16 by --dtype, which a deployment

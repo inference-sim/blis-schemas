@@ -293,7 +293,7 @@ func ruleList(p *rules.Pack) []rules.Rule {
 					// which a cache with its own page size lowers. One test covers both
 					// halves of the assert: a size above the block leaves the block itself
 					// as the remainder.
-					blocks := effectiveBlocks(in.Model, stated)
+					blocks := effectiveBlocks(in.Model, stated, pool.Parallel.PCP)
 					failing := 0
 					for _, b := range blocks {
 						if b%size != 0 {
@@ -599,7 +599,7 @@ func ruleList(p *rules.Pack) []rules.Rule {
 					}
 					reported = true
 					out.RuleWarnf("sequence-parallel-architecture-known",
-						"model %s.emit: %q, but engine %s has no sequence-parallelism rule for architecture %q; architectures with one are %v",
+						"model %s.emit: %q, but engine %s has no sequence-parallelism rule for architecture %q; architectures with one are %v (their CUDA path; on ROCm it is always off)",
 						at, n.Emit, p.Version, in.Model.Global.Architecture, ruleArchitectures(p))
 				})
 			},
@@ -623,7 +623,7 @@ func ruleList(p *rules.Pack) []rules.Rule {
 						switch {
 						case n.Emit == model.EmitTensorParallelUnlessSequenceParallelMoE:
 							out.RuleErrorf("model-sequence-parallel-collectives",
-								"%s.emit: %q, but %s decides sequence parallelism itself and never consults that rule in engine %s; use %q",
+								"%s.emit: %q, but %s decides sequence parallelism itself and never consults that rule in engine %s; use %q (on ROCm its sequence parallelism is always off)",
 								at, n.Emit, arch, p.Version, model.EmitTensorParallelUnlessSequenceParallel)
 						case n.Op == model.OpAllReduce && n.Emit == model.EmitTensorParallel:
 							out.RuleWarnf("model-sequence-parallel-collectives",
@@ -757,7 +757,7 @@ func modelHasRecurrent(in rules.Input) bool {
 // effectiveBlocks is the block size validate_block_size reads: this release replaces the
 // stated block size with the smallest page size among all KV cache groups
 // (vllm/v1/engine/core.py), so every cache the graph pages at its own size lowers it.
-func effectiveBlocks(g *model.Graph, stated int) []int {
+func effectiveBlocks(g *model.Graph, stated, _ int) []int {
 	block := stated
 	g.EachNode(func(_ string, n model.Node) {
 		for _, c := range n.Caches {

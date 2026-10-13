@@ -49,6 +49,7 @@ func (g *Graph) Validate() *validate.Problems {
 	}
 	g.validateAliases(p)
 	g.validateArchOverrides(p)
+	g.validateWindowReads(p)
 	return p
 }
 
@@ -326,9 +327,11 @@ func (g *Graph) validateSpeculator(p *validate.Problems) {
 	}
 	for i, n := range s.Head {
 		n.validate(p, fmt.Sprintf("speculator.head[%d]", i))
+		validateOutsideLayers(p, fmt.Sprintf("speculator.head[%d]", i), n)
 	}
 	for i, n := range s.SequentialHead {
 		n.validate(p, fmt.Sprintf("speculator.sequential_head[%d]", i))
+		validateOutsideLayers(p, fmt.Sprintf("speculator.sequential_head[%d]", i), n)
 	}
 }
 
@@ -665,8 +668,8 @@ func validateLayerCacheRefs(p *validate.Problems, at string, lk LayerKind) {
 	}
 }
 
-// validateOutsideLayers refuses, on an embedding or head node, the keys that tie work to a
-// layer's caches: those nodes run outside every layer, so there is no cache for them to
+// validateOutsideLayers refuses, on an embedding, head or speculator head node, the keys
+// that tie work to a layer's caches: those nodes run outside every layer, so there is no cache for them to
 // own, read or write, and no compressed stream for per-entry work to follow.
 func validateOutsideLayers(p *validate.Problems, at string, n Node) {
 	if len(n.Caches) > 0 {

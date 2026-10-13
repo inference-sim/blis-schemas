@@ -136,7 +136,7 @@ A model that decides its own sequence parallelism never consults the engine-wide
 included, use `tensor_parallel_unless_sequence_parallel`. DeepSeek-V4.1 passes its own flag
 to its MoE, and vLLM's FusedMoE then skips the final tensor-parallel all-reduce. The
 0.31.0 rules pack reports the engine-wide condition on such a model as an error. One case
-is unverified: under DeepSeek-V4's mega-MoE backend with sequence parallelism off (at
+is unverified: under DeepSeek-V4's and V4.1's mega-MoE backend with sequence parallelism off (at
 pipeline parallelism above one), the experts run in DeepGEMM's fused kernel rather than
 FusedMoE, and whether that path performs the final tensor-parallel reduction is not traced
 here; its shared expert reduces its own output.

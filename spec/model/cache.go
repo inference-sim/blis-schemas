@@ -173,7 +173,7 @@ func (c Cache) EntryBytes(cacheDType string) int {
 // would silently vanish. Every cache must therefore say which it is.
 func (c *Cache) UnmarshalYAML(node *yaml.Node) error {
 	if err := validate.RejectUnknownKeys(node, Cache{}, nil); err != nil {
-		return err
+		return fmt.Errorf("line %d: cache: %w", node.Line, err)
 	}
 	if node.Kind == yaml.MappingNode {
 		stated := false
