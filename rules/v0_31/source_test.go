@@ -51,7 +51,10 @@ func readSource(t *testing.T, root string, parts ...string) string {
 	return string(b)
 }
 
-// literalMembers extracts the string members of a Python Literal type alias.
+// literalMembers extracts the string members of a Python Literal type alias. A member
+// that is not a quoted string -- another alias nested in it, which Python flattens into
+// the accepted set -- fails the test rather than being dropped, since a dropped member
+// would leave a value the engine accepts missing from both sides of the comparison.
 func literalMembers(t *testing.T, src, name string) []string {
 	t.Helper()
 	re := regexp.MustCompile(`(?s)\b` + name + `\s*=\s*Literal\[(.*?)\]`)
@@ -60,10 +63,22 @@ func literalMembers(t *testing.T, src, name string) []string {
 		t.Fatalf("no Literal named %s found; the engine may have changed how it "+
 			"declares this vocabulary", name)
 	}
-	out := regexp.MustCompile(`"([^"]+)"`).FindAllStringSubmatch(m[1], -1)
-	vals := make([]string, 0, len(out))
-	for _, g := range out {
-		vals = append(vals, g[1])
+	var vals []string
+	for _, line := range strings.Split(m[1], "\n") {
+		if i := strings.Index(line, "#"); i >= 0 {
+			line = line[:i]
+		}
+		for _, part := range strings.Split(line, ",") {
+			part = strings.TrimSpace(part)
+			switch {
+			case part == "":
+			case len(part) >= 2 && part[0] == '"' && part[len(part)-1] == '"':
+				vals = append(vals, part[1:len(part)-1])
+			default:
+				t.Fatalf("Literal %s has a member that is not a quoted string, %q; resolve it "+
+					"before comparing", name, part)
+			}
+		}
 	}
 	sort.Strings(vals)
 	return vals
@@ -306,7 +321,7 @@ func TestSPMoEBackendsMatchSource(t *testing.T) {
 
 // The engine has no allreduce-backend enum. This test asserts the absence, because
 // the pack's shape depends on it: an earlier draft invented such an enum.
-func TestNoAllReduceBackendEnumInSource(t *testing.T) {
+func TestNoAllReduceBackendEnumMatchSource(t *testing.T) {
 	root := vllmSource(t)
 	src := readSource(t, root, "vllm", "config", "parallel.py")
 	if regexp.MustCompile(`AllReduceBackend\s*=\s*Literal\[`).MatchString(src) {
@@ -400,17 +415,22 @@ func TestAsyncCompatibleSpecMatchSource(t *testing.T) {
 	assertSameSet(t, "AsyncCompatibleSpec", Pack().AsyncCompatibleSpec, names)
 }
 
-// The DBO microbatch check the dbo-thresholds-at-least-microbatches rule encodes, and the
-// Engram refusal engram-excludes-dbo encodes, are both asserted present, so a release that
-// drops either fails here rather than leaving a rule refusing what the engine runs.
+// Each startup refusal a 0.31.0 rule encodes is asserted present by its message text, so
+// a release that drops one fails here rather than leaving a rule refusing what the engine
+// runs. The PCP-with-DP refusal 0.29.0 had is asserted absent.
 func TestStartupRefusalsMatchSource(t *testing.T) {
 	root := vllmSource(t)
 	parallel := readSource(t, root, "vllm", "config", "parallel.py")
 	cfg := readSource(t, root, "vllm", "config", "vllm.py")
 	engram := readSource(t, root, "vllm", "config", "engram.py")
+	spec := readSource(t, root, "vllm", "config", "speculative.py")
 	modelCfg := readSource(t, root, "vllm", "config", "model.py")
 	for _, c := range []struct{ rule, src, text string }{
 		{"engram-config-valid", engram, "EngramConfig requires a model with supported Engram"},
+		{"engram-config-valid", engram, "use_thp requires cpu_offload=True and dp_shared_memory=False"},
+		{"deepseek-v41-requires-dspark", spec, "DeepSeek V4.1 has no classic-MTP draft"},
+		{"deepseek-v41-requires-dspark", spec, `if hf_config.model_type in ("deepseek_v4", "deepseek_v41"):`},
+		{"moonep-requirements", cfg, "The moonep all2all backend currently supports BF16 models"},
 		{"engram-config-valid", engram, "dp_shared_memory requires cpu_offload=True"},
 		{"engram-config-valid", engram, "dp_shared_memory requires data_parallel_size > 1."},
 		{"max-model-len-within-context-window", modelCfg, "is greater \"\n                f\"than the derived max_model_len"},
@@ -477,5 +497,43 @@ func TestV41SequenceParallelRuleMatchSource(t *testing.T) {
 	if !strings.Contains(src, "use_mega_moe = vllm_config.kernel_config.moe_backend in MEGA_MOE_BACKENDS") ||
 		!strings.Contains(src, want) {
 		t.Error("DeepSeek-V4.1's _use_sequence_parallel changed; ModelSequenceParallel encodes the old rule")
+	}
+}
+
+func TestDefaultAll2AllBackendMatchSource(t *testing.T) {
+	root := vllmSource(t)
+	src := readSource(t, root, "vllm", "config", "parallel.py")
+	m := regexp.MustCompile(`all2all_backend: All2AllBackend = "([a-z_0-9]+)"`).FindStringSubmatch(src)
+	if m == nil {
+		t.Fatal("the all2all_backend default was not found; it may have moved")
+	}
+	if m[1] != Pack().DefaultAll2AllBackend {
+		t.Errorf("DefaultAll2AllBackend: pack has %q, the engine declares %q", Pack().DefaultAll2AllBackend, m[1])
+	}
+}
+
+// EngramArchitectures is _NGRAM_LAYER_FIELDS' keys, and EngramCPUOffloadDefault its
+// cpu_offload default, which the engram-config-valid and engram-residency-default rules read.
+func TestEngramMatchSource(t *testing.T) {
+	root := vllmSource(t)
+	src := readSource(t, root, "vllm", "config", "engram.py")
+	i := strings.Index(src, "_NGRAM_LAYER_FIELDS = {")
+	if i < 0 {
+		t.Fatal("_NGRAM_LAYER_FIELDS was not found; it may have moved")
+	}
+	body := src[i:]
+	body = body[:strings.Index(body, "}")]
+	var archs []string
+	for _, m := range regexp.MustCompile(`"([A-Za-z0-9]+)":`).FindAllStringSubmatch(body, -1) {
+		archs = append(archs, m[1])
+	}
+	sort.Strings(archs)
+	assertSameSet(t, "EngramArchitectures", Pack().EngramArchitectures, archs)
+	m := regexp.MustCompile(`cpu_offload: bool = (True|False)`).FindStringSubmatch(src)
+	if m == nil {
+		t.Fatal("EngramConfig.cpu_offload's default was not found")
+	}
+	if got := m[1] == "True"; got != Pack().EngramCPUOffloadDefault {
+		t.Errorf("EngramCPUOffloadDefault: pack has %v, the engine declares %s", Pack().EngramCPUOffloadDefault, m[1])
 	}
 }

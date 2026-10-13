@@ -4,9 +4,10 @@
 // It began as a copy of v0_29. What moved between the two releases, each checked in the
 // engine source at both tags:
 //
-//   - all2all_backend gains moonep, which startup refuses for a quantized model and with
-//     EPLB (vllm/config/vllm.py), and deepep_v2 joins the subset that makes the MoE
-//     input sequence-parallel (vllm/config/parallel.py use_sequence_parallel_moe).
+//   - all2all_backend gains moonep, which startup refuses for a quantized or non-BF16
+//     model, with EPLB, and with a non-linear expert placement (vllm/config/vllm.py), and
+//     deepep_v2 joins the subset that makes the MoE input sequence-parallel
+//     (vllm/config/parallel.py use_sequence_parallel_moe).
 //   - The cache dtypes gain nvfp4_ds_mla, the connectors HiSparseConnector, and the MTP
 //     methods glm5_next_mtp.
 //   - Prefill-context parallelism with data parallelism is no longer refused, so the
@@ -15,20 +16,22 @@
 //     configured, not under any connector (vllm/config/vllm.py validate_block_size).
 //   - Dual-batch overlap refuses a threshold below its microbatch count, and refuses to
 //     run at all beside DeepSeek-V4.1's Engram layers.
+//   - DeepSeek-V4.1 arrives, with an Engram config, a dspark-only drafter, and a
+//     sequence-parallelism rule of its own.
 //
 // The speculative-method sets are the engine's whole SpeculativeMethod literal and the
 // whole set its async-scheduling check admits, rather than the curated subset v0_29
 // carries, and source_test.go checks both against the engine.
 //
-// One v0.31.0 behaviour this pack does not answer: DeepSeek-V4.1 decides sequence
-// parallelism by a rule of its own (vllm/models/deepseek_v41/nvidia/model.py
-// _use_sequence_parallel: pipeline parallelism 1, expert parallelism on, tp above 1, and a
-// mega-MoE backend or dp above 1), which shards the whole residual stream by token and
-// does not consult the all2all backend. SequenceParallelMoE and the
-// sequence-parallel-moe-implied rule answer the engine-wide rule only. The two agree for
-// V4.1 when pipeline parallelism is 1, dp is above 1 and the backend is in SPMoEBackends,
-// and can differ otherwise. Telling them apart needs the model's architecture, which a
-// graph does not state.
+// DeepSeek-V4.1 decides sequence parallelism by a rule of its own
+// (vllm/models/deepseek_v41/nvidia/model.py _use_sequence_parallel: pipeline parallelism
+// 1, expert parallelism on, tp above 1, and a mega-MoE backend or dp above 1), which
+// shards the whole residual stream by token and does not consult the all2all backend.
+// ModelSequenceParallelRules carries it for global.architecture, and
+// ModelSequenceParallel evaluates it to decide the graph's sequence_parallel emit
+// conditions. SequenceParallelMoE and the sequence-parallel-moe-implied rule answer the
+// engine-wide MoE rule only, which agrees with V4.1's when pipeline parallelism is 1, dp
+// is above 1 and the backend is in SPMoEBackends, and can differ otherwise.
 //
 // Each rule states, in its Because field, what breaks without it. That is not
 // decoration: a reader deciding whether to waive a rule needs to know what the rule
@@ -37,6 +40,7 @@
 package v0_31
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
@@ -120,8 +124,13 @@ func Pack() *rules.Pack {
 		MegaMoEBackends: set("deep_gemm_mega_moe", "flashinfer_moe_ep_mega_deep_gemm",
 			"flashinfer_moe_ep_mega_cutedsl"),
 
-		// DeepSeek-V4.1's _use_sequence_parallel (vllm/models/deepseek_v41/nvidia/model.py).
-		SequenceParallelArchitectures: set(rules.ArchDeepseekV41),
+		// DeepSeek-V4.1's _use_sequence_parallel (vllm/models/deepseek_v41/nvidia/model.py):
+		// pipeline_parallel_size == 1 and enable_expert_parallel and tensor_parallel_size
+		// > 1 and (use_mega_moe or data_parallel_size > 1).
+		ModelSequenceParallelRules: map[string]rules.SequenceParallelCondition{
+			rules.ArchDeepseekV41: {PipelineParallelOne: true, ExpertParallel: true,
+				TensorParallelAboveOne: true, MegaMoEOrDataParallelAboveOne: true},
+		},
 
 		SchedulerPolicies: set("fcfs", "priority"),
 
@@ -129,10 +138,10 @@ func Pack() *rules.Pack {
 		// nested literals flattened: six named methods, the EAGLE family with its
 		// twenty-seven multi-token-prediction names and dflash, ngram_gpu, and dspark.
 		//
-		// Membership is not the whole story for DeepSeek-V4.1: the engine refuses mtp
-		// for a deepseek_v41 target and requires dspark ("DeepSeek V4.1 has no
-		// classic-MTP draft"). No rule enforces that, because a model graph does not
-		// name its architecture.
+		// Membership is not the whole story for DeepSeek-V4.1: the engine refuses every
+		// MTP-family method for it and serves dspark ("DeepSeek V4.1 has no classic-MTP
+		// draft"), which the deepseek-v41-requires-dspark rule enforces for a graph that
+		// names its architecture.
 		SpeculativeMethods: set(append([]string{"ngram", "medusa", "mlp_speculator",
 			"draft_model", "suffix", "custom_class", "eagle", "eagle3",
 			"extract_hidden_states", "dflash", "ngram_gpu", "dspark"},
@@ -140,8 +149,9 @@ func Pack() *rules.Pack {
 		// Methods that leave async scheduling enabled: the EAGLE family (every MTP name
 		// and dflash among them), ngram_gpu, draft_model and dspark -- the set
 		// vllm/config/vllm.py admits when async scheduling is requested and keeps
-		// enabled when it is left to the engine. Any other method disables it, which
-		// moves the host term from hidden to exposed. Pipeline parallelism above one
+		// enabled when it is left to the engine. Any other method disables it when it is
+		// left to the engine, which moves the host term from hidden to exposed, and is
+		// refused at startup when it is requested. Pipeline parallelism above one
 		// also disables it on the V1 runner in this release, which is the resolver's
 		// to report rather than a property of the method.
 		AsyncCompatibleSpec: set(append([]string{"eagle", "eagle3",
@@ -177,6 +187,14 @@ func Pack() *rules.Pack {
 		TritonFetchSMs:       12,
 
 		CascadeAttnOptIn: true,
+
+		// all2all_backend: All2AllBackend = "allgather_reducescatter" (vllm/config/parallel.py).
+		DefaultAll2AllBackend: "allgather_reducescatter",
+
+		// _NGRAM_LAYER_FIELDS (vllm/config/engram.py), and EngramConfig.cpu_offload: bool = True.
+		EngramArchitectures: set(rules.ArchDeepseekV41, "Qwen4ExpForCausalLM",
+			"Qwen4ExpForConditionalGeneration"),
+		EngramCPUOffloadDefault: true,
 	}
 	p.Rules = ruleList(p)
 	return p
@@ -511,7 +529,7 @@ func ruleList(p *rules.Pack) []rules.Rule {
 					if e.DBO == nil || !e.DBO.Enabled {
 						return
 					}
-					if e.DBO.DecodeTokenThreshold == 0 && e.DBO.PrefillTokenThreshold == 0 {
+					if e.DBO.DecodeTokenThreshold == nil && e.DBO.PrefillTokenThreshold == nil {
 						out.RuleWarnf("dbo-thresholds-stated-when-enabled",
 							"%s.engine.dbo: enabled with no thresholds stated; engine %s defaults to %d for a uniform-decode batch and %d otherwise",
 							at, p.Version, p.DefaultDBODecodeThreshold,
@@ -529,15 +547,19 @@ func ruleList(p *rules.Pack) []rules.Rule {
 					if e.DBO == nil || !e.DBO.Enabled {
 						return
 					}
-					// A zero threshold is unstated and takes the default, which passes.
-					for field, v := range map[string]int{
-						"dbo_decode_token_threshold":  e.DBO.DecodeTokenThreshold,
-						"dbo_prefill_token_threshold": e.DBO.PrefillTokenThreshold,
+					// An unstated threshold takes the default, which passes; a stated 0 does
+					// not. Negative values are a field error, reported before rules run.
+					for _, f := range []struct {
+						name string
+						v    *int
+					}{
+						{"dbo_decode_token_threshold", e.DBO.DecodeTokenThreshold},
+						{"dbo_prefill_token_threshold", e.DBO.PrefillTokenThreshold},
 					} {
-						if v > 0 && v < microbatches {
+						if f.v != nil && *f.v < microbatches {
 							out.RuleErrorf("dbo-thresholds-at-least-microbatches",
 								"%s.engine.dbo.%s: %d is below the %d microbatches dual-batch overlap splits into; engine %s refuses it at startup",
-								at, field, v, microbatches, p.Version)
+								at, f.name, *f.v, microbatches, p.Version)
 						}
 					}
 				})
@@ -572,17 +594,29 @@ func ruleList(p *rules.Pack) []rules.Rule {
 		},
 		{
 			Name:    "engram-config-valid",
-			Because: "this release refuses an Engram config at startup on a model without Engram layers, dp_shared_memory without cpu_offload or with one data-parallel rank, and use_thp without cpu_offload or with dp_shared_memory (vllm/config/engram.py)",
+			Because: "this release refuses an Engram config at startup on a model without Engram layers or of an architecture outside _NGRAM_LAYER_FIELDS, dp_shared_memory without cpu_offload or with one data-parallel rank, and use_thp without cpu_offload or with dp_shared_memory (vllm/config/engram.py); a graph with Engram lookups that names no architecture draws a warning, since the refusal turns on the architecture",
 			Check: func(in rules.Input, out *validate.Problems) {
 				forEachPool(in, func(at string, pool deployment.Pool) {
 					ec := pool.Engine.EngramConfig
 					if ec == nil {
 						return
 					}
-					if in.Model != nil && !modelHasEngram(in) {
-						out.RuleErrorf("engram-config-valid",
-							"%s.engine.engram_config: the model has no Engram lookups; engine %s refuses an Engram config for it",
-							at, p.Version)
+					if in.Model != nil {
+						arch := in.Model.Global.Architecture
+						switch {
+						case !modelHasEngram(in):
+							out.RuleErrorf("engram-config-valid",
+								"%s.engine.engram_config: the model has no Engram lookups; engine %s refuses an Engram config for it",
+								at, p.Version)
+						case arch != "" && !p.EngramArchitectures[arch]:
+							out.RuleErrorf("engram-config-valid",
+								"%s.engine.engram_config: engine %s accepts an Engram config only for %v, not %s",
+								at, p.Version, sortedKeys(p.EngramArchitectures), arch)
+						case arch == "":
+							out.RuleWarnf("engram-config-valid",
+								"%s.engine.engram_config: the model names no architecture; engine %s accepts an Engram config only for %v",
+								at, p.Version, sortedKeys(p.EngramArchitectures))
+						}
 					}
 					offloadOff := ec.CPUOffload != nil && !*ec.CPUOffload
 					shared := ec.DPSharedMemory != nil && *ec.DPSharedMemory
@@ -606,6 +640,82 @@ func ruleList(p *rules.Pack) []rules.Rule {
 			},
 		},
 		{
+			Name:    "cache-record-dtypes-known",
+			Because: "a cache's per-dtype record is looked up by the cache dtype the engine runs, so an entry keyed by a name this release does not accept can never be read, and a misspelled nvfp4_ds_mla would leave its cache priced at the default record",
+			Check: func(in rules.Input, out *validate.Problems) {
+				if in.Model == nil {
+					return
+				}
+				check := func(at string, records map[string]int) {
+					for _, dt := range sortedIntKeys(records) {
+						if !p.CacheDTypes[dt] {
+							out.RuleErrorf("cache-record-dtypes-known",
+								"model %s.bytes_by_cache_dtype: %q is not a cache dtype engine %s accepts",
+								at, dt, p.Version)
+						}
+					}
+				}
+				in.Model.EachNode(func(at string, n model.Node) {
+					for i, c := range n.Caches {
+						check(fmt.Sprintf("%s.caches[%d]", at, i), c.BytesByCacheDType)
+					}
+				})
+				for i, o := range in.Model.ArchOverrides {
+					for j, c := range o.Caches {
+						check(fmt.Sprintf("arch_overrides[%d].caches[%d]", i, j), c.BytesByCacheDType)
+					}
+				}
+			},
+		},
+		{
+			Name:    "engram-residency-default",
+			Because: "a graph states where an Engram table lives when the deployment leaves cpu_offload alone, and this release's default is cpu_offload true, host memory (vllm/config/engram.py); a graph stating the other residency would price every such deployment against the wrong memory",
+			Check: func(in rules.Input, out *validate.Problems) {
+				if in.Model == nil {
+					return
+				}
+				want := model.ResidencyDevice
+				if p.EngramCPUOffloadDefault {
+					want = model.ResidencyHost
+				}
+				in.Model.EachNode(func(at string, n model.Node) {
+					if n.Op != model.OpGather || n.ResidencyControl != model.ResidencyEngramCPUOffload {
+						return
+					}
+					if got := n.Residency.Effective(); got != want {
+						out.RuleErrorf("engram-residency-default",
+							"model %s.residency: %s, but under engine %s an Engram table defaults to %s",
+							at, got, p.Version, want)
+					}
+				})
+			},
+		},
+		{
+			Name:    "deepseek-v41-requires-dspark",
+			Because: "this release refuses a multi-token-prediction draft for DeepSeek-V4.1 at startup: it rewrites the V4.1 draft config to deepseek_mtp, and an MTP-family method then raises \"DeepSeek V4.1 has no classic-MTP draft\" (vllm/config/speculative.py); dspark is the method it serves",
+			Check: func(in rules.Input, out *validate.Problems) {
+				if in.Model == nil || in.Model.Global.Architecture != rules.ArchDeepseekV41 {
+					return
+				}
+				isMTP := map[string]bool{}
+				for _, m := range mtpMethods {
+					isMTP[m] = true
+				}
+				forEachEngine(in, func(at string, e deployment.Engine) {
+					if e.Speculative != nil && isMTP[e.Speculative.Method] {
+						out.RuleErrorf("deepseek-v41-requires-dspark",
+							"%s.engine.speculative.method: %q on %s; engine %s refuses an MTP draft for it and serves dspark",
+							at, e.Speculative.Method, rules.ArchDeepseekV41, p.Version)
+					}
+				})
+				if s := in.Model.Speculator; s != nil && isMTP[s.Method] {
+					out.RuleErrorf("deepseek-v41-requires-dspark",
+						"model.speculator.method: %q on %s; engine %s refuses an MTP draft for it and serves dspark",
+						s.Method, rules.ArchDeepseekV41, p.Version)
+				}
+			},
+		},
+		{
 			Name:    "max-model-len-within-context-window",
 			Because: "this release refuses a stated max_model_len above the window it derives from the model configuration, unless the configuration's model_max_length admits it or VLLM_ALLOW_LONG_MAX_MODEL_LEN is set (vllm/config/model.py); a warning because the schema sees neither",
 			Check: func(in rules.Input, out *validate.Problems) {
@@ -626,7 +736,10 @@ func ruleList(p *rules.Pack) []rules.Rule {
 			Name:    "sequence-parallel-architecture-known",
 			Because: "a graph's sequence_parallel emit conditions are decided by its architecture's own code, so on an architecture this release has no such rule for they never fire and the graph prices tensor parallelism alone",
 			Check: func(in rules.Input, out *validate.Problems) {
-				if in.Model == nil || p.SequenceParallelArchitectures[in.Model.Global.Architecture] {
+				if in.Model == nil {
+					return
+				}
+				if _, ok := p.ModelSequenceParallelRules[in.Model.Global.Architecture]; ok {
 					return
 				}
 				reported := false
@@ -637,7 +750,7 @@ func ruleList(p *rules.Pack) []rules.Rule {
 					reported = true
 					out.RuleWarnf("sequence-parallel-architecture-known",
 						"model %s.emit: %q, but engine %s has no sequence-parallelism rule for architecture %q; architectures with one are %v",
-						at, n.Emit, p.Version, in.Model.Global.Architecture, sortedKeys(p.SequenceParallelArchitectures))
+						at, n.Emit, p.Version, in.Model.Global.Architecture, ruleArchitectures(p))
 				})
 			},
 		},
@@ -677,18 +790,13 @@ func ruleList(p *rules.Pack) []rules.Rule {
 			Check: func(in rules.Input, out *validate.Problems) {
 				forEachPool(in, func(at string, pool deployment.Pool) {
 					pl := pool.Parallel
-					e := pool.Engine
-					if !pl.EnableExpertParallel || pl.TP <= 1 || pl.DP <= 1 {
+					if !p.SequenceParallelMoE(pool.Engine.All2AllBackend, pl.EnableExpertParallel, pl.TP, pl.DP) {
 						return
 					}
-					// An unstated backend is the engine default, allgather_reducescatter
-					// (vllm/config/parallel.py), which is in the subset.
-					backend := e.All2AllBackend
+					// An unstated backend is the engine default, which the method applies.
+					backend := pool.Engine.All2AllBackend
 					if backend == "" {
-						backend = defaultAll2AllBackend
-					}
-					if !p.SPMoEBackends[backend] {
-						return
+						backend = p.DefaultAll2AllBackend
 					}
 					out.RuleWarnf("sequence-parallel-moe-implied",
 						"%s: engine %s makes the MoE input sequence-parallel here (backend %q, tp %d, dp %d), so the model graph must emit a reduce-scatter and all-gather pair rather than an all-reduce",
@@ -698,9 +806,6 @@ func ruleList(p *rules.Pack) []rules.Rule {
 		},
 	}
 }
-
-// defaultAll2AllBackend is the engine's all2all_backend default.
-const defaultAll2AllBackend = "allgather_reducescatter"
 
 func forEachPool(in rules.Input, fn func(at string, pool deployment.Pool)) {
 	if in.Deployment == nil {
@@ -745,10 +850,10 @@ func itoa(i int) string {
 	return string(b[n:])
 }
 
-// totalExperts returns the model's logical expert count, taken from the first
-// grouped-GEMM node. A graph with differing expert counts per layer is possible in
-// principle and absent from every model these schemas target; the maximum is used so
-// the divisibility check errs toward reporting.
+// totalExperts returns the largest expert count of any grouped-GEMM node the graph
+// declares. Where layers differ it is the target's count, as for DeepSeek-V4.1, whose
+// draft layers carry 128 experts beside the target's 384. A draft's own, smaller count
+// is not checked.
 func totalExperts(in rules.Input) int {
 	if in.Model == nil {
 		return 0
@@ -774,6 +879,24 @@ func mayUseNixl(d *deployment.Deployment) bool {
 		}
 	}
 	return false
+}
+
+func sortedIntKeys(m map[string]int) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func ruleArchitectures(p *rules.Pack) []string {
+	out := make([]string, 0, len(p.ModelSequenceParallelRules))
+	for a := range p.ModelSequenceParallelRules {
+		out = append(out, a)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func connectorOf(o *deployment.Offload) string {

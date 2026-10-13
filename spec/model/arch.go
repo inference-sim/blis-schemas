@@ -45,6 +45,8 @@ type NodeOverride struct {
 
 // CacheOverride restates the record of every cache named Name. A field left zero keeps
 // the base graph's value; BytesByCacheDType entries are merged over the base's.
+// BytesPerEntry is restated on readers too, since a reader states the entry it reads;
+// PageAlignment and BytesByCacheDType describe storage and reach the owners only.
 type CacheOverride struct {
 	Name              string         `yaml:"name"`
 	BytesPerEntry     int            `yaml:"bytes_per_entry,omitempty"`
@@ -56,9 +58,17 @@ type CacheOverride struct {
 // major version: a copy with the matching override applied and no overrides left. A
 // family no override names gets the base graph. The receiver is not modified.
 //
+// A major version below one is an error on a graph that has overrides: it is what a chip
+// with no ComputeCapability yields, and pricing such a chip with the base graph would
+// silently give a B200 its SM90 records. A graph with no overrides is the same on every
+// chip, so it is returned for any major version.
+//
 // It is the one implementation of the overlay, so the catalog, the kernel and a
 // simulator cannot apply it three different ways.
 func (g *Graph) ForCapability(major int) (*Graph, error) {
+	if major < 1 && len(g.ArchOverrides) > 0 {
+		return nil, fmt.Errorf("the graph states arch_overrides, so the chip's compute capability must be known to choose among them; got major version %d", major)
+	}
 	out := g.clone()
 	out.ArchOverrides = nil
 	for _, o := range g.ArchOverrides {
@@ -103,6 +113,9 @@ func (g *Graph) apply(o ArchOverride) error {
 				hit = true
 				if co.BytesPerEntry != 0 {
 					c.BytesPerEntry = co.BytesPerEntry
+				}
+				if !c.Owned {
+					continue
 				}
 				if co.PageAlignment != 0 {
 					c.PageAlignment = co.PageAlignment

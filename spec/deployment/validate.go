@@ -571,8 +571,13 @@ func validateEngine(p *validate.Problems, at string, e Engine) {
 			"must lie in [0, 1] (0 means unset), got %v", e.GPUMemoryUtilization)
 	}
 	if e.DBO != nil && e.DBO.Enabled {
-		if e.DBO.DecodeTokenThreshold < 0 || e.DBO.PrefillTokenThreshold < 0 {
-			p.Field(at+".engine.dbo", "thresholds must not be negative")
+		for field, v := range map[string]*int{
+			"dbo_decode_token_threshold":  e.DBO.DecodeTokenThreshold,
+			"dbo_prefill_token_threshold": e.DBO.PrefillTokenThreshold,
+		} {
+			if v != nil && *v < 0 {
+				p.Field(at+".engine.dbo."+field, "must not be negative")
+			}
 		}
 	}
 	if e.EPLB != nil && e.EPLB.Enabled && e.EPLB.NumRedundantExperts < 0 {

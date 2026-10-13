@@ -275,10 +275,14 @@ type Engine struct {
 // --dbo-decode-token-threshold) rather than being shortened by the nesting, because
 // a deployment is written by whoever launched the engine and a renamed field makes
 // them translate.
+//
+// The thresholds are pointers because a stated 0 and an unstated threshold are
+// different launches: unstated takes the engine's default, and 0 is a value the engine
+// accepts as a field and refuses at startup once dual-batch overlap is on.
 type DBO struct {
 	Enabled               bool `yaml:"enable_dbo"`
-	DecodeTokenThreshold  int  `yaml:"dbo_decode_token_threshold,omitempty"`
-	PrefillTokenThreshold int  `yaml:"dbo_prefill_token_threshold,omitempty"`
+	DecodeTokenThreshold  *int `yaml:"dbo_decode_token_threshold,omitempty"`
+	PrefillTokenThreshold *int `yaml:"dbo_prefill_token_threshold,omitempty"`
 }
 
 // EPLB is expert-parallel load balancing. NumRedundantExperts is not cosmetic: with

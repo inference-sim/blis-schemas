@@ -19,6 +19,15 @@ var residencies = map[Residency]bool{"": true, ResidencyDevice: true, ResidencyH
 // device.
 func (r Residency) Valid() bool { return residencies[r] }
 
+// Effective returns the residency with its default applied, so a reader compares one
+// spelling: the empty value is ResidencyDevice.
+func (r Residency) Effective() Residency {
+	if r == "" {
+		return ResidencyDevice
+	}
+	return r
+}
+
 // ResidencyControl names the engine setting that decides a table's residency, so a
 // consumer knows which deployment field to read. It is a closed list for the reason
 // EmitCondition is: the graph states which question to ask, never how to answer it.
@@ -27,9 +36,11 @@ type ResidencyControl string
 const (
 	// ResidencyFixed is the zero value: no setting moves the table.
 	ResidencyFixed ResidencyControl = ""
-	// ResidencyEngramCPUOffload: vLLM's EngramConfig.cpu_offload, default true, set
-	// through --engram-config (vllm/config/engram.py) and stated in a deployment as
-	// engine.engram_config.cpu_offload. False allocates the table in HBM.
+	// ResidencyEngramCPUOffload: vLLM's EngramConfig.cpu_offload, set through
+	// --engram-config (vllm/config/engram.py) and stated in a deployment as
+	// engine.engram_config.cpu_offload. True keeps the table in host memory and false in
+	// HBM. Its default is an engine-release fact, so the rules pack, not this schema,
+	// checks that a graph's stated residency is the release's default.
 	ResidencyEngramCPUOffload ResidencyControl = "engram_cpu_offload"
 )
 
@@ -39,15 +50,6 @@ var residencyControls = map[ResidencyControl]bool{
 
 // Valid reports whether c is a recognized control.
 func (c ResidencyControl) Valid() bool { return residencyControls[c] }
-
-// DefaultResidency is where the engine places a table this control governs when the
-// deployment does not say.
-func (c ResidencyControl) DefaultResidency() Residency {
-	if c == ResidencyEngramCPUOffload {
-		return ResidencyHost // EngramConfig.cpu_offload: bool = True
-	}
-	return ResidencyDevice
-}
 
 // GatherShard is how a gathered table divides across tensor-parallel ranks, which
 // decides both what each rank holds and how many rows each rank reads per token.
@@ -80,3 +82,12 @@ var gatherShards = map[GatherShard]bool{
 // Valid reports whether s is a recognized shard. The empty value is valid and means
 // replicated.
 func (s GatherShard) Valid() bool { return gatherShards[s] }
+
+// Effective returns the shard with its default applied, so a reader compares one
+// spelling: the empty value is ShardReplicated.
+func (s GatherShard) Effective() GatherShard {
+	if s == "" {
+		return ShardReplicated
+	}
+	return s
+}

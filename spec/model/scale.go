@@ -59,8 +59,10 @@ func StoredBytes(d DType, s *WeightScale) float64 {
 	return b
 }
 
-// WeightBytesPerParam returns the resident bytes of one parameter of node n, scales
-// included: the one number the catalog, the kernel and a simulator should all agree on.
+// WeightBytesPerParam returns the resident bytes of one parameter of a GEMM or
+// GroupedGEMM node, scales included: the one number the catalog, the kernel and a
+// simulator should all agree on. Any other node holds no parameters, and gets zero; a
+// Gather states its stored row width as row_bytes instead.
 //
 // The dtype is the node's override or the global one. The scale layout is the node's
 // own; failing that, the global layout when the node is stored at the global dtype; and
@@ -68,6 +70,9 @@ func StoredBytes(d DType, s *WeightScale) float64 {
 // stored in a different format, because a scale layout belongs to a format: DeepSeek-
 // V4.1's BF16 router and FP32 mHC projections carry none of its FP8 weights' scales.
 func (g *Graph) WeightBytesPerParam(n Node) float64 {
+	if n.Op != OpGEMM && n.Op != OpGroupedGEMM {
+		return 0
+	}
 	d := g.Global.WeightDType
 	if n.WeightDType != "" {
 		d = n.WeightDType

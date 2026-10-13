@@ -1,7 +1,9 @@
 package kernel
 
 import (
+	"fmt"
 	"math"
+	"math/rand"
 	"strings"
 	"testing"
 	"time"
@@ -52,5 +54,69 @@ func TestCheckRejectsMalformedDemands(t *testing.T) {
 	}
 	if err := (TransferDemand{Links: []LinkUse{ok, ok}}).Check(); !strings.Contains(err.Error(), "twice") {
 		t.Errorf("duplicate link: got %v", err)
+	}
+}
+
+func randomDemand(r *rand.Rand) TransferDemand {
+	d := TransferDemand{Bytes: r.Int63n(1 << 40), Floor: time.Duration(r.Int63n(int64(time.Millisecond)))}
+	for i, n := 0, r.Intn(4); i < n; i++ {
+		d.Links = append(d.Links, LinkUse{Link: LinkID(fmt.Sprint("l", i)), BytesPerSecond: 1e6 + r.Float64()*1e12})
+	}
+	return d
+}
+
+// AloneTime's properties as a price, over random demands: it is never below the floor;
+// more bytes never cost less; a faster slowest link never costs more; the order links are
+// listed in does not matter; and adding a link at least as fast as every other changes
+// nothing, while adding a slower one never helps.
+func TestAloneTimeProperties(t *testing.T) {
+	r := rand.New(rand.NewSource(3))
+	for i := 0; i < 5000; i++ {
+		d := randomDemand(r)
+		got := d.AloneTime()
+		if got < d.Floor {
+			t.Fatalf("%+v costs %v, below its floor", d, got)
+		}
+		more := d
+		more.Bytes += r.Int63n(1 << 30)
+		if more.AloneTime() < got {
+			t.Fatalf("more bytes cost less: %+v", d)
+		}
+		if len(d.Links) == 0 {
+			if got != d.Floor {
+				t.Fatalf("no link should cost the floor alone: %+v", d)
+			}
+			continue
+		}
+		faster := d
+		faster.Links = append([]LinkUse(nil), d.Links...)
+		for j := range faster.Links {
+			faster.Links[j].BytesPerSecond *= 2
+		}
+		if faster.AloneTime() > got {
+			t.Fatalf("faster links cost more: %+v", d)
+		}
+		shuffled := d
+		shuffled.Links = append([]LinkUse(nil), d.Links...)
+		r.Shuffle(len(shuffled.Links), func(a, b int) {
+			shuffled.Links[a], shuffled.Links[b] = shuffled.Links[b], shuffled.Links[a]
+		})
+		if shuffled.AloneTime() != got {
+			t.Fatalf("link order changed the price: %+v", d)
+		}
+		fastest := 0.0
+		for _, l := range d.Links {
+			fastest = math.Max(fastest, l.BytesPerSecond)
+		}
+		withFast := d
+		withFast.Links = append(append([]LinkUse(nil), d.Links...), LinkUse{Link: "fast", BytesPerSecond: fastest * 2})
+		if withFast.AloneTime() != got {
+			t.Fatalf("a link faster than every other changed the price: %+v", d)
+		}
+		withSlow := d
+		withSlow.Links = append(append([]LinkUse(nil), d.Links...), LinkUse{Link: "slow", BytesPerSecond: 1})
+		if withSlow.AloneTime() < got {
+			t.Fatalf("a slower link lowered the price: %+v", d)
+		}
 	}
 }

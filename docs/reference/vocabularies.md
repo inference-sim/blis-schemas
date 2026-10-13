@@ -184,8 +184,10 @@ A `Gather` node's `residency`, and the engine setting that can change it, its
 --8<-- "docs/generated/enum/model.ResidencyControl.md"
 
 `engram_cpu_offload`
-:   vLLM's Engram `cpu_offload`, which defaults to true, so a table it controls must state
-    `residency: host`. A deployment sets it with `engine.engram_config.cpu_offload`.
+:   vLLM's Engram `cpu_offload`. A deployment sets it with
+    `engine.engram_config.cpu_offload`. The graph states the residency the engine gives the
+    table when the deployment leaves it alone, which is a release fact: under 0.31.0 it is
+    `host`, and that pack's `engram-residency-default` rule checks it.
 
 ### Gather shards
 

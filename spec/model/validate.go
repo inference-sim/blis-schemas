@@ -544,23 +544,11 @@ func (n Node) validate(p *validate.Problems, at string) {
 		}
 		if !n.ResidencyControl.Valid() {
 			p.Field(at+".residency_control", "%q is not a recognized residency control", n.ResidencyControl)
-		} else if n.ResidencyControl != ResidencyFixed {
-			// The graph states the engine's default; the deployment states a departure
-			// from it. A graph whose stated residency disagreed with the default of the
-			// setting it names would price the default wrong for every deployment that
-			// leaves the setting alone.
-			r := n.Residency
-			if r == "" {
-				r = ResidencyDevice
-			}
-			if want := n.ResidencyControl.DefaultResidency(); r != want {
-				p.Field(at+".residency", "is %s, but %s defaults to %s", r, n.ResidencyControl, want)
-			}
 		}
 		if !n.Shard.Valid() {
 			p.Field(at+".shard", "%q is not a recognized shard", n.Shard)
 		}
-		if n.Shard == ShardHeads && n.RowsPerToken < 2 {
+		if n.Shard.Effective() == ShardHeads && n.RowsPerToken < 2 {
 			p.Field(at+".shard", "a table split by heads needs one row per head per token, so rows_per_token of at least 2")
 		}
 		forbid(p, at, map[string]int{

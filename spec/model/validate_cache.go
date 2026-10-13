@@ -2,13 +2,14 @@ package model
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/inference-sim/blis-schemas/internal/validate"
 )
 
 // validateNodeCaches checks the caches one attention node states, in isolation: each is
-// well formed, names are unique within the layer, and the node's read shape agrees with
-// what it reads.
+// well formed, and the node's read shape agrees with what it reads. Name uniqueness is
+// layer-wide, so validateLayerCacheNames checks it.
 func (n Node) validateNodeCaches(p *validate.Problems, at string) {
 	if len(n.Caches) == 0 {
 		return
@@ -56,28 +57,63 @@ func (n Node) validateNodeCaches(p *validate.Problems, at string) {
 		if c.Kind == CacheWindow && c.TokensPerEntry > 1 {
 			p.Field(ca+".tokens_per_entry", "a window cache holds one entry per token")
 		}
+		for _, dt := range sortedKeys(c.BytesByCacheDType) {
+			if dt == "" {
+				p.Field(ca+".bytes_by_cache_dtype", "a cache dtype name is empty")
+			} else if v := c.BytesByCacheDType[dt]; v < 1 {
+				p.Field(ca+".bytes_by_cache_dtype."+dt, "must be positive, got %d", v)
+			}
+		}
+		// A cache another layer owns is stored by that layer, so how it is stored -- its
+		// pages, their alignment, its record under other cache dtypes, a state cache's
+		// size -- is the owner's to state. A reader states only what it reads, which
+		// validateCacheSharing checks against the owner; letting it restate storage would
+		// let the two disagree with nothing to say which one holds.
+		if !c.Owned {
+			for field, set := range map[string]bool{
+				"bytes_by_cache_dtype": len(c.BytesByCacheDType) > 0, "block_size": c.BlockSize != 0,
+				"page_alignment": c.PageAlignment != 0, "entries": c.Entries != 0,
+			} {
+				if set {
+					p.Field(ca+"."+field, "describes storage, which the owning layer states; remove it from a cache this layer does not own")
+				}
+			}
+		}
 	}
 	// The read shape and the cache it reads must describe one stream. A compressed
-	// sparse layer reads a kv cache holding one entry per compress_ratio tokens; a kv
-	// cache at any other granularity would size one stream and price the read of
-	// another.
-	if n.CompressRatio > 0 {
-		for i, c := range n.Caches {
-			if c.Kind == CacheKV && c.EntryTokens() != n.CompressRatio {
-				p.Field(fmt.Sprintf("%s.caches[%d].tokens_per_entry", at, i),
-					"is %d but the node reads at compress_ratio %d", c.EntryTokens(), n.CompressRatio)
+	// sparse layer reads kv and index caches holding one entry per compress_ratio tokens
+	// -- V4.1's indexer keys are pooled at the layer's ratio like its latent
+	// (MLAAttentionSpec tokens_per_state=self.compress_ratio for both) -- and a node that
+	// does not compress reads one entry per token. A cache at any other granularity would
+	// size one stream and price the read of another.
+	ratio := n.CompressRatio
+	if ratio < 1 {
+		ratio = 1
+	}
+	for i, c := range n.Caches {
+		at := fmt.Sprintf("%s.caches[%d]", at, i)
+		switch c.Kind {
+		case CacheKV, CacheIndex:
+			if c.EntryTokens() != ratio {
+				p.Field(at+".tokens_per_entry",
+					"is %d but the node reads at compress_ratio %d", c.EntryTokens(), ratio)
+			}
+		case CacheWindow:
+			// A sliding-window cache is read by a sliding-window read of the same width.
+			if c.Window != n.Window {
+				p.Field(at+".window", "is %d but the node reads a window of %d", c.Window, n.Window)
 			}
 		}
 	}
-	// A sliding-window read is bounded by the window cache it reads.
-	if n.Window > 0 {
-		for i, c := range n.Caches {
-			if c.Kind == CacheWindow && c.Window != n.Window {
-				p.Field(fmt.Sprintf("%s.caches[%d].window", at, i),
-					"is %d but the node reads a window of %d", c.Window, n.Window)
-			}
-		}
+}
+
+func sortedKeys(m map[string]int) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
 	}
+	sort.Strings(out)
+	return out
 }
 
 // validateCacheSharing resolves every cache a layer reads but does not own against the
@@ -118,10 +154,10 @@ func (g *Graph) validateCacheSharing(p *validate.Problems, field string, s Stack
 				case !found:
 					p.Field(at, "%s layer %d reads cache %q, but no earlier layer owns one", field, i, c.Name)
 				case src.Kind != c.Kind || src.BytesPerEntry != c.BytesPerEntry ||
-					src.EntryTokens() != c.EntryTokens():
-					p.Field(at, "%s layer %d reads cache %q as %s, %d B per %d tokens, but layer %d owns it as %s, %d B per %d tokens",
-						field, i, c.Name, c.Kind, c.BytesPerEntry, c.EntryTokens(),
-						ownerAt[c.Name], src.Kind, src.BytesPerEntry, src.EntryTokens())
+					src.EntryTokens() != c.EntryTokens() || src.Window != c.Window:
+					p.Field(at, "%s layer %d reads cache %q as %s, %d B per %d tokens, window %d, but layer %d owns it as %s, %d B per %d tokens, window %d",
+						field, i, c.Name, c.Kind, c.BytesPerEntry, c.EntryTokens(), c.Window,
+						ownerAt[c.Name], src.Kind, src.BytesPerEntry, src.EntryTokens(), src.Window)
 				default:
 					continue
 				}

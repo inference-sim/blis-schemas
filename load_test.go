@@ -571,7 +571,7 @@ pools:
 	if e.EPLB == nil || !e.EPLB.Enabled || e.EPLB.NumRedundantExperts != 32 {
 		t.Errorf("eplb did not parse: %+v", e.EPLB)
 	}
-	if e.DBO == nil || !e.DBO.Enabled || e.DBO.DecodeTokenThreshold != 32 {
+	if e.DBO == nil || !e.DBO.Enabled || e.DBO.DecodeTokenThreshold == nil || *e.DBO.DecodeTokenThreshold != 32 {
 		t.Errorf("dbo did not parse: %+v", e.DBO)
 	}
 	// Validate the loaded deployment on its own terms; the composition layer requires a

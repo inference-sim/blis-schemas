@@ -260,7 +260,9 @@ type Speculator struct {
 	Method string `yaml:"method"`
 	// NumSpec is the tokens drafted per request per step. It is not the draft layer
 	// count: DeepSeek-V4.1's DSpark drafts dspark_block_size = 5 tokens through
-	// num_nextn_predict_layers = 3 layers (v0.31.0 vllm/config/speculative.py).
+	// num_nextn_predict_layers = 3 layers (both from the checkpoint's configuration;
+	// v0.31.0 vllm/config/speculative.py defaults num_speculative_tokens to
+	// dspark_block_size).
 	NumSpec int `yaml:"num_spec_tokens"`
 	// Drafting is how Stack runs. See Drafting.
 	Drafting Drafting `yaml:"drafting,omitempty"`
@@ -329,9 +331,9 @@ const (
 	// rather than both running.
 	EmitTensorParallelUnlessSequenceParallelMoE EmitCondition = "tensor_parallel_unless_sp_moe"
 	// EmitSequenceParallel: present when the model's own sequence parallelism is on, as a
-	// rules pack decides it for the architecture global.architecture names. DeepSeek-V4.1 then shards the residual stream by
-	// token across the tensor-parallel ranks, all-gathers each attention input and
-	// reduce-scatters its output (v0.31.0 vllm/models/deepseek_v41/nvidia/model.py:
+	// rules pack decides it for the architecture global.architecture names. DeepSeek-V4.1
+	// then shards the residual stream by token across the tensor-parallel ranks,
+	// all-gathers each attention input and reduce-scatters its output (v0.31.0 vllm/models/deepseek_v41/nvidia/model.py:
 	// "x = sp_all_gather(x)" ... "x = sp_reduce_scatter(x)").
 	EmitSequenceParallel EmitCondition = "sequence_parallel"
 	// EmitTensorParallelUnlessSequenceParallel: present when the tensor-parallel width
@@ -502,7 +504,7 @@ type Node struct {
 	// V4.1's compressor projection and its index wk run over every token's row and the
 	// store kernel then skips the non-boundary rows (attention.py: "Rows at non-boundary
 	// tokens hold garbage latent and are skipped by the store kernel"). A per-entry GEMM
-	// would price FLOPs the engine spends.
+	// would leave out (r - 1) / r of the FLOPs the engine spends at ratio r.
 	PerTokens int `yaml:"per_tokens,omitempty"`
 
 	// Context, on an Elementwise node, is traffic that scales with the attended context

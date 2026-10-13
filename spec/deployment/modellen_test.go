@@ -1,6 +1,8 @@
 package deployment
 
 import (
+	"math/rand"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -72,5 +74,53 @@ func TestMaxModelLenValidation(t *testing.T) {
 		if p.OK() != c.want {
 			t.Errorf("max_model_len %d: ok=%v, want %v\n%s", c.m, p.OK(), c.want, p.Error())
 		}
+	}
+}
+
+// Properties over many values rather than a few: every positive count and auto survive a
+// marshal and unmarshal unchanged; a decimal suffix multiplies by a power of 1000 and a
+// binary one by a power of 1024, as the engine's parser does; and every spelling of zero
+// is refused rather than read as an omitted field.
+func TestMaxModelLenProperties(t *testing.T) {
+	r := rand.New(rand.NewSource(7))
+	decode := func(v string) (MaxModelLen, error) {
+		var e Engine
+		err := yaml.Unmarshal([]byte("max_model_len: "+v), &e)
+		return e.MaxModelLen, err
+	}
+	for i := 0; i < 2000; i++ {
+		m := MaxModelLen(1 + r.Intn(1<<30))
+		if i%10 == 0 {
+			m = MaxModelLenAuto
+		}
+		out, err := yaml.Marshal(Engine{MaxModelLen: m})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var back Engine
+		if err := yaml.Unmarshal(out, &back); err != nil || back.MaxModelLen != m {
+			t.Fatalf("%d round-tripped through %q to %d (%v)", m, out, back.MaxModelLen, err)
+		}
+		n := 1 + r.Intn(1<<20)
+		for suffix, mult := range map[string]int{"k": 1000, "m": 1000000, "K": 1 << 10, "M": 1 << 20} {
+			got, err := decode(strconv.Itoa(n) + suffix)
+			if err != nil || int(got) != n*mult {
+				t.Fatalf("%d%s decoded to %d (%v), want %d", n, suffix, got, err, n*mult)
+			}
+		}
+	}
+	for _, zero := range []string{"0", "-0", "0k", "0K", "0.0004k", "'0'"} {
+		if m, err := decode(zero); err == nil {
+			t.Errorf("%s decoded to %d; a stated zero must be refused", zero, m)
+		}
+	}
+	for _, huge := range []string{"9999999999999999999", "99999999999999T", "16777216T", "99999999999t"} {
+		if m, err := decode(huge); err == nil {
+			t.Errorf("%s decoded to %d; it cannot be held and must be refused", huge, m)
+		}
+	}
+	// A YAML null reads as the field left out, which is what writing nothing means.
+	if m, err := decode("~"); err != nil || m != 0 {
+		t.Errorf("null decoded to %d (%v), want omitted", m, err)
 	}
 }

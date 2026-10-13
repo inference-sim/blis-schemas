@@ -84,9 +84,13 @@ func CheckLinksAgree(a, b kernel.Kernel, c PDCase) error {
 	return nil
 }
 
-// TestPDTransfer runs CheckPDTransfer over cases, reporting every failure.
+// TestPDTransfer runs CheckPDTransfer over cases, reporting every failure. An empty list
+// fails, because a conformance check that checked nothing would read as one that passed.
 func TestPDTransfer(t testing.TB, k kernel.Kernel, cases []PDCase) {
 	t.Helper()
+	if len(cases) == 0 {
+		t.Fatal("kerneltest.TestPDTransfer: no cases, so nothing was checked; pass PDCases()")
+	}
 	for _, c := range cases {
 		if err := CheckPDTransfer(k, c); err != nil {
 			t.Error(err)

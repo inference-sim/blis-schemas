@@ -1,7 +1,9 @@
 package deployment
 
 import (
+	"errors"
 	"fmt"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -49,11 +51,19 @@ func (m MaxModelLen) Stated() (int, bool) {
 // with a decimal suffix k, m, g, t (powers of 1000, decimals allowed, truncated) or a
 // binary suffix K, M, G, T (powers of 1024, whole numbers only). Any other string is an
 // error, not a zero: a misspelled `atuo` must not read as an omitted field.
+//
+// A stated value that comes to zero is an error too, for the same reason: zero is how
+// an omitted field reads, and the engine refuses it ("max_model_len must be a positive
+// integer", vllm/config/model.py). So is a value too large for an int, which the
+// engine's Python integers would carry and refuse later as longer than the model.
 func (m *MaxModelLen) UnmarshalYAML(n *yaml.Node) error {
 	if n.Kind != yaml.ScalarNode {
 		return fmt.Errorf("line %d: max_model_len must be a whole number or auto", n.Line)
 	}
 	v, err := parseHumanReadableIntOrAuto(n.Value)
+	if err == nil && v == 0 {
+		err = fmt.Errorf("must be a positive count or auto; omit the field to leave it unstated")
+	}
 	if err != nil {
 		return fmt.Errorf("line %d: max_model_len %q: %v", n.Line, n.Value, err)
 	}
@@ -75,22 +85,36 @@ func parseHumanReadableIntOrAuto(s string) (int, error) {
 			if err != nil {
 				return 0, err
 			}
-			return int(f * mult), nil
+			if v := f * mult; v < math.MaxInt64 {
+				return int(v), nil
+			}
+			return 0, errTooLarge
 		}
 		shift := map[string]uint{"K": 10, "M": 20, "G": 30, "T": 40}[suffix]
 		i, err := strconv.Atoi(number)
 		if err != nil {
-			return 0, fmt.Errorf("decimals are not allowed with a binary suffix like %s; did you mean %s%s?",
-				suffix, number, strings.ToLower(suffix))
+			if strings.Contains(number, ".") {
+				return 0, fmt.Errorf("decimals are not allowed with a binary suffix like %s; did you mean %s%s?",
+					suffix, number, strings.ToLower(suffix))
+			}
+			return 0, errTooLarge
+		}
+		if i > math.MaxInt>>shift {
+			return 0, errTooLarge
 		}
 		return i << shift, nil
 	}
 	i, err := strconv.Atoi(v)
+	if errors.Is(err, strconv.ErrRange) {
+		return 0, errTooLarge
+	}
 	if err != nil {
 		return 0, fmt.Errorf("neither a whole number nor auto")
 	}
 	return i, nil
 }
+
+var errTooLarge = errors.New("too large to be a context length")
 
 // MarshalYAML writes auto as `auto`, so a round trip keeps the spelling the engine's
 // flag documents.

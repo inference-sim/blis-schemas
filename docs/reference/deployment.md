@@ -133,8 +133,8 @@ Decode-context parallelism. These have no effect when `dcp` is 0 or 1:
 | Key | Type | Required | Meaning |
 |---|---|---|---|
 | `enable_dbo` | boolean | no | Split a batch so one half's communication overlaps the other's compute. |
-| `dbo_decode_token_threshold` | integer | no | Batch size in tokens at or above which a uniform-decode batch is split. |
-| `dbo_prefill_token_threshold` | integer | no | Batch size in tokens at or above which any other batch is split. |
+| `dbo_decode_token_threshold` | integer | no | Batch size in tokens at or above which a uniform-decode batch is split. Omitted takes the engine's default; a stated 0 is a different request, which vLLM 0.31.0 refuses. |
+| `dbo_prefill_token_threshold` | integer | no | Batch size in tokens at or above which any other batch is split. Omitted and 0 differ as for the decode threshold. |
 
 #### `engine.eplb`
 
@@ -158,7 +158,7 @@ Decode-context parallelism. These have no effect when `dcp` is 0 or 1:
 
 #### `engine.engram_config`
 
-The cost-bearing keys of vLLM's `--engram-config`. Both are optional and take the engine's
+The cost-bearing keys of vLLM's `--engram-config`. All three are optional and take the engine's
 default when omitted. The rules pack for 0.31.0 refuses the block on a model with no Engram
 lookups.
 
@@ -218,11 +218,13 @@ A deployment is invalid if
   `colocated` pool appears beside either;
 - a `prefill` pool is present and `pd_transfer` is absent;
 - an engine count (`block_size`, `max_num_batched_tokens`, `max_num_seqs`,
-  `cp_kv_cache_interleave_size`) is negative, or `max_model_len` is below `-1` (a value
-  other than a whole number or `auto` fails to load);
+  `cp_kv_cache_interleave_size`) is negative, or `max_model_len` is below `-1`. A
+  `max_model_len` that is not a whole number, `auto`, or a number with a `k`/`m`/`g`/`t`
+  or `K`/`M`/`G`/`T` suffix fails to load, and so does one that comes to zero or is too
+  large to hold;
 - `gpu_memory_utilization` is not finite or lies outside [0, 1];
 - `disable_custom_all_reduce` is true while `allreduce_backend` is `custom`;
-- an enabled `dbo` has a negative threshold, or an enabled `eplb` a negative
+- an enabled `dbo` states a negative threshold, or an enabled `eplb` a negative
   `num_redundant_experts`;
 - `speculative` is present with an empty `method` or with `num_spec_tokens` below 1;
 - `offload` is present with no tiers, a tier is unnamed or named twice, a tier's `bytes`

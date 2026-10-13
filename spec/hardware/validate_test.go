@@ -2,6 +2,7 @@ package hardware
 
 import (
 	"math"
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -262,6 +263,26 @@ func TestComputeCapability(t *testing.T) {
 		chip := &Chip{ComputeCapability: c.cc}
 		if m, ok := chip.CapabilityMajor(); m != c.major || ok != c.ok {
 			t.Errorf("%q: CapabilityMajor() = %d, %v; want %d, %v", c.cc, m, ok, c.major, c.ok)
+		}
+	}
+}
+
+// A chip's validation agrees with CapabilityMajor: a well-formed capability is accepted and
+// a malformed one is reported at its field, never silently treated as unstated.
+func TestChipValidatesComputeCapability(t *testing.T) {
+	for _, cc := range []string{"", "9.0", "10.3"} {
+		c := h200()
+		c.ComputeCapability = cc
+		if p := c.Validate(); !p.OK() {
+			t.Errorf("%q rejected:\n%s", cc, p.Error())
+		}
+	}
+	for _, cc := range []string{"sm90", "9", "+9.0", "09.0", "9.x"} {
+		c := h200()
+		c.ComputeCapability = cc
+		p := c.Validate()
+		if p.OK() || !strings.Contains(p.Error(), "ComputeCapability") {
+			t.Errorf("%q accepted:\n%s", cc, p.Error())
 		}
 	}
 }

@@ -150,30 +150,33 @@ func typedStringConsts(dir string) (string, map[string][]string, error) {
 // knows it as. A Pack field missing here is an error, so a field added to Pack cannot reach
 // the documentation unlabelled.
 var packFields = map[string]string{
-	"All2AllBackends":               "`engine.all2all_backend`",
-	"SPMoEBackends":                 "All-to-all backends that make the MoE input sequence-parallel",
-	"AllReduceBackends":             "`engine.allreduce_backend`",
-	"CUDAGraphModes":                "`engine.cudagraph_mode`",
-	"CacheDTypes":                   "`engine.cache_dtype`",
-	"MambaDTypes":                   "`engine.mamba_cache_dtype`, `engine.mamba_ssm_cache_dtype`",
-	"MoEBackends":                   "`engine.moe_backend`",
-	"MegaMoEBackends":               "MoE backends that run the mega-MoE model path",
-	"SequenceParallelArchitectures": "Architectures (`global.architecture`) whose own code decides sequence parallelism",
-	"MambaCacheModes":               "`engine.mamba_cache_mode`",
-	"SchedulerPolicies":             "`engine.scheduling_policy`",
-	"SpeculativeMethods":            "`engine.speculative.method`, `speculator.method`",
-	"AsyncCompatibleSpec":           "Speculative methods that leave async scheduling enabled",
-	"OffloadSpecs":                  "`offload.spec`",
-	"DCPCommBackends":               "`engine.dcp_comm_backend`",
-	"Quantizations":                 "`engine.quantization` (in-tree methods)",
-	"Connectors":                    "`offload.connector`, `pd_transfer.connector` (in-tree connectors)",
-	"EvictionPolicies":              "`offload.eviction_policy` (in-tree policies)",
-	"CustomAllReduceWorldSizes":     "Tensor-parallel widths the custom all-reduce kernel supports",
-	"DefaultDBODecodeThreshold":     "Default dual-batch-overlap threshold for a uniform-decode batch, in tokens",
-	"DefaultDBOPrefillThreshold":    "Default dual-batch-overlap threshold for any other batch, in tokens",
-	"TritonFetchPageBytes":          "Offload page size, in bytes, at which a CPU-to-GPU fetch uses an SM-consuming kernel",
-	"TritonFetchSMs":                "SMs that fetch path withholds from the forward pass",
-	"CascadeAttnOptIn":              "Cascade attention is off unless requested",
+	"All2AllBackends":            "`engine.all2all_backend`",
+	"SPMoEBackends":              "All-to-all backends that make the MoE input sequence-parallel",
+	"AllReduceBackends":          "`engine.allreduce_backend`",
+	"CUDAGraphModes":             "`engine.cudagraph_mode`",
+	"CacheDTypes":                "`engine.cache_dtype`",
+	"MambaDTypes":                "`engine.mamba_cache_dtype`, `engine.mamba_ssm_cache_dtype`",
+	"MoEBackends":                "`engine.moe_backend`",
+	"MegaMoEBackends":            "MoE backends that run the mega-MoE model path",
+	"ModelSequenceParallelRules": "Architectures (`global.architecture`) whose own code decides sequence parallelism, and the condition",
+	"DefaultAll2AllBackend":      "The backend an unstated `engine.all2all_backend` selects",
+	"EngramArchitectures":        "Architectures `engine.engram_config` may be given for",
+	"EngramCPUOffloadDefault":    "Whether an Engram table lives in host memory when `engine.engram_config.cpu_offload` is unstated; meaningless where `EngramArchitectures` is none",
+	"MambaCacheModes":            "`engine.mamba_cache_mode`",
+	"SchedulerPolicies":          "`engine.scheduling_policy`",
+	"SpeculativeMethods":         "`engine.speculative.method`, `speculator.method`",
+	"AsyncCompatibleSpec":        "Speculative methods that leave async scheduling enabled",
+	"OffloadSpecs":               "`offload.spec`",
+	"DCPCommBackends":            "`engine.dcp_comm_backend`",
+	"Quantizations":              "`engine.quantization` (in-tree methods)",
+	"Connectors":                 "`offload.connector`, `pd_transfer.connector` (in-tree connectors)",
+	"EvictionPolicies":           "`offload.eviction_policy` (in-tree policies)",
+	"CustomAllReduceWorldSizes":  "Tensor-parallel widths the custom all-reduce kernel supports",
+	"DefaultDBODecodeThreshold":  "Default dual-batch-overlap threshold for a uniform-decode batch, in tokens",
+	"DefaultDBOPrefillThreshold": "Default dual-batch-overlap threshold for any other batch, in tokens",
+	"TritonFetchPageBytes":       "Offload page size, in bytes, at which a CPU-to-GPU fetch uses an SM-consuming kernel",
+	"TritonFetchSMs":             "SMs that fetch path withholds from the forward pass",
+	"CascadeAttnOptIn":           "Cascade attention is off unless requested",
 }
 
 // rulesFile writes every registered pack: its rules, with the severities each can report
@@ -271,6 +274,19 @@ func versionLess(a, b string) bool {
 func render(v reflect.Value) string {
 	switch v.Kind() {
 	case reflect.Map:
+		if v.Type().Elem().Kind() == reflect.Struct {
+			// A map to a condition renders each key with the condition's String.
+			keys := v.MapKeys()
+			members := make([]string, 0, len(keys))
+			for _, k := range keys {
+				members = append(members, fmt.Sprintf("`%v` (%v)", k.Interface(), v.MapIndex(k).Interface()))
+			}
+			sort.Strings(members)
+			if len(members) == 0 {
+				return "none"
+			}
+			return strings.Join(members, " ")
+		}
 		if v.Type().Elem().Kind() != reflect.Bool {
 			return fmt.Sprintf("(a %s, which docgen cannot render)", v.Type())
 		}
@@ -289,6 +305,9 @@ func render(v reflect.Value) string {
 			})
 		} else {
 			sort.Strings(members)
+		}
+		if len(members) == 0 {
+			return "none"
 		}
 		for i, m := range members {
 			members[i] = "`" + m + "`"

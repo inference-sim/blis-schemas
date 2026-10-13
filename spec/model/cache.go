@@ -41,7 +41,9 @@ type Cache struct {
 	// BytesPerEntry is what one stored entry occupies, as stored: scales and padding
 	// within the record included. It is stated rather than computed from d_h and a dtype
 	// because records are packed formats -- V4.1's 584 B record on SM90 is 448 FP8 NoPE
-	// values, 64 BF16 RoPE values, 7 UE8M0 scales and a pad byte (attention.py:121-123).
+	// values, 64 BF16 RoPE values, 7 UE8M0 scales and a pad byte (attention.py, the
+	// comment on _use_v41_mxfp8_kv_record). On a cache the layer does not own it is the
+	// entry the layer reads, which must equal its owner's.
 	// It is the record under the cache dtype the graph's base description assumes, which
 	// for V4.1 on SM90 is fp8_ds_mla. Which dtype actually runs -- including an attention
 	// backend's own resolution of auto, such as SM100 mega attention resolving it to

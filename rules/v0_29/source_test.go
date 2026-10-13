@@ -51,7 +51,10 @@ func readSource(t *testing.T, root string, parts ...string) string {
 	return string(b)
 }
 
-// literalMembers extracts the string members of a Python Literal type alias.
+// literalMembers extracts the string members of a Python Literal type alias. A member
+// that is not a quoted string -- another alias nested in it, which Python flattens into
+// the accepted set -- fails the test rather than being dropped, since a dropped member
+// would leave a value the engine accepts missing from both sides of the comparison.
 func literalMembers(t *testing.T, src, name string) []string {
 	t.Helper()
 	re := regexp.MustCompile(`(?s)\b` + name + `\s*=\s*Literal\[(.*?)\]`)
@@ -60,10 +63,22 @@ func literalMembers(t *testing.T, src, name string) []string {
 		t.Fatalf("no Literal named %s found; the engine may have changed how it "+
 			"declares this vocabulary", name)
 	}
-	out := regexp.MustCompile(`"([^"]+)"`).FindAllStringSubmatch(m[1], -1)
-	vals := make([]string, 0, len(out))
-	for _, g := range out {
-		vals = append(vals, g[1])
+	var vals []string
+	for _, line := range strings.Split(m[1], "\n") {
+		if i := strings.Index(line, "#"); i >= 0 {
+			line = line[:i]
+		}
+		for _, part := range strings.Split(line, ",") {
+			part = strings.TrimSpace(part)
+			switch {
+			case part == "":
+			case len(part) >= 2 && part[0] == '"' && part[len(part)-1] == '"':
+				vals = append(vals, part[1:len(part)-1])
+			default:
+				t.Fatalf("Literal %s has a member that is not a quoted string, %q; resolve it "+
+					"before comparing", name, part)
+			}
+		}
 	}
 	sort.Strings(vals)
 	return vals
@@ -306,7 +321,7 @@ func TestSPMoEBackendsMatchSource(t *testing.T) {
 
 // The engine has no allreduce-backend enum. This test asserts the absence, because
 // the pack's shape depends on it: an earlier draft invented such an enum.
-func TestNoAllReduceBackendEnumInSource(t *testing.T) {
+func TestNoAllReduceBackendEnumMatchSource(t *testing.T) {
 	root := vllmSource(t)
 	src := readSource(t, root, "vllm", "config", "parallel.py")
 	if regexp.MustCompile(`AllReduceBackend\s*=\s*Literal\[`).MatchString(src) {
@@ -364,4 +379,27 @@ func TestMoEBackendsMatchSource(t *testing.T) {
 	}
 	sort.Strings(names)
 	assertSameSet(t, "MegaMoEBackends", Pack().MegaMoEBackends, names)
+}
+
+func TestDefaultAll2AllBackendMatchSource(t *testing.T) {
+	root := vllmSource(t)
+	src := readSource(t, root, "vllm", "config", "parallel.py")
+	m := regexp.MustCompile(`all2all_backend: All2AllBackend = "([a-z_0-9]+)"`).FindStringSubmatch(src)
+	if m == nil {
+		t.Fatal("the all2all_backend default was not found; it may have moved")
+	}
+	if m[1] != Pack().DefaultAll2AllBackend {
+		t.Errorf("DefaultAll2AllBackend: pack has %q, the engine declares %q", Pack().DefaultAll2AllBackend, m[1])
+	}
+}
+
+// The engram-config-unsupported rule rests on this release having no Engram config.
+func TestNoEngramConfigMatchSource(t *testing.T) {
+	root := vllmSource(t)
+	if _, err := os.Stat(filepath.Join(root, "vllm", "config", "engram.py")); err == nil {
+		t.Error("this release has vllm/config/engram.py; the engram-config-unsupported rule is wrong")
+	}
+	if strings.Contains(readSource(t, root, "vllm", "engine", "arg_utils.py"), "--engram-config") {
+		t.Error("this release accepts --engram-config; the engram-config-unsupported rule is wrong")
+	}
 }

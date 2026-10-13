@@ -231,7 +231,7 @@ Common to every node:
 | `rows_per_token` | integer | yes | Rows read per token. At most `rows`. |
 | `out_bytes_per_token` | integer | yes | Bytes written to device memory per token, after any dequantize. |
 | `residency` | string | no | Where the table lives by default: `device` (the default) or `host`. See [residency](vocabularies.md#gather-residency). |
-| `residency_control` | string | no | The engine setting that can move the table, which a deployment states. `residency` must then be that setting's default. |
+| `residency_control` | string | no | The engine setting that can move the table, which a deployment states. `residency` is then that setting's default for the release, which the rules pack checks. |
 | `shard` | string | no | How the table divides across tensor-parallel ranks. One of the [shards](vocabularies.md#gather-shards); omitted means `replicated`. |
 
 A matrix multiply charges its whole weight as reads and compute every step. For a gather
@@ -253,13 +253,17 @@ caches add memory, transfer volume and offload volume.
 | `name` | string | yes | Unique within the layer. Pairs a reader with its writer. |
 | `kind` | string | yes | One of the [cache kinds](vocabularies.md#cache-kinds). |
 | `owned` | boolean | no | Whether this layer allocates the cache. Omitted means false: the layer reads another's. |
-| `bytes_per_entry` | integer | yes | One stored entry, scales and in-record padding included, under the cache dtype the graph's base description assumes. Which dtype runs is the cost model's to resolve. |
-| `bytes_by_cache_dtype` | mapping | no | The entry size under cache dtypes whose record differs, keyed by the engine's cache-dtype name. |
-| `tokens_per_entry` | integer | no | Context tokens one entry covers. Omitted means 1. A `kv` cache read at a `compress_ratio` must match it. |
+| `bytes_per_entry` | integer | yes | One stored entry, scales and in-record padding included, under the cache dtype the graph's base description assumes. Which dtype runs is the cost model's to resolve. On a cache the layer reads, the entry it reads, which must equal its owner's. |
+| `bytes_by_cache_dtype` | mapping | no | The entry size under cache dtypes whose record differs, keyed by the engine's cache-dtype name; each positive. The 0.31.0 rules pack checks the names. Owned caches only. |
+| `tokens_per_entry` | integer | no | Context tokens one entry covers. Omitted means 1. A `kv` or `index` cache must match the node's `compress_ratio`, or 1 when it has none. |
 | `window` | integer | for `window` | Tokens a window cache retains. Must match the node's `window`. |
-| `entries` | integer | for `state` | Entries a state cache holds per request. |
-| `block_size` | integer | no | Page size in tokens, where the model fixes it rather than taking the engine's `block_size`. |
-| `page_alignment` | integer | no | Each page's bytes are rounded up to a multiple of this. |
+| `entries` | integer | for `state` | Entries a state cache holds per request. Owned caches only. |
+| `block_size` | integer | no | Page size in tokens, where the model fixes it rather than taking the engine's `block_size`. Owned caches only. |
+| `page_alignment` | integer | no | Each page's bytes are rounded up to a multiple of this. Owned caches only. |
+
+A cache the layer reads but does not own states only what it reads: its name, kind, entry
+size, tokens per entry and window. How it is stored is the owner's to state, so the storage
+keys are refused on a reader rather than allowed to disagree with the owner.
 
 DeepSeek-V4.1-Flash is the case caches exist for. Only layers 2, 8, 14 and 20 own a
 compressed cache, and the ratio-2 ones hold one entry per two tokens. Every layer's sliding
@@ -316,13 +320,14 @@ in `spec/model` applies these rules, so every consumer gets the same number.
 | Key | Type | Required | Meaning |
 |---|---|---|---|
 | `name` | string | yes | Every cache with this name. At least one must exist. |
-| `bytes_per_entry` | integer | no | The record on this architecture. |
-| `page_alignment` | integer | no | The page alignment on this architecture. |
-| `bytes_by_cache_dtype` | mapping | no | Entries merged over the base cache's. |
+| `bytes_per_entry` | integer | no | The record on this architecture, for owners and readers alike. |
+| `page_alignment` | integer | no | The page alignment on this architecture, for owners. |
+| `bytes_by_cache_dtype` | mapping | no | Entries merged over the owning cache's. |
 
 The base graph describes the architecture the catalog prices by default.
 `Graph.ForCapability` returns the graph with the matching override applied and none left,
-so consumers apply the overlay one way. An override restates what is resident. Kernel
+so consumers apply the overlay one way. On a graph with overrides it refuses a chip whose
+compute capability is unknown, rather than silently pricing it as the base architecture. An override restates what is resident. Kernel
 selection and launch fusion are not restated here, because they change the cost of nodes
 the graph already states, and they also depend on the layout and the build. DeepSeek-V4.1
 needs an override because its `wo_a` is resident in BF16 on SM90 and FP8 on SM100, and its
@@ -406,11 +411,12 @@ A node is invalid if
 - `caches` is set on anything other than an `Attention` node; a cache lacks a `name`, has
   an unrecognized `kind`, a non-positive `bytes_per_entry` or a negative size; a `window`
   cache lacks a positive `window`, or a `state` cache positive `entries`; either key is set
-  on another kind; or a cache disagrees with the node's `window` or `compress_ratio`;
+  on another kind; a `bytes_by_cache_dtype` entry is unnamed or not positive; a cache the
+  layer does not own states a storage key; or a cache disagrees with the node's `window` or
+  `compress_ratio`;
 - a `Gather` lacks a positive `rows`, `row_bytes`, `rows_per_token` or
-  `out_bytes_per_token`, reads more rows per token than it has, states a `residency` other
-  than its `residency_control`'s default, or is split by `heads` with fewer than two;
-  a `Gather` key is set on another primitive;
+  `out_bytes_per_token`, reads more rows per token than it has, or is split by `heads` with
+  fewer than two; a `Gather` key is set on another primitive;
 - `per_tokens` or `context` is set on anything other than an `Elementwise` node, or a
   `context` lacks a positive `bytes_per_entry` or a recognized `per`, or states a
   `decode_extent` on prefill-only work;

@@ -35,7 +35,7 @@ func (g *Graph) validateAliases(p *validate.Problems) {
 		if n.Aliases == "" {
 			return
 		}
-		// Split at the last dot: a layer-kind id may contain one, a role does not need to.
+		// Split at the last dot, so a layer-kind id may contain dots and a role may not.
 		i := strings.LastIndex(n.Aliases, ".")
 		scope, role, ok := "", "", i > 0
 		if ok {
@@ -117,8 +117,9 @@ func weightShape(n Node) string {
 }
 
 // validateArchOverrides checks each override is well formed and that every role and
-// cache it names exists, by applying it. An override naming nothing would read as a
-// statement about the served model that changes nothing.
+// cache it names exists. An override naming nothing would read as a statement about the
+// served model that changes nothing. Each miss is reported at its own entry, so a graph
+// with several reports all of them.
 func (g *Graph) validateArchOverrides(p *validate.Problems) {
 	seen := map[int]bool{}
 	for i, o := range g.ArchOverrides {
@@ -144,11 +145,19 @@ func (g *Graph) validateArchOverrides(p *validate.Problems) {
 				p.Field(nat+".weight_dtype", "%q is not a recognized dtype", no.WeightDType)
 			}
 			validateWeightScale(p, nat+".weight_scale", no.WeightScale)
+			matched := false
 			g.EachNode(func(nodeAt string, n Node) {
-				if n.Role == no.Role && n.Op != OpGEMM && n.Op != OpGroupedGEMM {
+				if n.Role != no.Role {
+					return
+				}
+				matched = true
+				if n.Op != OpGEMM && n.Op != OpGroupedGEMM {
 					p.Field(nat+".role", "%q matches %s, a %s, which holds no parameters", no.Role, nodeAt, n.Op)
 				}
 			})
+			if no.Role != "" && !matched {
+				p.Field(nat+".role", "no node has role %q", no.Role)
+			}
 		}
 		for j, co := range o.Caches {
 			cat := fmt.Sprintf("%s.caches[%d]", at, j)
@@ -161,15 +170,23 @@ func (g *Graph) validateArchOverrides(p *validate.Problems) {
 			if co.BytesPerEntry == 0 && co.PageAlignment == 0 && len(co.BytesByCacheDType) == 0 {
 				p.Field(cat, "restates nothing; give a size")
 			}
-			for k, v := range co.BytesByCacheDType {
-				if v < 1 {
+			for _, k := range sortedKeys(co.BytesByCacheDType) {
+				if k == "" {
+					p.Field(cat+".bytes_by_cache_dtype", "a cache dtype name is empty")
+				} else if v := co.BytesByCacheDType[k]; v < 1 {
 					p.Field(cat+".bytes_by_cache_dtype."+k, "must be positive, got %d", v)
 				}
 			}
-		}
-		if o.CapabilityFamily >= 1 {
-			if _, err := g.ForCapability(o.CapabilityFamily); err != nil {
-				p.Field(at, "%v", err)
+			matched := false
+			g.EachNode(func(_ string, n Node) {
+				for _, c := range n.Caches {
+					if c.Name == co.Name {
+						matched = true
+					}
+				}
+			})
+			if co.Name != "" && !matched {
+				p.Field(cat+".name", "no cache is named %q", co.Name)
 			}
 		}
 	}

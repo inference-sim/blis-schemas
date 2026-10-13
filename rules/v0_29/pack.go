@@ -148,6 +148,9 @@ func Pack() *rules.Pack {
 		TritonFetchSMs:       12,
 
 		CascadeAttnOptIn: true,
+
+		// all2all_backend: All2AllBackend = "allgather_reducescatter" (vllm/config/parallel.py).
+		DefaultAll2AllBackend: "allgather_reducescatter",
 	}
 	p.Rules = ruleList(p)
 	return p
@@ -493,11 +496,23 @@ func ruleList(p *rules.Pack) []rules.Rule {
 					if e.DBO == nil || !e.DBO.Enabled {
 						return
 					}
-					if e.DBO.DecodeTokenThreshold == 0 && e.DBO.PrefillTokenThreshold == 0 {
+					if e.DBO.DecodeTokenThreshold == nil && e.DBO.PrefillTokenThreshold == nil {
 						out.RuleWarnf("dbo-thresholds-stated-when-enabled",
 							"%s.engine.dbo: enabled with no thresholds stated; engine %s defaults to %d for a uniform-decode batch and %d otherwise",
 							at, p.Version, p.DefaultDBODecodeThreshold,
 							p.DefaultDBOPrefillThreshold)
+					}
+				})
+			},
+		},
+		{
+			Name:    "engram-config-unsupported",
+			Because: "this release has no Engram config (no vllm/config/engram.py, no --engram-config), so a launch line carrying one does not parse",
+			Check: func(in rules.Input, out *validate.Problems) {
+				forEachEngine(in, func(at string, e deployment.Engine) {
+					if e.EngramConfig != nil {
+						out.RuleErrorf("engram-config-unsupported",
+							"%s.engine.engram_config: engine %s has no Engram config", at, p.Version)
 					}
 				})
 			},
@@ -508,18 +523,13 @@ func ruleList(p *rules.Pack) []rules.Rule {
 			Check: func(in rules.Input, out *validate.Problems) {
 				forEachPool(in, func(at string, pool deployment.Pool) {
 					pl := pool.Parallel
-					e := pool.Engine
-					if !pl.EnableExpertParallel || pl.TP <= 1 || pl.DP <= 1 {
+					if !p.SequenceParallelMoE(pool.Engine.All2AllBackend, pl.EnableExpertParallel, pl.TP, pl.DP) {
 						return
 					}
-					// An unstated backend is the engine default, allgather_reducescatter
-					// (vllm/config/parallel.py), which is in the subset.
-					backend := e.All2AllBackend
+					// An unstated backend is the engine default, which the method applies.
+					backend := pool.Engine.All2AllBackend
 					if backend == "" {
-						backend = defaultAll2AllBackend
-					}
-					if !p.SPMoEBackends[backend] {
-						return
+						backend = p.DefaultAll2AllBackend
 					}
 					out.RuleWarnf("sequence-parallel-moe-implied",
 						"%s: engine %s makes the MoE input sequence-parallel here (backend %q, tp %d, dp %d), so the model graph must emit a reduce-scatter and all-gather pair rather than an all-reduce",
@@ -529,9 +539,6 @@ func ruleList(p *rules.Pack) []rules.Rule {
 		},
 	}
 }
-
-// defaultAll2AllBackend is the engine's all2all_backend default.
-const defaultAll2AllBackend = "allgather_reducescatter"
 
 func forEachPool(in rules.Input, fn func(at string, pool deployment.Pool)) {
 	if in.Deployment == nil {
@@ -576,10 +583,10 @@ func itoa(i int) string {
 	return string(b[n:])
 }
 
-// totalExperts returns the model's logical expert count, taken from the first
-// grouped-GEMM node. A graph with differing expert counts per layer is possible in
-// principle and absent from every model these schemas target; the maximum is used so
-// the divisibility check errs toward reporting.
+// totalExperts returns the largest expert count of any grouped-GEMM node the graph
+// declares. Where layers differ it is the target's count, as for DeepSeek-V4.1, whose
+// draft layers carry 128 experts beside the target's 384. A draft's own, smaller count
+// is not checked.
 func totalExperts(in rules.Input) int {
 	if in.Model == nil {
 		return 0

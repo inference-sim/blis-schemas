@@ -31,8 +31,9 @@ pack exists.
     ```
 
     It fails on any difference in either direction: a value the pack accepts that the engine
-    does not, or one the engine accepts that the pack does not. It does not cover the
-    speculative-method lists, which need review by hand.
+    does not, or one the engine accepts that the pack does not. From the 0.31.0 pack on it
+    also re-derives the speculative-method lists, and pins the message of each startup
+    refusal a rule encodes, so a release that drops one fails the test.
 
 5. **Add its CI job.** Copy the `constants-against-engine` job in
    `.github/workflows/ci.yaml`, pinned to the new release's tag, and point it at the new

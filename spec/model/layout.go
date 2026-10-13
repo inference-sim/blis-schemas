@@ -39,7 +39,9 @@ const (
 // or replicated. Other ops have no per-node choice: a GroupedGEMM's split is decided by
 // the expert- and tensor-parallel layout together (V4.1's shared expert is TP-sharded
 // normally and replicated under sequence parallelism, deepseek_v4/nvidia/model.py), and
-// a collective is defined by its group.
+// a collective is defined by its group. A Gather states how its table splits with shard,
+// which says more than a layout can: whether each token's row lives on one rank or each
+// rank reads its own heads.
 var tpLayoutsByOp = map[Op]map[TPLayout]bool{
 	OpGEMM:        {TPColumn: true, TPRow: true, TPReplicated: true},
 	OpElementwise: {TPSharded: true, TPReplicated: true},

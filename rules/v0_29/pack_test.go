@@ -78,6 +78,7 @@ func TestPackRuleSet(t *testing.T) {
 		"custom-allreduce-reachable",
 		"dbo-thresholds-stated-when-enabled",
 		"dcp-comm-backend-known",
+		"engram-config-unsupported",
 		"enum-values-known",
 		"eviction-policy-known",
 		"expert-divisibility-under-eplb",
@@ -463,5 +464,90 @@ func TestCPKVCacheInterleaveFitsBlock(t *testing.T) {
 				t.Errorf("message should name the block size: %s", p.Error())
 			}
 		})
+	}
+}
+
+// layoutGrid is every combination of the widths and flags the sequence-parallel decisions
+// read, unset widths included.
+func layoutGrid() []deployment.Parallelism {
+	var out []deployment.Parallelism
+	for _, tp := range []int{0, 1, 2, 4, 8} {
+		for _, pp := range []int{0, 1, 2} {
+			for _, dp := range []int{0, 1, 2, 8} {
+				for _, ep := range []bool{false, true} {
+					out = append(out, deployment.Parallelism{TP: tp, PP: pp, DP: dp, EnableExpertParallel: ep})
+				}
+			}
+		}
+	}
+	return out
+}
+
+// Over every layout and backend: an unstated backend behaves exactly as the default stated
+// does, and the sequence-parallel-moe-implied rule fires exactly when SequenceParallelMoE
+// says the engine makes the MoE input sequence-parallel, so a cost model reading the
+// method and a reader seeing the rule never get different answers.
+func TestSequenceParallelMoEAgreesWithItsRule(t *testing.T) {
+	p := Pack()
+	backends := append(sortedKeys(p.All2AllBackends), "")
+	for _, pl := range layoutGrid() {
+		if p.SequenceParallelMoE("", pl.EnableExpertParallel, pl.TP, pl.DP) !=
+			p.SequenceParallelMoE(p.DefaultAll2AllBackend, pl.EnableExpertParallel, pl.TP, pl.DP) {
+			t.Fatalf("%+v: an unstated backend differs from the default %q", pl, p.DefaultAll2AllBackend)
+		}
+		for _, b := range backends {
+			pl := pl
+			if pl.TP < 1 || pl.PP < 1 || pl.DP < 1 {
+				continue // a field error, which stops rules before they run
+			}
+			want := p.SequenceParallelMoE(b, pl.EnableExpertParallel, pl.TP, pl.DP)
+			got := fired(run(t, dep(colocated(pl, deployment.Engine{All2AllBackend: b})), graniteGraph()),
+				"sequence-parallel-moe-implied")
+			if got != want {
+				t.Fatalf("%+v backend %q: rule fired=%v, method says %v", pl, b, got, want)
+			}
+		}
+	}
+}
+
+// 0.29.0 has no model of its own sequence parallelism, so ModelSequenceParallel is false
+// for every architecture and layout.
+func TestModelSequenceParallelIsOffIn029(t *testing.T) {
+	p := Pack()
+	for _, pl := range layoutGrid() {
+		for _, moe := range append(sortedKeys(p.MoEBackends), "") {
+			if p.ModelSequenceParallel(rules.ArchDeepseekV41, pl, moe) {
+				t.Fatalf("%+v %q: on in a release that predates the model", pl, moe)
+			}
+		}
+	}
+}
+
+func TestEngramConfigUnsupported(t *testing.T) {
+	pl := deployment.Parallelism{TP: 8, PP: 1, DP: 1}
+	if p := run(t, dep(colocated(pl, deployment.Engine{EngramConfig: &deployment.EngramConfig{}})), graniteGraph()); !fired(p, "engram-config-unsupported") {
+		t.Errorf("0.29.0 has no Engram config:\n%s", p.Error())
+	}
+	if p := run(t, dep(colocated(pl, deployment.Engine{})), graniteGraph()); fired(p, "engram-config-unsupported") {
+		t.Errorf("fired without an Engram config:\n%s", p.Error())
+	}
+}
+
+// The Mamba state dtypes are their own literal, which accepts float32 and refuses fp8, and
+// the MoE backend is checked against its literal.
+func TestEnumValuesForMambaAndMoE(t *testing.T) {
+	pl := deployment.Parallelism{TP: 8, PP: 1, DP: 1}
+	for _, c := range []struct {
+		e    deployment.Engine
+		want bool
+	}{
+		{deployment.Engine{MambaSSMCacheDType: "float32"}, false},
+		{deployment.Engine{MambaCacheDType: "fp8"}, true},
+		{deployment.Engine{MoEBackend: "deep_gemm_mega_moe"}, false},
+		{deployment.Engine{MoEBackend: "rdna3"}, true}, // added in 0.31.0
+	} {
+		if got := fired(run(t, dep(colocated(pl, c.e)), graniteGraph()), "enum-values-known"); got != c.want {
+			t.Errorf("%+v: rule fired=%v, want %v", c.e, got, c.want)
+		}
 	}
 }

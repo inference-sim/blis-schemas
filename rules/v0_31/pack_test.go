@@ -72,6 +72,7 @@ func TestPackRuleSet(t *testing.T) {
 	want := []string{
 		"all2all-backend-known",
 		"allreduce-backend-known",
+		"cache-record-dtypes-known",
 		"cascade-attention-is-opt-in",
 		"connector-known",
 		"cp-kv-cache-interleave-fits-block",
@@ -79,8 +80,10 @@ func TestPackRuleSet(t *testing.T) {
 		"dbo-thresholds-at-least-microbatches",
 		"dbo-thresholds-stated-when-enabled",
 		"dcp-comm-backend-known",
+		"deepseek-v41-requires-dspark",
 		"engram-config-valid",
 		"engram-excludes-dbo",
+		"engram-residency-default",
 		"enum-values-known",
 		"eviction-policy-known",
 		"expert-divisibility-under-eplb",
@@ -472,11 +475,13 @@ func TestDBOThresholdsAtLeastMicrobatches(t *testing.T) {
 		dbo  *deployment.DBO
 		want bool
 	}{
-		{"off", &deployment.DBO{Enabled: false, DecodeTokenThreshold: 1}, false},
+		{"off", &deployment.DBO{Enabled: false, DecodeTokenThreshold: intp(1)}, false},
 		{"defaults", &deployment.DBO{Enabled: true}, false},
-		{"two", &deployment.DBO{Enabled: true, DecodeTokenThreshold: 2, PrefillTokenThreshold: 2}, false},
-		{"decode one", &deployment.DBO{Enabled: true, DecodeTokenThreshold: 1}, true},
-		{"prefill one", &deployment.DBO{Enabled: true, PrefillTokenThreshold: 1}, true},
+		{"two", &deployment.DBO{Enabled: true, DecodeTokenThreshold: intp(2), PrefillTokenThreshold: intp(2)}, false},
+		{"decode one", &deployment.DBO{Enabled: true, DecodeTokenThreshold: intp(1)}, true},
+		{"prefill one", &deployment.DBO{Enabled: true, PrefillTokenThreshold: intp(1)}, true},
+		// A stated 0 is not the default: the engine refuses it once DBO is on.
+		{"decode zero", &deployment.DBO{Enabled: true, DecodeTokenThreshold: intp(0)}, true},
 	} {
 		p := run(t, dep(colocated(pl, deployment.Engine{DBO: c.dbo})), graniteGraph())
 		if got := fired(p, "dbo-thresholds-at-least-microbatches"); got != c.want {
@@ -662,5 +667,211 @@ func TestMaxModelLenWithinContextWindow(t *testing.T) {
 	// A graph that states no window gives the rule nothing to compare.
 	if p := run(t, dep(colocated(pl, deployment.Engine{MaxModelLen: 1 << 30})), graniteGraph()); fired(p, "max-model-len-within-context-window") {
 		t.Errorf("fired without a window:\n%s", p.Error())
+	}
+}
+
+func intp(v int) *int { return &v }
+
+// layoutGrid is every combination of the widths and flags the sequence-parallel decisions
+// read, unset widths included.
+func layoutGrid() []deployment.Parallelism {
+	var out []deployment.Parallelism
+	for _, tp := range []int{0, 1, 2, 4, 8} {
+		for _, pp := range []int{0, 1, 2} {
+			for _, dp := range []int{0, 1, 2, 8} {
+				for _, ep := range []bool{false, true} {
+					out = append(out, deployment.Parallelism{TP: tp, PP: pp, DP: dp, EnableExpertParallel: ep})
+				}
+			}
+		}
+	}
+	return out
+}
+
+// Over every layout and backend: an unstated backend behaves exactly as the default stated
+// does, and the sequence-parallel-moe-implied rule fires exactly when SequenceParallelMoE
+// says the engine makes the MoE input sequence-parallel, so a cost model reading the
+// method and a reader seeing the rule never get different answers.
+func TestSequenceParallelMoEAgreesWithItsRule(t *testing.T) {
+	p := Pack()
+	backends := append(sortedKeys(p.All2AllBackends), "")
+	for _, pl := range layoutGrid() {
+		if p.SequenceParallelMoE("", pl.EnableExpertParallel, pl.TP, pl.DP) !=
+			p.SequenceParallelMoE(p.DefaultAll2AllBackend, pl.EnableExpertParallel, pl.TP, pl.DP) {
+			t.Fatalf("%+v: an unstated backend differs from the default %q", pl, p.DefaultAll2AllBackend)
+		}
+		for _, b := range backends {
+			pl := pl
+			if pl.TP < 1 || pl.PP < 1 || pl.DP < 1 {
+				continue // a field error, which stops rules before they run
+			}
+			want := p.SequenceParallelMoE(b, pl.EnableExpertParallel, pl.TP, pl.DP)
+			got := fired(run(t, dep(colocated(pl, deployment.Engine{All2AllBackend: b})), graniteGraph()),
+				"sequence-parallel-moe-implied")
+			if got != want {
+				t.Fatalf("%+v backend %q: rule fired=%v, method says %v", pl, b, got, want)
+			}
+		}
+	}
+}
+
+// The properties DeepSeek-V4.1's own rule must have, checked over every layout and MoE
+// backend: it needs pipeline parallelism of one, expert parallelism and more than one
+// tensor-parallel rank; with those, more than one data-parallel rank turns it on whatever
+// the backend, and at one rank only a mega-MoE backend does; and raising dp never turns it
+// off. An architecture without a rule is never on.
+func TestModelSequenceParallelProperties(t *testing.T) {
+	p := Pack()
+	v41 := rules.ArchDeepseekV41
+	moes := append(sortedKeys(p.MoEBackends), "")
+	for _, pl := range layoutGrid() {
+		for _, moe := range moes {
+			on := p.ModelSequenceParallel(v41, pl, moe)
+			base := pl.PP <= 1 && pl.EnableExpertParallel && pl.TP > 1
+			switch {
+			case !base && on:
+				t.Fatalf("%+v %q: on without pp 1, expert parallelism and tp above 1", pl, moe)
+			case base && pl.DP > 1 && !on:
+				t.Fatalf("%+v %q: off with dp above 1", pl, moe)
+			case base && pl.DP <= 1 && on != p.MegaMoEBackends[moe]:
+				t.Fatalf("%+v %q: at dp 1 it should follow the mega-MoE backend", pl, moe)
+			}
+			wider := pl
+			wider.DP = 8
+			if on && !p.ModelSequenceParallel(v41, wider, moe) {
+				t.Fatalf("%+v %q: raising dp turned it off", pl, moe)
+			}
+			if p.ModelSequenceParallel("DeepseekV3ForCausalLM", pl, moe) {
+				t.Fatalf("an architecture with no rule is on: %+v", pl)
+			}
+		}
+	}
+}
+
+// Every MTP-family method is refused for DeepSeek-V4.1, through the deployment or the
+// graph, and accepted for an architecture the engine serves MTP on; dspark is accepted.
+func TestDeepseekV41RequiresDSpark(t *testing.T) {
+	pl := deployment.Parallelism{TP: 8, PP: 1, DP: 1}
+	v41 := graniteGraph()
+	v41.Global.Architecture = rules.ArchDeepseekV41
+	v3 := graniteGraph()
+	v3.Global.Architecture = "DeepseekV3ForCausalLM"
+	for _, m := range mtpMethods {
+		e := deployment.Engine{Speculative: &deployment.Speculative{Method: m, NumSpecTokens: 1}}
+		if p := run(t, dep(colocated(pl, e)), v41); !fired(p, "deepseek-v41-requires-dspark") {
+			t.Errorf("%s on V4.1 accepted", m)
+		}
+		if p := run(t, dep(colocated(pl, e)), v3); fired(p, "deepseek-v41-requires-dspark") {
+			t.Errorf("%s refused for another architecture", m)
+		}
+	}
+	e := deployment.Engine{Speculative: &deployment.Speculative{Method: "dspark", NumSpecTokens: 5}}
+	if p := run(t, dep(colocated(pl, e)), v41); fired(p, "deepseek-v41-requires-dspark") {
+		t.Errorf("dspark refused on V4.1:\n%s", p.Error())
+	}
+	g := graniteGraph()
+	g.Global.Architecture = rules.ArchDeepseekV41
+	g.Speculator = &model.Speculator{Method: "mtp", NumSpec: 1, Stack: g.Stack}
+	if p := run(t, dep(colocated(pl, deployment.Engine{})), g); !fired(p, "deepseek-v41-requires-dspark") {
+		t.Errorf("an MTP speculator in the graph accepted on V4.1:\n%s", p.Error())
+	}
+}
+
+// The Engram config is accepted only for the architectures the engine lists, and a graph
+// that names none draws a warning rather than a pass or an error.
+func TestEngramConfigArchitectures(t *testing.T) {
+	pl := deployment.Parallelism{TP: 8, PP: 1, DP: 1}
+	e := deployment.Engine{EngramConfig: &deployment.EngramConfig{}}
+	for arch, want := range map[string]string{
+		rules.ArchDeepseekV41: "", "Qwen4ExpForCausalLM": "", "GraniteMoeForCausalLM": "error", "": "warning",
+	} {
+		g := engramGraph()
+		g.Global.Architecture = arch
+		p := run(t, dep(colocated(pl, e)), g)
+		got := ""
+		for _, pr := range p.All() {
+			if pr.Rule == "engram-config-valid" {
+				got = string(pr.Severity)
+			}
+		}
+		if got != want {
+			t.Errorf("architecture %q: got %q, want %q\n%s", arch, got, want, p.Error())
+		}
+	}
+	// With no model there is nothing to judge the config against.
+	if p := run(t, dep(colocated(pl, e)), nil); fired(p, "engram-config-valid") {
+		t.Errorf("fired with no model:\n%s", p.Error())
+	}
+}
+
+// The graph states the release's default residency: host, since cpu_offload defaults to
+// true. Stating device, by word or by default, is refused; a table no setting moves may
+// live anywhere.
+func TestEngramResidencyDefault(t *testing.T) {
+	pl := deployment.Parallelism{TP: 8, PP: 1, DP: 1}
+	for _, c := range []struct {
+		r    model.Residency
+		ctl  model.ResidencyControl
+		want bool
+	}{
+		{model.ResidencyHost, model.ResidencyEngramCPUOffload, false},
+		{model.ResidencyDevice, model.ResidencyEngramCPUOffload, true},
+		{"", model.ResidencyEngramCPUOffload, true},
+		{"", model.ResidencyFixed, false},
+		{model.ResidencyHost, model.ResidencyFixed, false},
+	} {
+		g := engramGraph()
+		n := &g.LayerKinds[0].Nodes[len(g.LayerKinds[0].Nodes)-1]
+		n.Residency, n.ResidencyControl = c.r, c.ctl
+		if got := fired(run(t, dep(colocated(pl, deployment.Engine{})), g), "engram-residency-default"); got != c.want {
+			t.Errorf("%q under %q: fired=%v, want %v", c.r, c.ctl, got, c.want)
+		}
+	}
+}
+
+// An offload connector reaches the NIXL skip the same way a PD-transfer one does.
+func TestNixlOffloadSkipsInterleaveAssert(t *testing.T) {
+	d := dep(colocated(deployment.Parallelism{TP: 8, PP: 1, DP: 1, DCP: 8},
+		deployment.Engine{CPKVCacheInterleaveSize: 128, BlockSize: 64}))
+	d.Offload = &deployment.Offload{Connector: "NixlConnector", Tiers: []deployment.Tier{{Device: "cpu_dram", Bytes: 1}}}
+	if p := run(t, d, graniteGraph()); fired(p, "cp-kv-cache-interleave-fits-block") {
+		t.Errorf("a NIXL offload connector should skip the assert:\n%s", p.Error())
+	}
+}
+
+// A LongRoPE model's shorter starting window does not lower the limit: a stated length up
+// to the full window passes.
+func TestMaxModelLenAgainstLongRoPEWindow(t *testing.T) {
+	g := graniteGraph()
+	g.Global.ContextWindow, g.Global.DefaultContextWindow = 131072, 4096
+	pl := deployment.Parallelism{TP: 8, PP: 1, DP: 1}
+	if p := run(t, dep(colocated(pl, deployment.Engine{MaxModelLen: 65536})), g); fired(p, "max-model-len-within-context-window") {
+		t.Errorf("a length within the window fired:\n%s", p.Error())
+	}
+}
+
+// A per-dtype record is read under the dtype the engine runs, so a key this release does
+// not accept is refused, in a cache and in an override alike; the release's own names pass.
+func TestCacheRecordDTypesKnown(t *testing.T) {
+	pl := deployment.Parallelism{TP: 8, PP: 1, DP: 1}
+	withRecord := func(key string, inOverride bool) *model.Graph {
+		g := graniteGraph()
+		n := &g.LayerKinds[0].Nodes[0]
+		n.Caches = []model.Cache{{Name: "kv", Kind: model.CacheKV, Owned: true, BytesPerEntry: 256}}
+		if inOverride {
+			g.ArchOverrides = []model.ArchOverride{{CapabilityFamily: 10,
+				Caches: []model.CacheOverride{{Name: "kv", BytesByCacheDType: map[string]int{key: 128}}}}}
+		} else {
+			n.Caches[0].BytesByCacheDType = map[string]int{key: 128}
+		}
+		return g
+	}
+	for _, inOverride := range []bool{false, true} {
+		for key, want := range map[string]bool{"nvfp4_ds_mla": false, "fp8": false, "nvfp4_ds_ml": true, "e4m3": true} {
+			p := run(t, dep(colocated(pl, deployment.Engine{})), withRecord(key, inOverride))
+			if got := fired(p, "cache-record-dtypes-known"); got != want {
+				t.Errorf("%q (override %v): fired=%v, want %v\n%s", key, inOverride, got, want, p.Error())
+			}
+		}
 	}
 }

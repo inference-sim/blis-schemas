@@ -25,8 +25,8 @@ its source gives for it.
 The constants in each pack are transcribed from the engine's source. A test re-derives most
 of them from a checkout of the engine and fails on any difference in either direction; CI
 runs it against each pack's tagged release. For 0.31.0 the speculative-method lists are the
-engine's whole literals and are re-derived too, and the test also checks that the startup
-refusals its new rules encode are still in the source. The 0.29.0 pack's speculative-method
+engine's whole literals and are re-derived too, and the test also checks that the message
+of each startup refusal its rules encode is still in the source. The 0.29.0 pack's speculative-method
 lists, and both packs' all-reduce backend names, are not re-derived and rest on review
 alone. See [A new engine release](../contributing/engine-release.md).
 

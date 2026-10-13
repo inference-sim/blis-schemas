@@ -59,7 +59,16 @@
 :   *error or warning.* This release refuses dual-batch overlap and microbatching at startup for a DeepseekV41ForCausalLM with Engram layers (vllm/config/vllm.py: "DeepSeek V4.1 Engram does not support DBO or microbatching"); a graph with Engram lookups that names no architecture draws a warning, since the refusal turns on the architecture.
 
 `engram-config-valid`
-:   *error.* This release refuses an Engram config at startup on a model without Engram layers, dp_shared_memory without cpu_offload or with one data-parallel rank, and use_thp without cpu_offload or with dp_shared_memory (vllm/config/engram.py).
+:   *error or warning.* This release refuses an Engram config at startup on a model without Engram layers or of an architecture outside _NGRAM_LAYER_FIELDS, dp_shared_memory without cpu_offload or with one data-parallel rank, and use_thp without cpu_offload or with dp_shared_memory (vllm/config/engram.py); a graph with Engram lookups that names no architecture draws a warning, since the refusal turns on the architecture.
+
+`cache-record-dtypes-known`
+:   *error.* A cache's per-dtype record is looked up by the cache dtype the engine runs, so an entry keyed by a name this release does not accept can never be read, and a misspelled nvfp4_ds_mla would leave its cache priced at the default record.
+
+`engram-residency-default`
+:   *error.* A graph states where an Engram table lives when the deployment leaves cpu_offload alone, and this release's default is cpu_offload true, host memory (vllm/config/engram.py); a graph stating the other residency would price every such deployment against the wrong memory.
+
+`deepseek-v41-requires-dspark`
+:   *error.* This release refuses a multi-token-prediction draft for DeepSeek-V4.1 at startup: it rewrites the V4.1 draft config to deepseek_mtp, and an MTP-family method then raises "DeepSeek V4.1 has no classic-MTP draft" (vllm/config/speculative.py); dspark is the method it serves.
 
 `max-model-len-within-context-window`
 :   *warning.* This release refuses a stated max_model_len above the window it derives from the model configuration, unless the configuration's model_max_length admits it or VLLM_ALLOW_LONG_MAX_MODEL_LEN is set (vllm/config/model.py); a warning because the schema sees neither.
@@ -86,7 +95,10 @@
 | `MambaCacheModes` | `engine.mamba_cache_mode` | `align` `all` `none` |
 | `MoEBackends` | `engine.moe_backend` | `aiter` `aiter_triton_mxfp4_bf16` `auto` `b12x` `batched_triton` `cutlass` `deep_gemm` `deep_gemm_mega_moe` `emulation` `flashinfer_b12x` `flashinfer_cutedsl` `flashinfer_cutlass` `flashinfer_moe_ep_mega_cutedsl` `flashinfer_moe_ep_mega_deep_gemm` `flashinfer_trtllm` `flydsl` `hpc` `humming` `marlin` `rdna3` `triton` `triton_unfused` |
 | `MegaMoEBackends` | MoE backends that run the mega-MoE model path | `deep_gemm_mega_moe` `flashinfer_moe_ep_mega_cutedsl` `flashinfer_moe_ep_mega_deep_gemm` |
-| `SequenceParallelArchitectures` | Architectures (`global.architecture`) whose own code decides sequence parallelism | `DeepseekV41ForCausalLM` |
+| `ModelSequenceParallelRules` | Architectures (`global.architecture`) whose own code decides sequence parallelism, and the condition | `DeepseekV41ForCausalLM` (pp 1, expert parallelism on, tp above 1, a mega-MoE backend or dp above 1) |
+| `DefaultAll2AllBackend` | The backend an unstated `engine.all2all_backend` selects | `allgather_reducescatter` |
+| `EngramArchitectures` | Architectures `engine.engram_config` may be given for | `DeepseekV41ForCausalLM` `Qwen4ExpForCausalLM` `Qwen4ExpForConditionalGeneration` |
+| `EngramCPUOffloadDefault` | Whether an Engram table lives in host memory when `engine.engram_config.cpu_offload` is unstated; meaningless where `EngramArchitectures` is none | `true` |
 | `SchedulerPolicies` | `engine.scheduling_policy` | `fcfs` `priority` |
 | `SpeculativeMethods` | `engine.speculative.method`, `speculator.method` | `bailing_hybrid_mtp` `bailing_hybrid_v3_mtp` `custom_class` `deepseek_mtp` `dflash` `dots3_note_mtp` `draft_model` `dspark` `eagle` `eagle3` `ernie_mtp` `exaone4_5_mtp` `exaone_moe_mtp` `extract_hidden_states` `gemma4_mtp` `glm4_moe_lite_mtp` `glm4_moe_mtp` `glm5_next_mtp` `glm_ocr_mtp` `hy_v3_mtp` `hy_v4_mtp` `inkling_mtp` `kimi_k3_mtp` `longcat_flash_mtp` `medusa` `mimo_mtp` `mimo_v2_mtp` `minimax_m3_mtp` `mlp_speculator` `mtp` `nemotron_h_mtp` `ngram` `ngram_gpu` `pangu_ultra_moe_mtp` `qwen3_5_mtp` `qwen3_next_mtp` `qwen4_exp_mtp` `step3p5_mtp` `suffix` |
 | `AsyncCompatibleSpec` | Speculative methods that leave async scheduling enabled | `bailing_hybrid_mtp` `bailing_hybrid_v3_mtp` `deepseek_mtp` `dflash` `dots3_note_mtp` `draft_model` `dspark` `eagle` `eagle3` `ernie_mtp` `exaone4_5_mtp` `exaone_moe_mtp` `extract_hidden_states` `gemma4_mtp` `glm4_moe_lite_mtp` `glm4_moe_mtp` `glm5_next_mtp` `glm_ocr_mtp` `hy_v3_mtp` `hy_v4_mtp` `inkling_mtp` `kimi_k3_mtp` `longcat_flash_mtp` `mimo_mtp` `mimo_v2_mtp` `minimax_m3_mtp` `mtp` `nemotron_h_mtp` `ngram_gpu` `pangu_ultra_moe_mtp` `qwen3_5_mtp` `qwen3_next_mtp` `qwen4_exp_mtp` `step3p5_mtp` |
@@ -157,6 +169,9 @@
 `dbo-thresholds-stated-when-enabled`
 :   *warning.* Which threshold applies turns on batch uniformity, and an unstated threshold silently takes a default that differs by 16x between the two.
 
+`engram-config-unsupported`
+:   *error.* This release has no Engram config (no vllm/config/engram.py, no --engram-config), so a launch line carrying one does not parse.
+
 `sequence-parallel-moe-implied`
 :   *warning.* On this backend with tensor and data parallelism both above one, the engine makes the MoE input sequence-parallel, which replaces the layer's all-reduce with a different pair of collectives.
 
@@ -173,7 +188,10 @@
 | `MambaCacheModes` | `engine.mamba_cache_mode` | `align` `all` `none` |
 | `MoEBackends` | `engine.moe_backend` | `aiter` `auto` `b12x` `batched_triton` `cutlass` `deep_gemm` `deep_gemm_mega_moe` `emulation` `flashinfer_b12x` `flashinfer_cutedsl` `flashinfer_cutlass` `flashinfer_moe_ep_mega_cutedsl` `flashinfer_moe_ep_mega_deep_gemm` `flashinfer_trtllm` `flydsl` `hpc` `humming` `marlin` `triton` `triton_unfused` |
 | `MegaMoEBackends` | MoE backends that run the mega-MoE model path | `deep_gemm_mega_moe` `flashinfer_moe_ep_mega_cutedsl` `flashinfer_moe_ep_mega_deep_gemm` |
-| `SequenceParallelArchitectures` | Architectures (`global.architecture`) whose own code decides sequence parallelism |  |
+| `ModelSequenceParallelRules` | Architectures (`global.architecture`) whose own code decides sequence parallelism, and the condition | none |
+| `DefaultAll2AllBackend` | The backend an unstated `engine.all2all_backend` selects | `allgather_reducescatter` |
+| `EngramArchitectures` | Architectures `engine.engram_config` may be given for | none |
+| `EngramCPUOffloadDefault` | Whether an Engram table lives in host memory when `engine.engram_config.cpu_offload` is unstated; meaningless where `EngramArchitectures` is none | `false` |
 | `SchedulerPolicies` | `engine.scheduling_policy` | `fcfs` `priority` |
 | `SpeculativeMethods` | `engine.speculative.method`, `speculator.method` | `deepseek_mtp` `dflash` `draft_model` `dspark` `eagle` `eagle3` `glm4_moe_mtp` `inkling_mtp` `kimi_k3_mtp` `medusa` `mlp_speculator` `mtp` `nemotron_h_mtp` `ngram` `ngram_gpu` `qwen3_next_mtp` |
 | `AsyncCompatibleSpec` | Speculative methods that leave async scheduling enabled | `deepseek_mtp` `dflash` `draft_model` `dspark` `eagle` `eagle3` `glm4_moe_mtp` `inkling_mtp` `kimi_k3_mtp` `mtp` `nemotron_h_mtp` `ngram_gpu` `qwen3_next_mtp` |

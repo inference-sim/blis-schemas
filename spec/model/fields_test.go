@@ -111,17 +111,42 @@ func TestV41FieldRejects(t *testing.T) {
 		{"reader disagrees with owner", "but layer 0 owns it", func(g *Graph) {
 			g.LayerKinds[1].Nodes[0].Caches[1].BytesPerEntry = 528
 		}},
+		{"negative per-dtype record", "caches[1].bytes_by_cache_dtype.nvfp4_ds_mla: must be positive", func(g *Graph) {
+			source(g)[1].Caches[1].BytesByCacheDType = map[string]int{"nvfp4_ds_mla": -5}
+		}},
+		{"empty per-dtype key", "caches[1].bytes_by_cache_dtype: a cache dtype name is empty", func(g *Graph) {
+			source(g)[1].Caches[1].BytesByCacheDType = map[string]int{"": 288}
+		}},
+		{"reader restating storage", "caches[1].page_alignment: describes storage", func(g *Graph) {
+			g.LayerKinds[1].Nodes[0].Caches[1].PageAlignment = 576
+		}},
+		{"reader restating a per-dtype record", "caches[1].bytes_by_cache_dtype: describes storage", func(g *Graph) {
+			g.LayerKinds[1].Nodes[0].Caches[1].BytesByCacheDType = map[string]int{"nvfp4_ds_mla": 288}
+		}},
+		{"window cache on a node with no window", "caches[0].window: is 128 but the node reads a window of 0", func(g *Graph) {
+			source(g)[1].Window = 0
+		}},
+		{"index cache at the wrong ratio", "tokens_per_entry: is 1 but the node reads at compress_ratio 2", func(g *Graph) {
+			source(g)[1].Caches = append(source(g)[1].Caches,
+				Cache{Name: "index", Kind: CacheIndex, Owned: true, BytesPerEntry: 132})
+		}},
+		{"pooled kv cache on a node that does not compress", "tokens_per_entry: is 2 but the node reads at compress_ratio 1", func(g *Graph) {
+			for _, lk := range g.LayerKinds[:2] {
+				n := &lk.Nodes[indexOfAttention(lk.Nodes)]
+				n.AttentionKind, n.CompressRatio, n.IndexTopK = AttentionMLA, 0, 0
+			}
+		}},
 		// Gather.
-		{"gather without rows", "rows", func(g *Graph) { source(g)[2].Rows = 0 }},
+		{"gather without rows", "layer_kinds[0].nodes[2].rows: must be positive", func(g *Graph) { source(g)[2].Rows = 0 }},
+		{"gather reading more rows than it has", "nodes[2].rows_per_token: 24 exceeds the table's 10 rows", func(g *Graph) { source(g)[2].Rows = 10 }},
 		{"gather without out bytes", "out_bytes_per_token", func(g *Graph) { source(g)[2].OutBytesPerToken = 0 }},
 		{"unknown residency", "not a recognized residency", func(g *Graph) { source(g)[2].Residency = "disk" }},
 		{"unknown control", "not a recognized residency control", func(g *Graph) { source(g)[2].ResidencyControl = "magic" }},
-		{"residency against its control's default", "defaults to host", func(g *Graph) { source(g)[2].Residency = ResidencyDevice }},
 		{"unknown shard", "not a recognized shard", func(g *Graph) { source(g)[2].Shard = "cols" }},
 		{"heads with one row", "rows_per_token of at least 2", func(g *Graph) { g.Embedding[0].Shard = ShardHeads }},
 		{"table field on a GEMM", "only a Gather has a table", func(g *Graph) { source(g)[0].Residency = ResidencyHost }},
-		{"rows on a GEMM", "rows", func(g *Graph) { source(g)[0].Rows = 5 }},
-		{"n on a gather", ".n", func(g *Graph) { source(g)[2].N = 5 }},
+		{"rows on a GEMM", "layer_kinds[0].nodes[0].rows: not priced by this op", func(g *Graph) { source(g)[0].Rows = 5 }},
+		{"n on a gather", "layer_kinds[0].nodes[2].n: not priced by this op", func(g *Graph) { source(g)[2].N = 5 }},
 		// Collective payload.
 		{"payload on an All2All", "bytes_per_token", func(g *Graph) {
 			g.LayerKinds = append(g.LayerKinds[:0:0], g.LayerKinds...)
@@ -144,13 +169,16 @@ func TestV41FieldRejects(t *testing.T) {
 			source(g)[0].Context = &ContextWork{BytesPerEntry: 1, Per: PerRequest}
 		}},
 		{"context without a unit", "not a recognized unit", func(g *Graph) { source(g)[5].Context.Per = "" }},
+		{"context with an unknown phase", "context.phase: \"decode\" is not a recognized phase", func(g *Graph) { source(g)[5].Context.Phase = "decode" }},
+		{"context with an unknown extent", "context.decode_extent: \"window\" is not a recognized extent", func(g *Graph) { source(g)[5].Context.DecodeExtent = "window" }},
+		{"context with negative tokens per entry", "context.tokens_per_entry: must not be negative", func(g *Graph) { source(g)[5].Context.TokensPerEntry = -2 }},
 		{"context without bytes", "bytes_per_entry", func(g *Graph) { source(g)[5].Context.BytesPerEntry = 0 }},
 		{"decode extent on prefill work", "only in prefill", func(g *Graph) { source(g)[5].Context.Phase = PhasePrefill }},
 		// Weight scales.
 		{"scale on an attention node", "only a GEMM or GroupedGEMM", func(g *Graph) {
 			source(g)[1].WeightScale = &WeightScale{Elements: 32, Bytes: 1}
 		}},
-		{"zero scale group", "elements", func(g *Graph) { g.Global.WeightScale.Elements = 0 }},
+		{"zero scale group", "global.weight_scale.elements: must be positive", func(g *Graph) { g.Global.WeightScale.Elements = 0 }},
 		// Aliases.
 		{"alias on an attention node", "only a GEMM or Gather", func(g *Graph) { source(g)[1].Aliases = "head.lm_head" }},
 		{"malformed alias", "must be <layer kind>.<role>", func(g *Graph) { g.Speculator.Head[0].Aliases = "lm_head" }},
@@ -160,6 +188,13 @@ func TestV41FieldRejects(t *testing.T) {
 			g.LayerKinds[3].Nodes[0].Aliases = "reader.x"
 		}},
 		{"alias of another shape", "cannot be the weights", func(g *Graph) { g.Speculator.Head[0].N = 100 }},
+		{"gather alias of another row width", "cannot be the weights", func(g *Graph) {
+			g.Speculator.SequentialHead[0].Aliases = "embedding.embed_tokens"
+		}},
+		{"alias scope both a kind and head", "is ambiguous: a layer kind is also named \"head\"", func(g *Graph) {
+			g.LayerKinds = append(g.LayerKinds, LayerKind{ID: "head", Nodes: []Node{{Op: OpElementwise}}})
+			g.Stack.Epilogue = []string{"head"}
+		}},
 		{"alias to an alias", "is itself an alias", func(g *Graph) {
 			g.LayerKinds[2].Nodes[0].Aliases = "head.lm_head"
 			g.LayerKinds[2].Nodes[0].N, g.LayerKinds[2].Nodes[0].K = 100352, 3072
@@ -184,8 +219,22 @@ func TestV41FieldRejects(t *testing.T) {
 		// Arch overrides.
 		{"family zero", "positive compute-capability", func(g *Graph) { g.ArchOverrides[0].CapabilityFamily = 0 }},
 		{"family twice", "overridden twice", func(g *Graph) { g.ArchOverrides = append(g.ArchOverrides, g.ArchOverrides[0]) }},
-		{"override of an absent role", "no node has role", func(g *Graph) { g.ArchOverrides[0].Nodes[0].Role = "nope" }},
-		{"override of an absent cache", "no cache is named", func(g *Graph) { g.ArchOverrides[0].Caches[0].Name = "nope" }},
+		{"override of an absent role", "arch_overrides[0].nodes[0].role: no node has role \"nope\"", func(g *Graph) { g.ArchOverrides[0].Nodes[0].Role = "nope" }},
+		{"override of an absent cache", "arch_overrides[0].caches[0].name: no cache is named \"nope\"", func(g *Graph) { g.ArchOverrides[0].Caches[0].Name = "nope" }},
+		{"override with no role", "arch_overrides[0].nodes[0].role: required", func(g *Graph) { g.ArchOverrides[0].Nodes[0].Role = "" }},
+		{"override with an unknown dtype", "arch_overrides[0].nodes[0].weight_dtype: \"fp6\" is not a recognized dtype", func(g *Graph) {
+			g.ArchOverrides[0].Nodes[0].WeightDType = "fp6"
+		}},
+		{"cache override with no name", "arch_overrides[0].caches[0].name: required", func(g *Graph) { g.ArchOverrides[0].Caches[0].Name = "" }},
+		{"cache override with a negative size", "arch_overrides[0].caches[0]: sizes must not be negative", func(g *Graph) {
+			g.ArchOverrides[0].Caches[0].BytesPerEntry = -1
+		}},
+		{"cache override with a zero per-dtype record", "bytes_by_cache_dtype.nvfp4_ds_mla: must be positive, got 0", func(g *Graph) {
+			g.ArchOverrides[0].Caches[0].BytesByCacheDType = map[string]int{"nvfp4_ds_mla": 0}
+		}},
+		{"cache override restating nothing", "arch_overrides[0].caches[0]: restates nothing", func(g *Graph) {
+			g.ArchOverrides[0].Caches[0].BytesPerEntry = 0
+		}},
 		{"override restating nothing", "restates nothing", func(g *Graph) { g.ArchOverrides[0].Nodes[0].WeightDType = "" }},
 		{"override of a weightless role", "holds no parameters", func(g *Graph) {
 			g.ArchOverrides[0].Nodes = append(g.ArchOverrides[0].Nodes, NodeOverride{Role: "mask", WeightDType: DTypeBF16})
@@ -281,6 +330,32 @@ func TestTPLayoutByOp(t *testing.T) {
 	} {
 		if got := c.l.ValidFor(c.o); got != c.want {
 			t.Errorf("%q on %s: %v, want %v", c.l, c.o, got, c.want)
+		}
+	}
+}
+
+func indexOfAttention(ns []Node) int {
+	for i, n := range ns {
+		if n.Op == OpAttention {
+			return i
+		}
+	}
+	panic("no attention node")
+}
+
+// Validation reports every problem, not the first: an override naming two absent roles
+// reports both, each at its own entry.
+func TestArchOverrideReportsEveryMiss(t *testing.T) {
+	g := v41Graph()
+	g.ArchOverrides[0].Nodes = []NodeOverride{
+		{Role: "nope1", WeightDType: DTypeBF16}, {Role: "nope2", WeightDType: DTypeBF16}}
+	got := map[string]bool{}
+	for _, pr := range g.Validate().All() {
+		got[pr.Path] = true
+	}
+	for _, want := range []string{"arch_overrides[0].nodes[0].role", "arch_overrides[0].nodes[1].role"} {
+		if !got[want] {
+			t.Errorf("no problem at %s; got %v", want, got)
 		}
 	}
 }

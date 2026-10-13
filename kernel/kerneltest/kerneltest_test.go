@@ -92,3 +92,67 @@ func TestCasesCoverEveryLinkClass(t *testing.T) {
 			sameNode, sameRack, crossRack)
 	}
 }
+
+// doubled names one link twice, which an arbiter would count twice.
+type doubled struct{ fake }
+
+func (d doubled) PDTransferDemand(tokens int, from, to kernel.Placement) kernel.TransferDemand {
+	dem := d.fake.PDTransferDemand(tokens, from, to)
+	if len(dem.Links) > 0 {
+		dem.Links = append(dem.Links, dem.Links[0])
+	}
+	return dem
+}
+
+// drifting answers differently on every call, which no pure kernel may.
+type drifting struct {
+	fake
+	n *int64
+}
+
+func (d drifting) PDTransferDemand(tokens int, from, to kernel.Placement) kernel.TransferDemand {
+	*d.n++
+	dem := d.fake.PDTransferDemand(tokens, from, to)
+	dem.Bytes += *d.n
+	return dem
+}
+
+func (d drifting) PDTransferTime(tokens int, from, to kernel.Placement) time.Duration {
+	return d.PDTransferDemand(tokens, from, to).AloneTime()
+}
+
+// Each way the check can fail does fail, so a kernel that breaks the contract cannot pass
+// conformance by a path the check never exercised.
+func TestCheckFailsEachWay(t *testing.T) {
+	c := PDCase{Tokens: 4096, From: kernel.Placement{Pool: deployment.RolePrefill},
+		To: kernel.Placement{Node: 1, Pool: deployment.RoleDecode}}
+	var n int64
+	for name, k := range map[string]kernel.Kernel{
+		"malformed demand":  doubled{},
+		"different demands": drifting{n: &n},
+		"PDTransferTime":    fake{skew: time.Nanosecond},
+	} {
+		if err := CheckPDTransfer(k, c); err == nil || !strings.Contains(err.Error(), name) {
+			t.Errorf("%s: got %v", name, err)
+		}
+	}
+}
+
+// recorder captures a fatal call without stopping the test that checks for it.
+type recorder struct {
+	testing.TB
+	fatal bool
+}
+
+func (r *recorder) Helper()               {}
+func (r *recorder) Fatal(...any)          { r.fatal = true }
+func (r *recorder) Error(...any)          {}
+func (r *recorder) Errorf(string, ...any) {}
+
+func TestNoCasesIsAFailure(t *testing.T) {
+	r := &recorder{TB: t}
+	TestPDTransfer(r, fake{}, nil)
+	if !r.fatal {
+		t.Error("TestPDTransfer with no cases passed, having checked nothing")
+	}
+}

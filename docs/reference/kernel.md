@@ -148,7 +148,9 @@ func TestPDTransferLaw(t *testing.T) {
 
 `PDCases` covers a same-node, a same-rack and a cross-rack handoff at token counts from 0 to
 131,072. `CheckPDTransfer` checks one case and returns an error, for a caller with cases
-of its own. Each check requires a well-formed demand (`TransferDemand.Check`), the same
+of its own; `TestPDTransfer` fails when given no cases, since it would then check nothing.
+`CheckLinksAgree` checks that two kernels of one deployment name the same links at the same
+rates for one handoff. Each check requires a well-formed demand (`TransferDemand.Check`), the same
 demand from two calls, and an exact match with `PDTransferTime`.
 
 Adding a method to `Kernel` breaks every other implementation, fakes included, until it

@@ -21,6 +21,7 @@ package rules
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/inference-sim/blis-schemas/internal/validate"
@@ -78,10 +79,21 @@ type Pack struct {
 	// path, which DeepSeek-V4.1's sequence-parallelism rule reads.
 	MoEBackends     map[string]bool
 	MegaMoEBackends map[string]bool
-	// SequenceParallelArchitectures are the model architectures whose own code decides
-	// sequence parallelism in this release, which ModelSequenceParallel evaluates.
-	SequenceParallelArchitectures map[string]bool
-	SchedulerPolicies             map[string]bool
+	// ModelSequenceParallelRules are the architectures whose own code decides sequence
+	// parallelism in this release, each with its condition, which ModelSequenceParallel
+	// evaluates.
+	ModelSequenceParallelRules map[string]SequenceParallelCondition
+
+	// DefaultAll2AllBackend is the backend an unstated all2all_backend selects.
+	DefaultAll2AllBackend string
+
+	// EngramArchitectures are the architectures --engram-config may be given for, the
+	// keys of the engine's _NGRAM_LAYER_FIELDS; EngramCPUOffloadDefault is
+	// EngramConfig.cpu_offload's default, which decides where an Engram table lives when
+	// the deployment does not say. Both are empty in a release without Engram.
+	EngramArchitectures     map[string]bool
+	EngramCPUOffloadDefault bool
+	SchedulerPolicies       map[string]bool
 	// SpeculativeMethods are accepted draft methods, and AsyncCompatibleSpec the
 	// subset that does not disable async scheduling.
 	SpeculativeMethods  map[string]bool
@@ -213,7 +225,8 @@ func (p *Pack) Names() []string {
 // release.
 //
 // They read only the pack's own fields, so a pack for a new version gets correct
-// behaviour by declaring its constants and nothing else.
+// behaviour by declaring its constants and nothing else. ModelSequenceParallel is no
+// exception: each architecture's condition is a SequenceParallelCondition, which is data.
 
 // SequenceParallelMoE reports whether the engine makes the MoE input sequence-parallel.
 //
@@ -222,33 +235,79 @@ func (p *Pack) Names() []string {
 // charges both over-prices the layer. All four conditions must hold: the backend must be
 // one of the set that supports it, expert parallelism must be on, and both widths must
 // exceed one.
+//
+// An empty backend is the engine's default, DefaultAll2AllBackend, which is a member in
+// both registered releases, so an unstated backend is not a reason to answer false.
 func (p *Pack) SequenceParallelMoE(backend string, expertParallel bool, tp, dp int) bool {
 	if !expertParallel || tp <= 1 || dp <= 1 {
 		return false
+	}
+	if backend == "" {
+		backend = p.DefaultAll2AllBackend
 	}
 	return p.SPMoEBackends[backend]
 }
 
 // ModelSequenceParallel reports whether a model's own sequence parallelism is on, for the
-// architecture its graph names, one pool's layout and its MoE backend. It decides the
-// sequence_parallel emit conditions. An architecture with no such rule in this release
-// answers false.
-//
-// For DeepSeek-V4.1 the rule is _use_sequence_parallel (v0.31.0
-// vllm/models/deepseek_v41/nvidia/model.py): pipeline parallelism 1, expert parallelism
-// on, tensor parallelism above 1, and a mega-MoE backend or data parallelism above 1.
-// An unstated width counts as one, and an unstated MoE backend is the engine's "auto",
-// which is not a mega-MoE backend.
+// architecture its graph names, one pool's layout and its MoE backend, by the condition
+// this release declares for that architecture in ModelSequenceParallelRules. It decides
+// the sequence_parallel emit conditions. An architecture with no rule in this release
+// answers false. An unstated width counts as one, and an unstated MoE backend is the
+// engine's "auto", which is not a mega-MoE backend.
 func (p *Pack) ModelSequenceParallel(architecture string, pl deployment.Parallelism, moeBackend string) bool {
-	if !p.SequenceParallelArchitectures[architecture] {
+	c, ok := p.ModelSequenceParallelRules[architecture]
+	if !ok {
 		return false
 	}
-	switch architecture {
-	case ArchDeepseekV41:
-		return pl.PP <= 1 && pl.EnableExpertParallel && pl.TP > 1 &&
-			(p.MegaMoEBackends[moeBackend] || pl.DP > 1)
+	atLeastOne := func(w int) int {
+		if w < 1 {
+			return 1
+		}
+		return w
 	}
-	return false
+	pp, tp, dp := atLeastOne(pl.PP), atLeastOne(pl.TP), atLeastOne(pl.DP)
+	if (c.PipelineParallelOne && pp != 1) || (c.ExpertParallel && !pl.EnableExpertParallel) ||
+		(c.TensorParallelAboveOne && tp <= 1) {
+		return false
+	}
+	if !c.MegaMoEOrDataParallelAboveOne {
+		return true
+	}
+	return p.MegaMoEBackends[moeBackend] || dp > 1
+}
+
+// SequenceParallelCondition is one architecture's sequence-parallelism condition, as
+// data: every requirement set must hold. It is a pack field rather than code so a release
+// that changes an architecture's condition is a new pack with different data, like every
+// other version fact here.
+type SequenceParallelCondition struct {
+	PipelineParallelOne    bool // pipeline parallelism is exactly one
+	ExpertParallel         bool // expert parallelism is enabled
+	TensorParallelAboveOne bool // tensor parallelism exceeds one
+	// MegaMoEOrDataParallelAboveOne requires a MoE backend in MegaMoEBackends or data
+	// parallelism above one.
+	MegaMoEOrDataParallelAboveOne bool
+}
+
+// String renders the condition for the generated documentation.
+func (c SequenceParallelCondition) String() string {
+	var parts []string
+	if c.PipelineParallelOne {
+		parts = append(parts, "pp 1")
+	}
+	if c.ExpertParallel {
+		parts = append(parts, "expert parallelism on")
+	}
+	if c.TensorParallelAboveOne {
+		parts = append(parts, "tp above 1")
+	}
+	if c.MegaMoEOrDataParallelAboveOne {
+		parts = append(parts, "a mega-MoE backend or dp above 1")
+	}
+	if len(parts) == 0 {
+		return "always"
+	}
+	return strings.Join(parts, ", ")
 }
 
 // ArchDeepseekV41 is DeepSeek-V4.1's architecture name, the value of its configuration's
