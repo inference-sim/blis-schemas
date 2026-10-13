@@ -21,7 +21,7 @@
 // never state it.
 package model
 
-// Op names a cost primitive. The eight members are the primitives that run inside
+// Op names a cost primitive. The ten members are the primitives that run inside
 // a forward pass. The cost model's other five — WeightRead, HostOverhead,
 // HostTransfer, StorageRead and P2P — are not graph nodes: the first is implied by
 // the GEMMs, and the rest are priced by kernel methods the simulator calls
@@ -41,6 +41,13 @@ const (
 	// OpElementwise is normalization, rope, activation, quantize/dequantize:
 	// bandwidth-bound work with no reduction across ranks.
 	OpElementwise Op = "Elementwise"
+	// OpGather reads a few rows of a large table per token: a vocabulary embedding, or
+	// DeepSeek-V4.1's Engram n-gram tables, 384 million rows per layer of which each
+	// token reads 24. It is a primitive of its own because no other prices it: a GEMM
+	// charges its whole n x k as per-step reads and FLOPs, which for a gather is wrong by
+	// the ratio of the table to the rows read, and an Elementwise node has no table and
+	// so no residency. The table may also live off the device (Residency).
+	OpGather Op = "Gather"
 	// OpAllReduce is a tensor-parallel reduction.
 	OpAllReduce Op = "AllReduce"
 	// OpAllGather and OpReduceScatter are the sequence-parallel pair, and the two
@@ -56,7 +63,7 @@ const (
 
 var ops = map[Op]bool{
 	OpGEMM: true, OpGroupedGEMM: true, OpAttention: true, OpRecurrentUpdate: true,
-	OpElementwise: true, OpAllReduce: true, OpAllGather: true,
+	OpElementwise: true, OpGather: true, OpAllReduce: true, OpAllGather: true,
 	OpReduceScatter: true, OpAll2All: true,
 }
 
@@ -88,10 +95,12 @@ const (
 	// AttentionMLA is multi-head latent attention: one latent vector per token.
 	AttentionMLA AttentionKind = "mla"
 	// AttentionSparseMLA narrows the latent-cache read: a layer may select a top-k
-	// of the cache (index_topk), compress the latent read (compress_ratio), or both.
-	// Both are the same latent-cache cost structure narrowed by different mechanisms,
-	// not two attention families, so they are one kind rather than a separate
-	// compressed-MLA kind that would duplicate the MLA shape and sharding rules.
+	// of the cache (index_topk), compress the latent read (compress_ratio), bound it to
+	// a sliding window (window), or combine them. All are the same latent-cache cost
+	// structure narrowed by different mechanisms, run by one sparse kernel that reads
+	// an explicit set of positions, so they are one kind rather than separate
+	// compressed- or windowed-MLA kinds that would duplicate the MLA shape and sharding
+	// rules. DeepSeek-V4.1's window-only layers are sparse_mla with a window alone.
 	AttentionSparseMLA AttentionKind = "sparse_mla"
 	// AttentionSWA is sliding-window attention, whose per-token read is bounded by
 	// the window rather than by context length.

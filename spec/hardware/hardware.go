@@ -16,6 +16,10 @@
 package hardware
 
 import (
+	"regexp"
+	"strconv"
+	"strings"
+
 	"gopkg.in/yaml.v3"
 
 	"github.com/inference-sim/blis-schemas/internal/validate"
@@ -91,6 +95,14 @@ type Chip struct {
 	// be positive: no shipped chip has zero SMs, so a missing or zero count is an
 	// omission, not a legitimate value — hence no omitempty, and Validate rejects it.
 	SMCount int `yaml:"SMCount"`
+
+	// ComputeCapability is the CUDA compute capability, "major.minor": "9.0" for H100
+	// and H200, "10.0" for B200 and GB200, "10.3" for B300 and GB300. An engine selects
+	// kernels, and with them what some weights and caches are resident as, by its major
+	// version (vLLM's is_device_capability_family), so a model graph's arch_overrides are
+	// keyed by it. Empty means not stated: a graph that is the same on every chip still
+	// resolves, and one that distinguishes architectures cannot be resolved for this chip.
+	ComputeCapability string `yaml:"ComputeCapability,omitempty"`
 
 	// GPUsPerNode and GPUsPerRack describe packaging. GPUsPerRack is non-zero only
 	// where a rack boundary is a distinct link from a node boundary, which is the
@@ -193,3 +205,17 @@ func (d *StorageDevice) UnmarshalYAML(node *yaml.Node) error {
 	*d = StorageDevice(raw)
 	return nil
 }
+
+// CapabilityMajor returns the major version of ComputeCapability, and false when it is
+// unstated or malformed.
+func (c *Chip) CapabilityMajor() (int, bool) {
+	if !capabilityForm.MatchString(c.ComputeCapability) {
+		return 0, false
+	}
+	major, _, _ := strings.Cut(c.ComputeCapability, ".")
+	m, err := strconv.Atoi(major)
+	return m, err == nil
+}
+
+// capabilityForm is major.minor with no sign or leading zero on the major version.
+var capabilityForm = regexp.MustCompile(`^[1-9][0-9]*\.[0-9]+$`)

@@ -30,6 +30,7 @@ A file under `hardware/`, named by its file.
 | `MemoryGiB` | number | yes | HBM capacity, GiB. |
 | `IntraNodeBwGBps` | number | yes | On-node bandwidth per GPU, one direction, GB/s. NVLink where present. |
 | `SMCount` | integer | yes | Streaming multiprocessors, positive. |
+| `ComputeCapability` | string | no | CUDA compute capability, `major.minor`, such as `9.0` (H100, H200) or `10.0` (B200, GB200). A model graph that distinguishes architectures is resolved by the major version; one cannot be resolved for a chip that states none. |
 | `GPUsPerNode` | integer | no | GPUs in one node. |
 | `GPUsPerRack` | integer | no | GPUs in one rack, where a rack is a distinct link tier. A multiple of `GPUsPerNode`. |
 | `IntraRackBwGBps` | number | no | Bandwidth between nodes inside a rack, GB/s. Needs `GPUsPerRack`. |
@@ -81,7 +82,8 @@ Every number must be finite. Beyond that, a chip is invalid if
 - `TFlopsFP8` is positive but not above `TFlopsPeak`; no shipped part has an FP8 peak at or
   below its BF16 peak, so this is almost always a transcription slip;
 - `GPUsPerRack` is not a multiple of `GPUsPerNode`, when both are set;
-- `IntraRackBwGBps` is set without `GPUsPerRack`.
+- `IntraRackBwGBps` is set without `GPUsPerRack`;
+- `ComputeCapability` is set but is not `major.minor`.
 
 A fabric is invalid if `Provenance` is not recognized or `InterNodeBwGBps` is not
 positive. A storage class is invalid if any of its three figures is not positive.

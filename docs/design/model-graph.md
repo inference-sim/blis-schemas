@@ -30,7 +30,7 @@ the deriver. Nemotron-3-Ultra states no layer count at all. Its depth is the len
 per-layer type vector, and a deriver that read only the usual key would have produced a
 model with no layers.
 
-## Nine primitives
+## Ten primitives
 
 --8<-- "docs/generated/enum/model.Op.md"
 
@@ -48,13 +48,15 @@ not pass unnoticed.
 
 Whether a collective runs depends on the deployment, not the model. At `tp 1` there is no
 tensor-parallel reduction. Every collective node therefore carries an `emit` condition, and
-the deployment's resolved layout decides which nodes exist.
+the deployment's resolved layout decides which nodes exist. Two conditions turn on a
+model's own sequence parallelism, which changes the layout of some non-collective nodes
+too, so those two may also sit on a node the graph states once for each mode.
 
 The condition is one of a fixed list, not an expression. An earlier draft allowed
 predicates such as `"tp > 1 and not sp_moe"`, which would have required an expression parser
 in every cost model and let graphs state conditions no cost model understood. Every model in
-the catalog needs one of three conditions, each decided by the collective's role, so the
-list loses nothing, and a cost model decides a node with a switch statement.
+the catalog needs one of five conditions, each decided by the node's role and the resolved
+layout, so the list loses nothing, and a cost model decides a node with a switch statement.
 
 ## Stacks compress, and some do not repeat
 

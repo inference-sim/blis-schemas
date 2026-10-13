@@ -81,4 +81,27 @@ jobs:
       - name: verify pack constants
         env:
           VLLM_SOURCE: ${{ github.workspace }}/vllm-source
-        run: go test -v -run MatchSource ./rules/...
+          VLLM_SOURCE_REQUIRED: "1"
+        run: go test -v -run MatchSource ./rules/v0_29/
+
+  # The same check for the 0.31.0 pack, against its own release. Each pack is checked
+  # against the tag it describes, so neither job runs the other's package.
+  constants-against-engine-v0_31:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      - name: check out the engine at the pinned release
+        uses: actions/checkout@v4
+        with:
+          repository: vllm-project/vllm
+          ref: v0.31.0
+          path: vllm-source
+          fetch-depth: 1
+      - name: verify pack constants
+        env:
+          VLLM_SOURCE: ${{ github.workspace }}/vllm-source
+          VLLM_SOURCE_REQUIRED: "1"
+        run: go test -v -run MatchSource ./rules/v0_31/

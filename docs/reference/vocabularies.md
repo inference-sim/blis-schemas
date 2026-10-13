@@ -88,7 +88,10 @@ change a byte count or a peak rate appear. `nvfp4`, `mxfp4` and `int4` are three
 ### Attention kinds
 
 An `Attention` node's `kind`. `mla` and `sparse_mla` store one latent vector per token,
-which is why their `n_kv` is 1.
+which is why their `n_kv` is 1. `sparse_mla` is attention by a sparse kernel over an
+explicit set of positions, bounded by a top-k (`index_topk`), a compressed stream
+(`compress_ratio`), a sliding window (`window`), or a combination: DeepSeek-V4.1's
+window-only layers run the same sparse FlashMLA kernel as its compressed ones.
 
 --8<-- "docs/generated/enum/model.AttentionKind.md"
 
@@ -116,11 +119,168 @@ omitted `emit` reads as.
     input sequence-parallel. Under sequence-parallel MoE the reduction is replaced by a
     reduce-scatter and all-gather pair.
 
+`sequence_parallel`
+:   Present when the model's own sequence parallelism is on, as the rules pack decides it
+    for `global.architecture`. DeepSeek-V4.1 then shards the residual stream by token and
+    all-gathers each attention input, then reduce-scatters its output.
+
+`tensor_parallel_unless_sequence_parallel`
+:   Present when the tensor-parallel width exceeds 1 and the model's own sequence
+    parallelism is off: the all-reduces sequence parallelism replaces.
+
+The last two belong on collectives. Work runs in every layout, including tensor
+parallelism one, where neither condition holds, so a node stated twice, once under each,
+would vanish there. Work is stated once, with
+[`under_sequence_parallel`](#sequence-parallel-splits) for how the mode divides it. A
+non-collective node carrying either condition draws a warning.
+
+A model that decides its own sequence parallelism never consults the engine-wide rule
+`tensor_parallel_unless_sp_moe` names, so its decoder-layer reductions, the MoE's
+included, use `tensor_parallel_unless_sequence_parallel`. DeepSeek-V4.1 passes its own flag
+to its MoE, and vLLM's FusedMoE then skips the final tensor-parallel all-reduce. The
+0.31.0 rules pack reports the engine-wide condition on such a model as an error.
+
+The condition holds on DeepSeek-V4's and V4.1's mega-MoE backend too. That backend requires
+expert parallelism, so it runs without the model's sequence parallelism only at tensor
+parallelism one or pipeline parallelism above one. There its routed experts combine over
+the expert-parallel group with no tensor-parallel all-reduce, and its shared expert, which
+fuses into the kernel only under sequence parallelism or tensor parallelism one, runs
+tensor-parallel and all-reduces its own output. So the layer still reduces one
+hidden-width tensor across tensor-parallel ranks, as on the default backend.
+
 ### Modalities
 
 A graph's `modality`. An omitted `modality` means `text_only`.
 
 --8<-- "docs/generated/enum/model.Modality.md"
+
+### Tensor-parallel layouts
+
+A node's `tp`. An omitted `tp` leaves the layout to the cost model's inference. A `GEMM`
+accepts `column`, `row` and `replicated`; an `Elementwise` or `Attention` node accepts
+`sharded` and `replicated`. No other primitive accepts one.
+
+--8<-- "docs/generated/enum/model.TPLayout.md"
+
+`column`
+:   The output width `n` splits across ranks.
+
+`row`
+:   The input width `k` splits across ranks. The partial sums are reduced by a collective
+    the graph states separately.
+
+`sharded`
+:   The work splits across ranks with the heads or columns it operates on.
+
+`replicated`
+:   Every rank holds the whole weight and does the whole node for every token it holds.
+
+### Sequence-parallel splits
+
+A node's `under_sequence_parallel`: how it divides when the model's own sequence
+parallelism is on. An omitted value means the node runs as `tp` states, over every token
+the step schedules. It needs `global.architecture`, and a collective cannot carry it.
+
+--8<-- "docs/generated/enum/model.SequenceParallelSplit.md"
+
+`token_sharded`
+:   The node runs on its rank's shard of the step's tokens, `ceil(tokens / tp)` rows,
+    because vLLM's `sp_shard` pads the count to a multiple of `tp`. A `GEMM`,
+    `Elementwise` or `Attention` node then holds its whole weight, whatever `tp` states:
+    a column or row split needs every rank to hold the same rows. A `GroupedGEMM`'s
+    experts stay divided as expert parallelism decides, and a `Gather`'s table as its
+    `shard` states.
+
+`tp` alone can't say this. Under DeepSeek-V4.1's sequence parallelism the residual stream
+is sharded by token, and only attention runs on the gathered stream, between its
+all-gather and its reduce-scatter. mHC, before the gather, and the fused q/kv
+A-projection, after it, are both `replicated`, yet the first sees `1/tp` of the tokens and
+the second all of them. Engram's `wkv` is column-split without the mode and replicated with
+it, and runs at tensor parallelism one too. It is one node, `tp: column` with
+`under_sequence_parallel: token_sharded`.
+
+### Cache kinds
+
+A cache's `kind`, which decides how it grows.
+
+--8<-- "docs/generated/enum/model.CacheKind.md"
+
+`kv`
+:   Keys and values, or a latent: one entry per `tokens_per_entry` context tokens.
+
+`index`
+:   A sparse-attention indexer's key cache. It grows like `kv`.
+
+`window`
+:   A sliding-window ring, bounded by `window` tokens per request.
+
+`state`
+:   Fixed per-request state, `entries` entries for the request's lifetime.
+
+### Gather residency
+
+A `Gather` node's `residency`, and the engine setting that can change it, its
+`residency_control`. An omitted `residency` means `device`; an omitted
+`residency_control` means no setting moves the table.
+
+--8<-- "docs/generated/enum/model.Residency.md"
+
+--8<-- "docs/generated/enum/model.ResidencyControl.md"
+
+`engram_cpu_offload`
+:   vLLM's Engram `cpu_offload`. A deployment sets it with
+    `engine.engram_config.cpu_offload`. The graph states the residency the engine gives the
+    table when the deployment leaves it alone, which is a release fact: under 0.31.0 it is
+    `host`, and that pack's `engram-residency-default` rule checks it.
+
+### Gather shards
+
+A `Gather` node's `shard`. An omitted `shard` means `replicated`.
+
+--8<-- "docs/generated/enum/model.GatherShard.md"
+
+`rows`
+:   The rows split evenly across ranks, and each token's row is read on the rank that holds
+    it. vLLM's vocabulary embedding works this way.
+
+`heads`
+:   The table is `rows_per_token` sub-tables, one per hash head, split across S shards.
+    Each shard holds ceil(`rows_per_token` / S) of them and reads one row from each for
+    every token. S is the tensor-parallel width, or that times the node's data-parallel
+    replicas when they split the table rather than share one host copy, which the
+    deployment's `engram_config` decides. DeepSeek-V4.1's Engram works this way.
+
+### Context work
+
+An `Elementwise` node's `context.per`, `context.phase` and `context.decode_extent`.
+
+--8<-- "docs/generated/enum/model.ContextPer.md"
+
+`query_token`
+:   Once per scheduled token, each over the context.
+
+`request`
+:   Once per request per step, over its context, however many of its tokens are scheduled.
+
+--8<-- "docs/generated/enum/model.Phase.md"
+
+An omitted `phase` means every step; `prefill` means only steps that schedule the
+request's prompt tokens.
+
+--8<-- "docs/generated/enum/model.Extent.md"
+
+An omitted `decode_extent` means the request's context; `max_model_len` means the engine's
+`max_model_len`, for a kernel launched over a buffer padded to it.
+
+### Drafting modes
+
+A speculator's `drafting`. An omitted `drafting` means autoregressive.
+
+--8<-- "docs/generated/enum/model.Drafting.md"
+
+`parallel_block`
+:   The draft stack runs once per step over `num_spec_tokens` positions per request, and
+    each position predicts one draft token. DeepSeek-V4.1's DSpark drafts this way.
 
 ## Deployments
 

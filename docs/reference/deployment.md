@@ -85,7 +85,7 @@ Scheduling and memory:
 | `block_size` | integer | no | KV block size in tokens. |
 | `max_num_batched_tokens` | integer | no | Token budget per step. |
 | `max_num_seqs` | integer | no | Sequence cap per step. |
-| `max_model_len` | integer | no | Context length. |
+| `max_model_len` | integer or `auto` | no | Context length. `auto` (or `-1`) asks the engine to fit the window to the KV memory it has left, which is a different request from omitting the key: omitted, the engine uses the model's whole window and refuses to start if it does not fit. |
 | `gpu_memory_utilization` | number | no | Fraction of GPU memory the engine may use, in [0, 1]. Zero means the engine's default. |
 | `scheduling_policy` | string | no | `fcfs` or `priority` in vLLM 0.29.0. |
 | `async_scheduling` | boolean | no | Omitted means the engine decides through its own disqualifying conditions. |
@@ -98,6 +98,7 @@ Weights and caches:
 | Key | Type | Required | Meaning |
 |---|---|---|---|
 | `quantization` | string | no | Weight format the engine serves, where it differs from the checkpoint's. Omitted means the checkpoint's own format. |
+| `moe_backend` | string | no | The expert-kernel backend, `--moe-backend`. Omitted means `auto`. A mega-MoE backend is one of the conditions under which DeepSeek-V4.1 turns on its own sequence parallelism. |
 | `cache_dtype` | string | no | KV cache format. |
 | `enable_prefix_caching` | boolean | no | Omitted means true, vLLM's default. `false` describes a deployment without prefix caching. |
 | `mamba_cache_dtype` | string | no | Format of a recurrent layer's state. |
@@ -113,6 +114,7 @@ Speculation and experts:
 |---|---|---|---|
 | `speculative` | mapping | no | Speculative decoding, below. |
 | `eplb` | mapping | no | Expert-parallel load balancing, below. |
+| `engram_config` | mapping | no | Where DeepSeek-V4.1's Engram tables live, below. Decides the residency of every model `Gather` whose `residency_control` is `engram_cpu_offload`. |
 
 Decode-context parallelism. These have no effect when `dcp` is 0 or 1:
 
@@ -131,8 +133,8 @@ Decode-context parallelism. These have no effect when `dcp` is 0 or 1:
 | Key | Type | Required | Meaning |
 |---|---|---|---|
 | `enable_dbo` | boolean | no | Split a batch so one half's communication overlaps the other's compute. |
-| `dbo_decode_token_threshold` | integer | no | Batch size in tokens at or above which a uniform-decode batch is split. |
-| `dbo_prefill_token_threshold` | integer | no | Batch size in tokens at or above which any other batch is split. |
+| `dbo_decode_token_threshold` | integer | no | Batch size in tokens at or above which a uniform-decode batch is split. Omitted takes the engine's default. With `enable_dbo` on, vLLM 0.31.0 refuses a stated value below the two microbatches, 0 or 1. Not negative. |
+| `dbo_prefill_token_threshold` | integer | no | Batch size in tokens at or above which any other batch is split. As for the decode threshold. |
 
 #### `engine.eplb`
 
@@ -153,6 +155,20 @@ Decode-context parallelism. These have no effect when `dcp` is 0 or 1:
 |---|---|---|---|
 | `method` | string | yes | The draft method. Which names are valid depends on the engine release. |
 | `num_spec_tokens` | integer | yes | Draft tokens per step, at least 1. |
+
+#### `engine.engram_config`
+
+The cost-bearing keys of vLLM's `--engram-config`. All three are optional and take the engine's
+default when omitted. The rules pack for 0.31.0 refuses the block on a model with no Engram
+lookups.
+
+<!-- fields: deployment.EngramConfig -->
+
+| Key | Type | Required | Meaning |
+|---|---|---|---|
+| `cpu_offload` | boolean | no | Keep the tables in pinned host memory, read over the host link. Omitted means true. `false` puts them in GPU memory. |
+| `dp_shared_memory` | boolean | no | Keep one host copy per node, shared by its data-parallel replicas. Omitted lets the engine decide: it enables it when `cpu_offload` is on, `use_thp` is off, `dp` exceeds 1 and elastic EP is off. Without sharing, the node's co-located replicas split each table between them instead. |
+| `use_thp` | boolean | no | Back a per-rank host table with transparent huge pages. Refused with `dp_shared_memory`. |
 
 ## Offload
 
@@ -201,11 +217,14 @@ A deployment is invalid if
 - a `prefill` pool has no `decode` pool, a `decode` pool has no `prefill` pool, or a
   `colocated` pool appears beside either;
 - a `prefill` pool is present and `pd_transfer` is absent;
-- an engine count (`block_size`, `max_num_batched_tokens`, `max_num_seqs`, `max_model_len`,
-  `cp_kv_cache_interleave_size`) is negative;
+- an engine count (`block_size`, `max_num_batched_tokens`, `max_num_seqs`,
+  `cp_kv_cache_interleave_size`) is negative, or `max_model_len` is below `-1`. A
+  `max_model_len` that is not a whole number, `auto`, or a number with a `k`/`m`/`g`/`t`
+  or `K`/`M`/`G`/`T` suffix fails to load, and so does one that comes to zero or is too
+  large to hold;
 - `gpu_memory_utilization` is not finite or lies outside [0, 1];
 - `disable_custom_all_reduce` is true while `allreduce_backend` is `custom`;
-- an enabled `dbo` has a negative threshold, or an enabled `eplb` a negative
+- `dbo` states a negative threshold, or an enabled `eplb` a negative
   `num_redundant_experts`;
 - `speculative` is present with an empty `method` or with `num_spec_tokens` below 1;
 - `offload` is present with no tiers, a tier is unnamed or named twice, a tier's `bytes`

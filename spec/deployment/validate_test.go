@@ -106,6 +106,16 @@ func TestRejects(t *testing.T) {
 			d.Pools[0].Engine.GPUMemoryUtilization = math.NaN()
 		}},
 		{"negative block size", func(d *Deployment) { d.Pools[0].Engine.BlockSize = -1 }},
+		// The engine types both DBO thresholds ge=0 whether or not overlap is on.
+		{"negative DBO threshold with DBO off", func(d *Deployment) {
+			v := -1
+			d.Pools[0].Engine.DBO = &DBO{Enabled: false, DecodeTokenThreshold: &v}
+		}},
+		{"negative DBO prefill threshold with DBO on", func(d *Deployment) {
+			v := -1
+			d.Pools[0].Engine.DBO = &DBO{Enabled: true, PrefillTokenThreshold: &v}
+		}},
+		{"max_model_len below auto", func(d *Deployment) { d.Pools[0].Engine.MaxModelLen = -2 }},
 		{"negative interleave size", func(d *Deployment) {
 			d.Pools[0].Engine.CPKVCacheInterleaveSize = -1
 		}},

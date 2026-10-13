@@ -2,6 +2,7 @@ package hardware
 
 import (
 	"math"
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -247,4 +248,41 @@ func TestCommentNarrowingAppliesToFabricAndDevice(t *testing.T) {
 			t.Fatal("storage device should reject an underscore-hidden _mfu as an unknown field")
 		}
 	})
+}
+
+func TestComputeCapability(t *testing.T) {
+	for _, c := range []struct {
+		cc    string
+		major int
+		ok    bool
+	}{
+		{"9.0", 9, true}, {"10.0", 10, true}, {"10.3", 10, true}, {"8.9", 8, true},
+		{"", 0, false}, {"9", 0, false}, {"sm90", 0, false}, {"9.x", 0, false},
+		{"0.0", 0, false}, {"9.+1", 0, false}, {"+9.0", 0, false}, {"09.0", 0, false}, {"9.-0", 0, false},
+	} {
+		chip := &Chip{ComputeCapability: c.cc}
+		if m, ok := chip.CapabilityMajor(); m != c.major || ok != c.ok {
+			t.Errorf("%q: CapabilityMajor() = %d, %v; want %d, %v", c.cc, m, ok, c.major, c.ok)
+		}
+	}
+}
+
+// A chip's validation agrees with CapabilityMajor: a well-formed capability is accepted and
+// a malformed one is reported at its field, never silently treated as unstated.
+func TestChipValidatesComputeCapability(t *testing.T) {
+	for _, cc := range []string{"", "9.0", "10.3"} {
+		c := h200()
+		c.ComputeCapability = cc
+		if p := c.Validate(); !p.OK() {
+			t.Errorf("%q rejected:\n%s", cc, p.Error())
+		}
+	}
+	for _, cc := range []string{"sm90", "9", "+9.0", "09.0", "9.x"} {
+		c := h200()
+		c.ComputeCapability = cc
+		p := c.Validate()
+		if p.OK() || !strings.Contains(p.Error(), "ComputeCapability") {
+			t.Errorf("%q accepted:\n%s", cc, p.Error())
+		}
+	}
 }

@@ -21,9 +21,29 @@ type Graph struct {
 
 	Global     GlobalShape `yaml:"global"`
 	LayerKinds []LayerKind `yaml:"layer_kinds"`
+	// Embedding is the nodes that run once per scheduled token before the stack: the
+	// vocabulary lookup, as a Gather. Absent means the consumer infers a vocab_size x
+	// hidden_size table at global.weight_dtype, the meaning every graph had before the
+	// field existed -- which is wrong for a checkpoint whose embedding is wider than the
+	// rest: DeepSeek-V4.1's is BF16 beside FP8 weights, because the FP8 quant config
+	// returns no method for an embedding and vLLM falls back to an unquantized one
+	// (v0.31.0 vocab_parallel_embedding.py).
+	Embedding  []Node      `yaml:"embedding,omitempty"`
 	Stack      Stack       `yaml:"stack"`
 	Head       []Node      `yaml:"head,omitempty"`
 	Speculator *Speculator `yaml:"speculator,omitempty"`
+
+	// ArchOverrides restate facts that differ by GPU architecture, applied for the
+	// deployment's chip by ForCapability. See ArchOverride.
+	ArchOverrides []ArchOverride `yaml:"arch_overrides,omitempty"`
+	// BaseCapabilityFamilies are the CUDA compute-capability major versions the base
+	// graph describes as served, without an override. Required with ArchOverrides: a
+	// graph that distinguishes architectures must also say which ones its base is, so a
+	// family it describes neither way is refused rather than given the base's facts.
+	// DeepSeek-V4.1's base is SM90; SM120 runs a plain-row KV cache under FlashInfer
+	// (vllm/models/deepseek_v41/nvidia/model.py _select_dsv4_attn_cls), so the SM90
+	// records do not describe it.
+	BaseCapabilityFamilies []int `yaml:"base_capability_families,omitempty"`
 
 	// Modality records what a graph covers when its source describes more than a
 	// language model. Several shipped configurations nest the text shapes under a
@@ -94,6 +114,49 @@ type GlobalShape struct {
 	// WeightDType is the dtype parameters are stored in. It sets weight bytes and,
 	// through them, both per-rank occupancy and decode-time HBM traffic.
 	WeightDType DType `yaml:"weight_dtype"`
+	// WeightScale is the resident scale layout of weights stored at WeightDType, where
+	// the format does not fix one itself. See WeightScale and WeightBytesPerParam.
+	WeightScale *WeightScale `yaml:"weight_scale,omitempty"`
+
+	// ContextWindow is the longest context the engine admits for this model when the
+	// deployment does not raise the limit: the derived max_model_len of vLLM v0.31.0's
+	// ModelConfig, the smallest of the configuration's length keys
+	// (max_position_embeddings and its aliases), scaled by a RoPE factor for scaling
+	// types other than su, longrope, llama3, yarn, deepseek_yarn and
+	// deepseek_llama_scaling, for a pooling model with absolute positions capped by the
+	// tokenizer's model_max_length, and capped by the sliding window when the deployment
+	// disables sliding-window attention (vllm/config/model.py _get_and_verify_max_len). A
+	// deployment that states a longer max_model_len is refused at startup unless the
+	// configuration's model_max_length admits it or VLLM_ALLOW_LONG_MAX_MODEL_LEN is
+	// set. Zero means not stated.
+	//
+	// It is what an unstated or auto max_model_len starts from, and the graph carries it
+	// because nothing else a consumer holds does: the vendor configuration is not a
+	// schema input.
+	ContextWindow int `yaml:"context_window,omitempty"`
+	// DefaultContextWindow is the window an unstated or auto max_model_len takes, where
+	// it differs from ContextWindow: for a LongRoPE model the engine starts from
+	// original_max_position_embeddings to avoid degrading short sequences. Zero means it
+	// equals ContextWindow.
+	DefaultContextWindow int `yaml:"default_context_window,omitempty"`
+
+	// Architecture is the model class the engine serves the checkpoint with, the
+	// configuration's architectures[0], such as "DeepseekV41ForCausalLM". It is the one
+	// vendor name a graph carries, because the engine keys model-specific behaviour on
+	// it and nothing else in the graph identifies the model code: v0.31.0 refuses
+	// dual-batch overlap only for a DeepseekV41ForCausalLM with Engram layers, and
+	// DeepSeek-V4.1 decides its own sequence parallelism. Which architectures a release
+	// treats specially is its rules pack's to say. Empty means not stated.
+	Architecture string `yaml:"architecture,omitempty"`
+}
+
+// DefaultWindow returns the window an unstated or auto max_model_len starts from, or zero
+// when the graph states none.
+func (g GlobalShape) DefaultWindow() int {
+	if g.DefaultContextWindow > 0 {
+		return g.DefaultContextWindow
+	}
+	return g.ContextWindow
 }
 
 // DType is a numeric format. Only formats that change a byte count or a peak rate
@@ -131,9 +194,10 @@ var dtypes = map[DType]bool{
 // Valid reports whether d is a recognized dtype.
 func (d DType) Valid() bool { return dtypes[d] }
 
-// Bytes returns the storage width of one element. NVFP4 is four bits, so it
-// returns a fractional value expressed in bytes; callers multiply by an element
-// count and round at the end rather than per element.
+// Bytes returns the payload width of one element, excluding scales. NVFP4 is four
+// bits, so it returns a fractional value expressed in bytes; callers multiply by an
+// element count and round at the end rather than per element. For the bytes a weight
+// occupies, scales included, use StoredBytes or Graph.WeightBytesPerParam.
 func (d DType) Bytes() float64 {
 	switch d {
 	case DTypeFP32:
@@ -143,10 +207,10 @@ func (d DType) Bytes() float64 {
 	case DTypeFP8, DTypeINT8:
 		return 1
 	case DTypeNVFP4, DTypeMXFP4, DTypeINT4:
-		// Four bits of payload. Each format adds a per-group scale — one FP8 byte per
+		// Four bits of payload. Each format adds a per-group scale -- one FP8 byte per
 		// sixteen elements for NVFP4, one E8M0 byte per thirty-two for MXFP4, and for INT4
-		// one scale per group at whatever group_size the checkpoint declares — which a
-		// caller needing exact stored bytes must add; this returns the payload width.
+		// one scale per group at whatever group_size the checkpoint declares -- which
+		// StoredBytes adds; this returns the payload width.
 		return 0.5
 	}
 	return 0
@@ -202,10 +266,69 @@ type Speculator struct {
 	// Method is the engine's speculative method name. It is carried as a string
 	// because the set of methods is engine-version data, not a schema invariant;
 	// a rules pack validates it against a declared engine version.
-	Method  string `yaml:"method"`
-	NumSpec int    `yaml:"num_spec_tokens"`
-	Stack   Stack  `yaml:"stack"`
+	Method string `yaml:"method"`
+	// NumSpec is the tokens drafted per request per step. It is not the draft layer
+	// count: DeepSeek-V4.1's DSpark drafts dspark_block_size = 5 tokens through
+	// num_nextn_predict_layers = 3 layers (both from the checkpoint's configuration;
+	// v0.31.0 vllm/config/speculative.py defaults num_speculative_tokens to the draft
+	// config's block_size, or dspark_block_size where it has none).
+	NumSpec int `yaml:"num_spec_tokens"`
+	// Drafting is how Stack runs. See Drafting.
+	Drafting Drafting `yaml:"drafting,omitempty"`
+	// Embedding is the nodes that run before each pass of Stack, over the same rows: the
+	// draft's own token lookup and the reduction that completes it. DSpark's drafter
+	// holds its own VocabParallelEmbedding, with the target's weights ("Shared with the
+	// target", v0.31.0 vllm/models/deepseek_v41/nvidia/dspark.py), so its Gather aliases
+	// embedding.<role>. Like every vocab-parallel lookup it ends in a tensor-parallel
+	// all-reduce (vocab_parallel_embedding.py), and the draft embeds before it shards its
+	// stream for sequence parallelism (dspark.py forward), so that reduction runs in both
+	// modes. Stated at the head of a draft layer kind instead, it would read as a
+	// decoder-layer reduction, which the mode replaces. Absent means the draft does no
+	// lookup of its own.
+	Embedding []Node `yaml:"embedding,omitempty"`
+	// Stack is the draft layers. Under autoregressive drafting it runs once per drafted
+	// token; under parallel_block drafting it runs once per step over NumSpec positions
+	// per request.
+	Stack Stack `yaml:"stack"`
+	// ContextStack is draft work that runs once per step over the TARGET's scheduled
+	// tokens, prefill tokens included, rather than over draft positions. DSpark projects
+	// three target layers' hidden states through main_proj, and each draft layer
+	// derives its context KV from that projection, over every target token the step
+	// schedules (vllm/v1/worker/gpu/spec_decode/dflash/speculator.py
+	// _precompute_context_kv over [0, num_target_tokens)).
+	// Absent means the speculator has no such work.
+	ContextStack *Stack `yaml:"context_stack,omitempty"`
+	// Head is the nodes after each pass of Stack, over the same rows: the draft's
+	// logits. A node here that reuses the target's LM head says so with aliases.
+	Head []Node `yaml:"head,omitempty"`
+	// SequentialHead is the nodes that run once per draft position, in order, over one
+	// row per request, after Head: DSpark's Markov head, which gathers a rank-256 row
+	// for the previous token and projects it to the vocabulary to bias the next
+	// position's logits, one position at a time (vllm/model_executor/models/
+	// qwen3_dspark.py, "the head runs sequentially for every draft position"). Only a
+	// parallel_block drafter has one; an autoregressive drafter is sequential already.
+	SequentialHead []Node `yaml:"sequential_head,omitempty"`
 }
+
+// Drafting is how a speculator's stack produces its draft tokens.
+type Drafting string
+
+const (
+	// DraftingAutoregressive is the zero value: the stack runs once per drafted token,
+	// each pass feeding the next, as MTP and EAGLE drafters do.
+	DraftingAutoregressive Drafting = ""
+	// DraftingParallelBlock: the stack runs ONCE per step over num_spec_tokens
+	// positions per request -- the anchor and num_spec_tokens - 1 noise tokens -- and
+	// every position predicts one draft token. DSpark drafts this way: "each request
+	// emits exactly N = num_speculative_tokens query tokens (anchor + N-1 noise), NOT
+	// 1 + N" (vllm/v1/worker/gpu/spec_decode/dspark/speculator.py).
+	DraftingParallelBlock Drafting = "parallel_block"
+)
+
+var draftings = map[Drafting]bool{DraftingAutoregressive: true, DraftingParallelBlock: true}
+
+// Valid reports whether d is a recognized drafting mode.
+func (d Drafting) Valid() bool { return draftings[d] }
 
 // EmitCondition names when a conditional node is part of the graph. A resolver maps each
 // member to a decision from the resolved layout; the graph states which question to ask,
@@ -227,15 +350,47 @@ const (
 	// reduce-scatter and all-gather pair, so this node and that pair are alternatives
 	// rather than both running.
 	EmitTensorParallelUnlessSequenceParallelMoE EmitCondition = "tensor_parallel_unless_sp_moe"
+	// EmitSequenceParallel: present when the model's own sequence parallelism is on, as a
+	// rules pack decides it for the architecture global.architecture names. DeepSeek-V4.1
+	// then shards the residual stream by token across the tensor-parallel ranks,
+	// all-gathers each attention input and reduce-scatters its output (v0.31.0 vllm/models/deepseek_v41/nvidia/model.py:
+	// "x = sp_all_gather(x)" ... "x = sp_reduce_scatter(x)").
+	EmitSequenceParallel EmitCondition = "sequence_parallel"
+	// EmitTensorParallelUnlessSequenceParallel: present when the tensor-parallel width
+	// exceeds one and the model's sequence parallelism is off. The all-reduces that
+	// sequence parallelism replaces carry it.
+	EmitTensorParallelUnlessSequenceParallel EmitCondition = "tensor_parallel_unless_sequence_parallel"
 )
 
 var emitConditions = map[EmitCondition]bool{
 	EmitAlways: true, EmitTensorParallel: true, EmitExpertParallel: true,
-	EmitTensorParallelUnlessSequenceParallelMoE: true,
+	EmitTensorParallelUnlessSequenceParallelMoE: true, EmitSequenceParallel: true,
+	EmitTensorParallelUnlessSequenceParallel: true,
+}
+
+// SequenceParallelOnly reports whether c is one of the two conditions decided by the
+// model's own sequence parallelism. They belong on the collectives the mode adds or
+// replaces. Work belongs on a node stated once, with UnderSequenceParallel for how the
+// mode divides it: at tp 1 neither condition holds, so work stated twice, once under
+// each, would vanish there.
+func (c EmitCondition) SequenceParallelOnly() bool {
+	return c == EmitSequenceParallel || c == EmitTensorParallelUnlessSequenceParallel
 }
 
 // Valid reports whether c is a recognized condition.
 func (c EmitCondition) Valid() bool { return emitConditions[c] }
+
+// SequenceParallelField names the field of n that the model's own sequence parallelism
+// decides -- "emit" or "under_sequence_parallel" -- or returns "" when it decides none.
+func (n Node) SequenceParallelField() string {
+	switch {
+	case n.Emit.SequenceParallelOnly():
+		return "emit"
+	case n.UnderSequenceParallel != SPAsTP:
+		return "under_sequence_parallel"
+	}
+	return ""
+}
 
 // Node is one primitive with the shape parameters it prices. The fields are a
 // union across ops: a GEMM reads N and K, an Attention reads the head counts, a
@@ -257,9 +412,30 @@ type Node struct {
 	// arithmetic, so the enum loses nothing and the resolver becomes a switch.
 	Emit EmitCondition `yaml:"emit,omitempty"`
 
+	// TP is how the node divides across tensor-parallel ranks. Absent means the
+	// consumer's inference, the meaning every graph had before the field existed. See
+	// TPLayout.
+	TP TPLayout `yaml:"tp,omitempty"`
+
+	// UnderSequenceParallel is how the node divides when the model's own sequence
+	// parallelism is on. Empty means as TP states, over every token the step schedules.
+	// See SequenceParallelSplit.
+	UnderSequenceParallel SequenceParallelSplit `yaml:"under_sequence_parallel,omitempty"`
+
+	// Aliases, on a GEMM or Gather, names the node whose weights this one reads, as
+	// "<layer kind id>.<role>", "head.<role>" or "embedding.<role>". The node is priced
+	// for its compute and its weight-read traffic but adds no resident bytes, because the
+	// weights it reads are already counted where they live. DSpark's draft reads the
+	// target's LM head and embedding (dspark.py: "load_dspark_model always aliases the
+	// target's"), so pricing the draft's own copies would count each twice.
+	Aliases string `yaml:"aliases,omitempty"`
+
 	// GEMM and GroupedGEMM.
 	N int `yaml:"n,omitempty"`
 	K int `yaml:"k,omitempty"`
+	// WeightScale overrides the resident scale layout for this node's weights. See
+	// WeightScale.
+	WeightScale *WeightScale `yaml:"weight_scale,omitempty"`
 	// WeightDType overrides GlobalShape.WeightDType for this node's parameters, for a
 	// checkpoint that stores one part of itself at a different width from the rest.
 	// Empty means the global dtype governs, which is the common case.
@@ -312,6 +488,10 @@ type Node struct {
 	// shape field here follows, so a set (nonzero) ratio is what validation checks for
 	// positivity and sparse-MLA placement; zero for other kinds.
 	CompressRatio int `yaml:"compress_ratio,omitempty"`
+	// Caches are the per-request caches this attention node reads, and which of them its
+	// layer owns. Absent means the consumer infers one cache from the read shape, the
+	// meaning every graph had before the field existed. See Cache.
+	Caches []Cache `yaml:"caches,omitempty"`
 
 	// RecurrentUpdate.
 	RecurrentKind    RecurrentKind `yaml:"recurrent_kind,omitempty"`
@@ -324,7 +504,57 @@ type Node struct {
 	// wider than the weight dtype.
 	StateDType DType `yaml:"state_dtype,omitempty"`
 
+	// Gather. See OpGather.
+	//
+	// Rows is the table's row count and RowBytes one stored row, scales included.
+	// RowsPerToken is the rows gathered per token, and OutBytesPerToken what the gather
+	// writes to device memory per token after any dequantize.
+	Rows             int64 `yaml:"rows,omitempty"`
+	RowBytes         int   `yaml:"row_bytes,omitempty"`
+	RowsPerToken     int   `yaml:"rows_per_token,omitempty"`
+	OutBytesPerToken int   `yaml:"out_bytes_per_token,omitempty"`
+	// Residency is where the table lives by the engine's default. Empty means device.
+	Residency Residency `yaml:"residency,omitempty"`
+	// ResidencyControl names the engine setting that can move the table, which a
+	// deployment states. Empty means the residency is fixed.
+	ResidencyControl ResidencyControl `yaml:"residency_control,omitempty"`
+	// Shard is how the table divides across tensor-parallel ranks. Empty means
+	// replicated.
+	Shard GatherShard `yaml:"shard,omitempty"`
+
 	// Elementwise: bytes touched per token, when it is not derivable from
 	// HiddenSize alone.
+	//
+	// AllReduce, AllGather and ReduceScatter: the bytes per token of the collective's full
+	// tensor -- what every rank holds after an all-gather or all-reduce, and before a
+	// reduce-scatter -- where it is not one hidden-width activation. DeepSeek-V4.1's
+	// engram row all-gather moves 24 BF16 rows of 256 per token, 12,288 B, against a
+	// 10,240 B hidden activation. Absent means the hidden-width default.
 	BytesPerToken int `yaml:"bytes_per_token,omitempty"`
+
+	// PerTokens, on an Elementwise node, makes it run once every PerTokens tokens rather
+	// than once per token: work done once per compressed entry, such as V4.1's pooled
+	// compressor write and its index-key store, which exit early on every token but the
+	// last of a compress_ratio group (fused_compress_quant_cache.py, indexer_k_store.py:
+	// "if (position + 1) % COMPRESS_RATIO != 0: return"). Zero means one.
+	//
+	// It is not offered on a GEMM, because the engine runs none of these GEMMs per entry:
+	// V4.1's compressor projection and its index wk run over every token's row and the
+	// store kernel then skips the non-boundary rows (attention.py: "Rows at non-boundary
+	// tokens hold garbage latent and are skipped by the store kernel"). A per-entry GEMM
+	// would leave out (r - 1) / r of the FLOPs the engine spends at ratio r.
+	PerTokens int `yaml:"per_tokens,omitempty"`
+
+	// Context, on an Elementwise node, is traffic that scales with the attended context
+	// rather than with the scheduled tokens. It is in addition to BytesPerToken. See
+	// ContextWork.
+	Context *ContextWork `yaml:"context,omitempty"`
+
+	// WritesCache, on an Elementwise node in a layer kind, names a cache of the same layer
+	// this node writes one entry of each time it runs: a cache insert. The entry's record
+	// -- under the cache dtype that runs, on the resolved architecture -- adds to
+	// BytesPerToken, which is then the traffic beyond the record, and PerTokens must be
+	// that cache's tokens_per_entry. Naming the cache keeps the write's size with the
+	// record it writes rather than restating a number an arch override would leave behind.
+	WritesCache string `yaml:"writes_cache,omitempty"`
 }

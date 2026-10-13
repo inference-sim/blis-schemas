@@ -535,12 +535,17 @@ func admissibleDCP(pcp int, block *big.Int) []*big.Int {
 func validateEngine(p *validate.Problems, at string, e Engine) {
 	for field, v := range map[string]int{
 		"block_size": e.BlockSize, "max_num_batched_tokens": e.MaxNumBatchedTokens,
-		"max_num_seqs": e.MaxNumSeqs, "max_model_len": e.MaxModelLen,
+		"max_num_seqs":                e.MaxNumSeqs,
 		"cp_kv_cache_interleave_size": e.CPKVCacheInterleaveSize,
 	} {
 		if v < 0 {
 			p.Field(at+".engine."+field, "must not be negative")
 		}
+	}
+	// -1 is auto, the one negative the engine gives a meaning; anything below it is a
+	// mistake.
+	if e.MaxModelLen < MaxModelLenAuto {
+		p.Field(at+".engine.max_model_len", "must be a positive count, or auto (-1), got %d", e.MaxModelLen)
 	}
 	// Stating both the boolean and the resolved name invites them to disagree, and
 	// which one an implementation honours would be arbitrary.
@@ -565,9 +570,15 @@ func validateEngine(p *validate.Problems, at string, e Engine) {
 		p.Field(at+".engine.gpu_memory_utilization",
 			"must lie in [0, 1] (0 means unset), got %v", e.GPUMemoryUtilization)
 	}
-	if e.DBO != nil && e.DBO.Enabled {
-		if e.DBO.DecodeTokenThreshold < 0 || e.DBO.PrefillTokenThreshold < 0 {
-			p.Field(at+".engine.dbo", "thresholds must not be negative")
+	// The engine types both thresholds Field(ge=0) whether or not overlap is enabled.
+	if e.DBO != nil {
+		for field, v := range map[string]*int{
+			"dbo_decode_token_threshold":  e.DBO.DecodeTokenThreshold,
+			"dbo_prefill_token_threshold": e.DBO.PrefillTokenThreshold,
+		} {
+			if v != nil && *v < 0 {
+				p.Field(at+".engine.dbo."+field, "must not be negative")
+			}
 		}
 	}
 	if e.EPLB != nil && e.EPLB.Enabled && e.EPLB.NumRedundantExperts < 0 {

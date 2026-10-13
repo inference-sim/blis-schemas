@@ -203,7 +203,7 @@ func TestCorpusDeploymentsAreExpressible(t *testing.T) {
 						CUDAGraphMode: "FULL_AND_PIECEWISE", CacheDType: "fp8",
 						BlockSize: 64, GPUMemoryUtilization: 0.9,
 						DBO: &deployment.DBO{Enabled: true,
-							DecodeTokenThreshold: 32, PrefillTokenThreshold: 512},
+							DecodeTokenThreshold: intp(32), PrefillTokenThreshold: intp(512)},
 						EPLB: &deployment.EPLB{Enabled: true,
 							NumRedundantExperts: 32, WindowSize: 1000,
 							StepInterval: 3000}}),
@@ -321,3 +321,5 @@ func TestGraniteAtEP72NeedsRedundantExperts(t *testing.T) {
 		t.Fatalf("224 + 64 = 288 = 4 x 72 should pass:\n%s", renderAll(rep))
 	}
 }
+
+func intp(v int) *int { return &v }

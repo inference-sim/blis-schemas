@@ -91,8 +91,9 @@ hold in every release.
 Some layout questions have different answers in different releases, and belong to a rules
 pack:
 
-- vLLM 0.29.0 refuses prefill-context parallelism combined with data parallelism; later
-  releases support it. The `pcp-excludes-data-parallelism` rule reports it for 0.29.0.
+- vLLM 0.29.0 refuses prefill-context parallelism combined with data parallelism; 0.31.0
+  supports it. The `pcp-excludes-data-parallelism` rule reports it for 0.29.0, and the
+  0.31.0 pack has no such rule.
 - With expert-parallel load balancing on, the expert-parallel width must divide the experts
   plus the redundant experts, or the engine does not start. Without it, an uneven split runs
   with a static imbalance, which the rules report as a warning with its ratio, and a width
