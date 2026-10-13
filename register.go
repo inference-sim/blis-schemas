@@ -3,6 +3,7 @@ package blisschemas
 import (
 	"github.com/inference-sim/blis-schemas/rules"
 	v0_29 "github.com/inference-sim/blis-schemas/rules/v0_29"
+	v0_31 "github.com/inference-sim/blis-schemas/rules/v0_31"
 )
 
 // Packs are registered here rather than in each pack's init function. An init-time
@@ -12,4 +13,5 @@ import (
 // this file.
 func init() {
 	rules.Register(v0_29.Pack())
+	rules.Register(v0_31.Pack())
 }

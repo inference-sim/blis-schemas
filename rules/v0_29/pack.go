@@ -79,7 +79,19 @@ func Pack() *rules.Pack {
 		// set, or one all-to-all in place of the last two collectives.
 		DCPCommBackends: set("ag_rs", "a2a"),
 
-		MambaCacheModes:   set("none", "align", "all"),
+		// The MambaDType literal: a recurrent state's cache dtype is checked against
+		// this, not against CacheDTypes, which lacks float32.
+		MambaDTypes:     set("auto", "float32", "float16", "bfloat16"),
+		MambaCacheModes: set("none", "align", "all"),
+
+		// The MoEBackend literal of vllm/config/kernel.py, and its MEGA_MOE_BACKENDS.
+		MoEBackends: set("auto", "triton", "batched_triton", "deep_gemm", "deep_gemm_mega_moe", "cutlass",
+			"flashinfer_trtllm", "flashinfer_cutlass", "flashinfer_cutedsl", "flashinfer_b12x",
+			"b12x", "flashinfer_moe_ep_mega_deep_gemm", "flashinfer_moe_ep_mega_cutedsl",
+			"marlin", "humming", "triton_unfused", "aiter", "flydsl", "hpc", "emulation"),
+		MegaMoEBackends: set("deep_gemm_mega_moe", "flashinfer_moe_ep_mega_deep_gemm",
+			"flashinfer_moe_ep_mega_cutedsl"),
+
 		SchedulerPolicies: set("fcfs", "priority"),
 
 		// Speculative methods accepted by this release. The multi-token-prediction
@@ -177,7 +189,7 @@ func ruleList(p *rules.Pack) []rules.Rule {
 		},
 		{
 			Name:    "enum-values-known",
-			Because: "graph mode, cache dtype, mamba cache mode and scheduler policy each change a cost term, and an unknown value silently selects a default",
+			Because: "graph mode, cache dtype, mamba cache dtype and mode, MoE backend and scheduler policy each change a cost term, and the engine types each as a closed literal, refusing any other value",
 			Check: func(in rules.Input, out *validate.Problems) {
 				forEachEngine(in, func(at string, e deployment.Engine) {
 					check := func(field, value string, allowed map[string]bool) {
@@ -190,8 +202,9 @@ func ruleList(p *rules.Pack) []rules.Rule {
 					}
 					check("cudagraph_mode", e.CUDAGraphMode, p.CUDAGraphModes)
 					check("cache_dtype", e.CacheDType, p.CacheDTypes)
-					check("mamba_cache_dtype", e.MambaCacheDType, p.CacheDTypes)
-					check("mamba_ssm_cache_dtype", e.MambaSSMCacheDType, p.CacheDTypes)
+					check("mamba_cache_dtype", e.MambaCacheDType, p.MambaDTypes)
+					check("mamba_ssm_cache_dtype", e.MambaSSMCacheDType, p.MambaDTypes)
+					check("moe_backend", e.MoEBackend, p.MoEBackends)
 					check("mamba_cache_mode", e.MambaCacheMode, p.MambaCacheModes)
 					check("scheduling_policy", e.SchedulingPolicy, p.SchedulerPolicies)
 				})
@@ -499,17 +512,26 @@ func ruleList(p *rules.Pack) []rules.Rule {
 					if !pl.EnableExpertParallel || pl.TP <= 1 || pl.DP <= 1 {
 						return
 					}
-					if e.All2AllBackend == "" || !p.SPMoEBackends[e.All2AllBackend] {
+					// An unstated backend is the engine default, allgather_reducescatter
+					// (vllm/config/parallel.py), which is in the subset.
+					backend := e.All2AllBackend
+					if backend == "" {
+						backend = defaultAll2AllBackend
+					}
+					if !p.SPMoEBackends[backend] {
 						return
 					}
 					out.RuleWarnf("sequence-parallel-moe-implied",
 						"%s: engine %s makes the MoE input sequence-parallel here (backend %q, tp %d, dp %d), so the model graph must emit a reduce-scatter and all-gather pair rather than an all-reduce",
-						at, p.Version, e.All2AllBackend, pl.TP, pl.DP)
+						at, p.Version, backend, pl.TP, pl.DP)
 				})
 			},
 		},
 	}
 }
+
+// defaultAll2AllBackend is the engine's all2all_backend default.
+const defaultAll2AllBackend = "allgather_reducescatter"
 
 func forEachPool(in rules.Input, fn func(at string, pool deployment.Pool)) {
 	if in.Deployment == nil {

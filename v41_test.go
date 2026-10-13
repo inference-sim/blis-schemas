@@ -1,0 +1,266 @@
+package blisschemas
+
+import (
+	"math"
+	"testing"
+
+	"github.com/inference-sim/blis-schemas/spec/deployment"
+	"github.com/inference-sim/blis-schemas/spec/model"
+	"github.com/inference-sim/blis-schemas/spec/scenario"
+)
+
+// The DeepSeek-V4.1-Flash example is the case issues #47-#54 were filed for, so the
+// figures those issues state are checked against it here: if the schema could not express
+// them, or a helper computed them differently, the example would not reproduce them.
+
+func v41(t *testing.T) *model.Graph {
+	t.Helper()
+	g, err := LoadModelGraph("docs/examples/model-graph-deepseek-v4.1.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return g
+}
+
+// TestV41KVPerContextToken is #47's acceptance case: 1,790 B per context token, against the
+// 40 x 584 = 23,360 B a consumer infers when every attention layer is taken to own a
+// full-length cache of its read width.
+func TestV41KVPerContextToken(t *testing.T) {
+	g := v41(t)
+	kinds := map[string]model.LayerKind{}
+	for _, lk := range g.LayerKinds {
+		kinds[lk.ID] = lk
+	}
+	var perToken float64
+	var windows, rings, ringBytes int
+	tally := func(s model.Stack) {
+		for _, id := range s.Expand() {
+			for _, n := range kinds[id].Nodes {
+				for _, c := range n.Caches {
+					perToken += c.BytesPerContextToken("fp8_ds_mla")
+					if c.Owned && c.Kind == model.CacheWindow {
+						windows++
+					}
+					if c.Owned && c.Kind == model.CacheState {
+						rings++
+						ringBytes += c.Entries * c.BytesPerEntry
+					}
+				}
+			}
+		}
+	}
+	tally(g.Stack)
+	if g.Stack.Layers() != 40 {
+		t.Fatalf("stack expands to %d layers, want 40", g.Stack.Layers())
+	}
+	// Compressed ratio 2 on 2, 8, 14: 3 x 584 / 2 = 876. Ratio 1 on 20: 584. Indexer keys:
+	// 3 x 132 / 2 + 132 = 330.
+	if perToken != 1790 {
+		t.Errorf("owned bytes per context token = %v, want 1790", perToken)
+	}
+	// On SM100 under nvfp4_ds_mla the compressed records shrink to 288 B; the indexer keys
+	// keep 132: 3 x 288 / 2 + 288 + 330.
+	b, err := g.ForCapability(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var nv float64
+	for _, id := range b.Stack.Expand() {
+		for _, lk := range b.LayerKinds {
+			if lk.ID != id {
+				continue
+			}
+			for _, n := range lk.Nodes {
+				for _, c := range n.Caches {
+					nv += c.BytesPerContextToken("nvfp4_ds_mla")
+				}
+			}
+		}
+	}
+	if nv != 1050 {
+		t.Errorf("SM100 nvfp4_ds_mla bytes per context token = %v, want 1050", nv)
+	}
+	tally(g.Speculator.Stack)
+	if perToken != 1790 {
+		t.Errorf("the draft layers own only window caches, yet they add %v B per context token", perToken-1790)
+	}
+	// Every layer, the three draft layers included, owns a 128-token window ring.
+	if windows != 43 {
+		t.Errorf("owned window caches = %d, want 43", windows)
+	}
+	// The compressor ring: 8 FP32 rows of 4,096 B on each of the three ratio-2 sources.
+	if rings != 3 || ringBytes != 3*8*4096 {
+		t.Errorf("state rings = %d of %d B in all, want 3 of %d", rings, ringBytes, 3*8*4096)
+	}
+}
+
+// TestV41WindowRingTerm is the constant term beside #47's 1,790 B: what the 43 window
+// rings hold per request, by vLLM v0.31.0's admission cap
+// (max_admission_blocks_per_request): cdiv(min(window - 1 + extra retained + in flight,
+// max_model_len), block) + 1 pages, each page's bytes rounded up to the alignment. The
+// formula is the engine's and so the consumer's to apply; the test shows the graph
+// carries every input it needs. One decode token in flight and no extra retention.
+func TestV41WindowRingTerm(t *testing.T) {
+	g := v41(t)
+	kinds := map[string]model.LayerKind{}
+	for _, lk := range g.LayerKinds {
+		kinds[lk.ID] = lk
+	}
+	const inFlight, maxModelLen = 1, 1 << 20
+	var total int64
+	for _, s := range []model.Stack{g.Stack, g.Speculator.Stack} {
+		for _, id := range s.Expand() {
+			for _, n := range kinds[id].Nodes {
+				for _, c := range n.Caches {
+					if !c.Owned || c.Kind != model.CacheWindow {
+						continue
+					}
+					tokens := min(c.Window-1+inFlight, maxModelLen)
+					pages := (tokens+c.BlockSize-1)/c.BlockSize + 1
+					page := c.BlockSize * c.BytesPerEntry
+					if a := c.PageAlignment; a > 0 {
+						page = (page + a - 1) / a * a
+					}
+					total += int64(pages * page)
+				}
+			}
+		}
+	}
+	// 43 rings x 5 pages x 19,008 B (32 x 584 = 18,688, padded to a multiple of 576).
+	if want := int64(43 * 5 * 19008); total != want {
+		t.Errorf("window rings hold %d B per request, want %d", total, want)
+	}
+}
+
+// TestV41WeightBytes is #54's case: MXFP4 experts at 0.53125 B per parameter, FP8 weights
+// with their resident 1 x 32 scales, and a BF16 node that does not inherit them.
+func TestV41WeightBytes(t *testing.T) {
+	g := v41(t)
+	byRole := map[string]model.Node{}
+	g.EachNode(func(_ string, n model.Node) {
+		if _, ok := byRole[n.Role]; !ok {
+			byRole[n.Role] = n
+		}
+	})
+	for role, want := range map[string]float64{
+		"experts":                    0.5 + 1.0/32,
+		"fused_wqa_wkv":              1 + 1.0/32,
+		"compressor_fused_wkv_wgate": 2, // BF16: no inherited FP8 scale
+		"wo_a":                       2 + 1.0/32,
+		"lm_head":                    2,
+	} {
+		if got := g.WeightBytesPerParam(byRole[role]); got != want {
+			t.Errorf("%s: %v B per parameter, want %v", role, got, want)
+		}
+	}
+	// 384 experts x 40 layers x three 2304 x 5120 matrices.
+	params := 384.0 * 40 * 3 * 2304 * 5120
+	if got := params * g.WeightBytesPerParam(byRole["experts"]) / 1e9; math.Abs(got-288.78) > 0.01 {
+		t.Errorf("routed experts = %.2f GB, want 288.78", got)
+	}
+
+	// On SM100 the MXFP8 BMM runs natively, so wo_a is resident at FP8 with its scales.
+	b, err := g.ForCapability(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var woa model.Node
+	b.EachNode(func(_ string, n model.Node) {
+		if n.Role == "wo_a" {
+			woa = n
+		}
+	})
+	if got := b.WeightBytesPerParam(woa); got != 1+1.0/32 {
+		t.Errorf("SM100 wo_a: %v B per parameter, want %v", got, 1+1.0/32)
+	}
+}
+
+// TestV41ArchOverride is #53's case: the same graph serves a 584 B record on SM90 and a
+// 528 B one on SM100, where nvfp4_ds_mla also shrinks the compressed cache to 288 B.
+func TestV41ArchOverride(t *testing.T) {
+	g := v41(t)
+	record := func(g *model.Graph, name, dtype string) (int, int) {
+		for _, lk := range g.LayerKinds {
+			for _, n := range lk.Nodes {
+				for _, c := range n.Caches {
+					if c.Name == name && c.Owned {
+						return c.EntryBytes(dtype), c.PageAlignment
+					}
+				}
+			}
+		}
+		t.Fatalf("no owned cache %q", name)
+		return 0, 0
+	}
+	h, err := g.ForCapability(9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := g.ForCapability(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		g          *model.Graph
+		arch       string
+		name       string
+		dtype      string
+		bytes, pad int
+	}{
+		{h, "sm90", "swa", "fp8_ds_mla", 584, 576},
+		{h, "sm90", "compressed", "fp8_ds_mla", 584, 576},
+		{b, "sm100", "swa", "fp8_ds_mla", 528, 512},
+		{b, "sm100", "swa", "nvfp4_ds_mla", 528, 512},
+		{b, "sm100", "compressed", "fp8_ds_mla", 528, 512},
+		{b, "sm100", "compressed", "nvfp4_ds_mla", 288, 512},
+		{b, "sm100", "index", "fp8_ds_mla", 132, 512},
+	} {
+		if bytes, pad := record(c.g, c.name, c.dtype); bytes != c.bytes || pad != c.pad {
+			t.Errorf("%s %s under %s: %d B aligned to %d, want %d aligned to %d",
+				c.arch, c.name, c.dtype, bytes, pad, c.bytes, c.pad)
+		}
+	}
+	if len(b.ArchOverrides) != 0 {
+		t.Error("a resolved graph should carry no overrides")
+	}
+	// Resolving must not touch the graph it was resolved from.
+	if bytes, _ := record(g, "swa", "fp8_ds_mla"); bytes != 584 {
+		t.Errorf("ForCapability modified its receiver: base swa is now %d B", bytes)
+	}
+	if p := b.Validate(); !p.OK() {
+		t.Errorf("the SM100 graph does not validate:\n%s", p.Error())
+	}
+}
+
+// TestV41BundleOnEngine031 validates the graph with a deployment the v0.31.0 pack checks:
+// dspark is an accepted method, and Engram rules see the Engram lookups.
+func TestV41BundleOnEngine031(t *testing.T) {
+	g := v41(t)
+	s := &scenario.Scenario{
+		Kind: "Scenario", Name: "v41", Model: "deepseek-v4.1-flash",
+		Coefficients: []string{"c"}, EngineVersion: "0.31.0",
+		Cluster: scenario.Cluster{Hardware: "h200", Nodes: 1, GPUsPerNode: 8},
+	}
+	offload := true
+	d := &deployment.Deployment{Kind: "Deployment", Name: "v41", Pools: []deployment.Pool{{
+		Role: deployment.RoleColocated, Nodes: 1,
+		Parallel: deployment.Parallelism{TP: 8, PP: 1, DP: 1},
+		Engine: deployment.Engine{
+			MaxModelLen:  deployment.MaxModelLenAuto,
+			Speculative:  &deployment.Speculative{Method: "dspark", NumSpecTokens: 5},
+			EngramConfig: &deployment.EngramConfig{CPUOffload: &offload},
+		},
+	}}}
+	rep := Validate(Bundle{Scenario: s, Deployment: d, Model: g})
+	requireSilent(t, "v41 on 0.31.0", rep)
+	if rep.RulesApplied != "0.31.0" {
+		t.Errorf("RulesApplied = %q, want 0.31.0", rep.RulesApplied)
+	}
+
+	// The same deployment with dual-batch overlap does not start beside Engram.
+	d.Pools[0].Engine.DBO = &deployment.DBO{Enabled: true}
+	rep = Validate(Bundle{Scenario: s, Deployment: d, Model: g})
+	if rep.Rule.OK() {
+		t.Error("DBO beside Engram passed the 0.31.0 rules")
+	}
+}

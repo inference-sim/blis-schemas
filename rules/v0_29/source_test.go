@@ -331,3 +331,37 @@ func atoi(s string) int {
 	}
 	return n
 }
+
+// A recurrent state's cache dtype has its own literal, MambaDType, which is not CacheDType.
+func TestMambaDTypesMatchSource(t *testing.T) {
+	root := vllmSource(t)
+	src := readSource(t, root, "vllm", "config", "cache.py")
+	assertSameSet(t, "MambaDTypes", Pack().MambaDTypes, literalMembers(t, src, "MambaDType"))
+}
+
+func TestMoEBackendsMatchSource(t *testing.T) {
+	root := vllmSource(t)
+	src := readSource(t, root, "vllm", "config", "kernel.py")
+	assertSameSet(t, "MoEBackends", Pack().MoEBackends, literalMembers(t, src, "MoEBackend"))
+	// MEGA_MOE_BACKENDS is deep_gemm_mega_moe united with FLASHINFER_MOE_EP_BACKENDS.
+	i := strings.Index(src, "FLASHINFER_MOE_EP_BACKENDS = frozenset(")
+	j := strings.Index(src, "MEGA_MOE_BACKENDS = frozenset(")
+	if i < 0 || j < 0 {
+		t.Fatal("the mega-MoE backend sets were not found; they may have moved")
+	}
+	ep := src[i:]
+	ep = ep[:strings.Index(ep, ")")]
+	mega := src[j:]
+	mega = mega[:strings.Index(mega, "\n")]
+	if !strings.Contains(mega, "| FLASHINFER_MOE_EP_BACKENDS") {
+		t.Fatalf("MEGA_MOE_BACKENDS no longer includes the flashinfer set: %s", mega)
+	}
+	var names []string
+	for _, s := range []string{ep, mega} {
+		for _, m := range regexp.MustCompile(`"([a-z0-9_]+)"`).FindAllStringSubmatch(s, -1) {
+			names = append(names, m[1])
+		}
+	}
+	sort.Strings(names)
+	assertSameSet(t, "MegaMoEBackends", Pack().MegaMoEBackends, names)
+}

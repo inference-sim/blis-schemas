@@ -68,8 +68,20 @@ type Pack struct {
 	AllReduceBackends map[string]bool
 	CUDAGraphModes    map[string]bool
 	CacheDTypes       map[string]bool
-	MambaCacheModes   map[string]bool
-	SchedulerPolicies map[string]bool
+	// MambaDTypes are the dtypes a recurrent layer's state may be cached in, the
+	// engine's MambaDType literal. It is a separate list from CacheDTypes: float32, the
+	// common choice for an SSM state, is a member here and not there.
+	MambaDTypes     map[string]bool
+	MambaCacheModes map[string]bool
+	// MoEBackends are the expert-kernel backends --moe-backend accepts, the engine's
+	// MoEBackend literal, and MegaMoEBackends the subset that runs a model's mega-MoE
+	// path, which DeepSeek-V4.1's sequence-parallelism rule reads.
+	MoEBackends     map[string]bool
+	MegaMoEBackends map[string]bool
+	// SequenceParallelArchitectures are the model architectures whose own code decides
+	// sequence parallelism in this release, which ModelSequenceParallel evaluates.
+	SequenceParallelArchitectures map[string]bool
+	SchedulerPolicies             map[string]bool
 	// SpeculativeMethods are accepted draft methods, and AsyncCompatibleSpec the
 	// subset that does not disable async scheduling.
 	SpeculativeMethods  map[string]bool
@@ -216,6 +228,32 @@ func (p *Pack) SequenceParallelMoE(backend string, expertParallel bool, tp, dp i
 	}
 	return p.SPMoEBackends[backend]
 }
+
+// ModelSequenceParallel reports whether a model's own sequence parallelism is on, for the
+// architecture its graph names, one pool's layout and its MoE backend. It decides the
+// sequence_parallel emit conditions. An architecture with no such rule in this release
+// answers false.
+//
+// For DeepSeek-V4.1 the rule is _use_sequence_parallel (v0.31.0
+// vllm/models/deepseek_v41/nvidia/model.py): pipeline parallelism 1, expert parallelism
+// on, tensor parallelism above 1, and a mega-MoE backend or data parallelism above 1.
+// An unstated width counts as one, and an unstated MoE backend is the engine's "auto",
+// which is not a mega-MoE backend.
+func (p *Pack) ModelSequenceParallel(architecture string, pl deployment.Parallelism, moeBackend string) bool {
+	if !p.SequenceParallelArchitectures[architecture] {
+		return false
+	}
+	switch architecture {
+	case ArchDeepseekV41:
+		return pl.PP <= 1 && pl.EnableExpertParallel && pl.TP > 1 &&
+			(p.MegaMoEBackends[moeBackend] || pl.DP > 1)
+	}
+	return false
+}
+
+// ArchDeepseekV41 is DeepSeek-V4.1's architecture name, the value of its configuration's
+// architectures[0].
+const ArchDeepseekV41 = "DeepseekV41ForCausalLM"
 
 // CustomAllReduceSupportsWidth reports whether the SM-consuming reduction kernel handles
 // a given rank count.

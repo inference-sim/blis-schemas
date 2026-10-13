@@ -24,6 +24,7 @@ subject of [Where the kernel stops](../design/kernel-boundary.md).
 | **Transfers** | |
 | `TierTime(tier, dir, bytes, queueDepth) time.Duration` | One transfer to or from an offload tier. |
 | `PDTransferTime(tokens, from, to Placement) time.Duration` | Moving one request's KV between pools. |
+| `PDTransferDemand(tokens, from, to Placement) TransferDemand` | The same handoff as payload, floor and links, for a caller arbitrating concurrent transfers. |
 | **Host work** | |
 | `AdmissionOverhead(promptTokens int) time.Duration` | CPU work before a request can be scheduled, such as tokenization. Excludes queueing. |
 | `OutputTokenOverhead() time.Duration` | Host work per emitted token, such as detokenization and streaming. |
@@ -110,6 +111,48 @@ A deployment states requests. The kernel's constructor decides what runs, and
 A width of zero means unset, not "no parallelism". `TensorParallel()`, `DataParallel()`
 and `ExpertParallel()` return the widths with a floor of one, for a reader that may see a
 zero value.
+
+## Transfer demand
+
+`PDTransferTime` prices a handoff as if it ran alone. A simulator running several at once
+needs to know which links they share, and which part of each price sharing stretches.
+`PDTransferDemand` answers both:
+
+| Field | Meaning |
+|---|---|
+| `Bytes int64` | The payload. |
+| `Floor time.Duration` | Time the transfer takes however much bandwidth it gets. Sharing a link does not lengthen it. |
+| `Links []LinkUse` | Every link the payload crosses, each named once: a `LinkID` and the rate the link offers to a transfer alone on it. |
+
+A `LinkID` is opaque. Two demands naming the same ID share that link while both are in
+flight, and IDs are comparable across the kernels of one deployment.
+
+The law is part of the contract: alone, a demand costs exactly what `PDTransferTime`
+charges, `max(Floor, Bytes / slowest link rate)`, or `Floor` with no links.
+`TransferDemand.AloneTime()` is that definition, including its conversion to a duration,
+so an implementation that computes `PDTransferTime` from its own demand satisfies the law
+by construction.
+
+The kernel states the links; it never sees other transfers. How a shared link's bandwidth
+is divided is the simulator's to decide, and the schema does not prescribe it.
+
+Package `kernel/kerneltest` checks the law against any implementation, the way
+`testing/fstest` checks a file system:
+
+```go
+func TestPDTransferLaw(t *testing.T) {
+    k := newKernel(t) // the implementation under test
+    kerneltest.TestPDTransfer(t, k, kerneltest.PDCases())
+}
+```
+
+`PDCases` covers a same-node, a same-rack and a cross-rack handoff at token counts from 0 to
+131,072. `CheckPDTransfer` checks one case and returns an error, for a caller with cases
+of its own. Each check requires a well-formed demand (`TransferDemand.Check`), the same
+demand from two calls, and an exact match with `PDTransferTime`.
+
+Adding a method to `Kernel` breaks every other implementation, fakes included, until it
+adds the method.
 
 ## Other types
 

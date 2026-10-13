@@ -32,8 +32,8 @@ change, and a feature gains a new condition that disables it. Each of these is a
 about one release.
 
 Rules are therefore grouped into a **rules pack** for each release, registered under its
-version string. A scenario's `engine_version` selects the pack by exact match. Today one
-pack exists, for vLLM `0.29.0`; its rules are listed in
+version string. A scenario's `engine_version` selects the pack by exact match. Two packs
+exist, for vLLM `0.29.0` and `0.31.0`; their rules are listed in
 [Rules packs](../reference/rules.md).
 
 A rule problem does not always mean the document is wrong. It may mean the document is

@@ -47,7 +47,8 @@ go run github.com/inference-sim/blis-schemas/cmd/validate-registry@latest /path/
 
 ```sh
 go test ./...                                              # schemas, validators, rules, docs
-VLLM_SOURCE=/path/to/vllm go test -run MatchSource ./rules/... # pack constants against the engine
+VLLM_SOURCE=/path/to/vllm-0.29.0 go test -run MatchSource ./rules/v0_29/ # each pack against its own release
+VLLM_SOURCE=/path/to/vllm-0.31.0 go test -run MatchSource ./rules/v0_31/
 ```
 
 How changes are organized, how an engine release is added, and how the documentation is

@@ -42,6 +42,8 @@ func TestEngineFieldNames(t *testing.T) {
 		"dbo":                         "--enable-dbo and its thresholds",
 		"eplb":                        "--enable-eplb and --eplb-config",
 		"speculative":                 "--speculative-config",
+		"engram_config":               "--engram-config (cpu_offload, dp_shared_memory, use_thp)",
+		"moe_backend":                 "--moe-backend",
 		"dcp_comm_backend":            "--dcp-comm-backend",
 		"dcp_q_replicate":             "--dcp-q-replicate / --no-dcp-q-replicate",
 		"cp_kv_cache_interleave_size": "--cp-kv-cache-interleave-size",

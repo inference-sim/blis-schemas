@@ -12,6 +12,11 @@ func (c *Chip) Validate() *validate.Problems {
 	if !c.Provenance.Valid() {
 		p.Field("Provenance", "%q is not a recognized provenance", c.Provenance)
 	}
+	if c.ComputeCapability != "" {
+		if _, ok := c.CapabilityMajor(); !ok {
+			p.Field("ComputeCapability", "%q must be major.minor, such as 9.0 or 10.3", c.ComputeCapability)
+		}
+	}
 	// Every numeric field must be finite before its magnitude check runs, so a NaN or
 	// Inf is caught rather than slipping past a comparison that is false either way. Each
 	// FiniteField reports whether the field is finite; the magnitude and relational

@@ -116,11 +116,125 @@ omitted `emit` reads as.
     input sequence-parallel. Under sequence-parallel MoE the reduction is replaced by a
     reduce-scatter and all-gather pair.
 
+`sequence_parallel`
+:   Present when the model's own sequence parallelism is on, as the rules pack decides it
+    for `global.architecture`. DeepSeek-V4.1 then shards the residual stream by token and
+    all-gathers each attention input, then reduce-scatters its output.
+
+`tensor_parallel_unless_sequence_parallel`
+:   Present when the tensor-parallel width exceeds 1 and the model's own sequence
+    parallelism is off: the all-reduces sequence parallelism replaces.
+
+The last two may also sit on a non-collective node, for a node whose layout sequence
+parallelism changes and which the graph therefore states once for each mode.
+
 ### Modalities
 
 A graph's `modality`. An omitted `modality` means `text_only`.
 
 --8<-- "docs/generated/enum/model.Modality.md"
+
+### Tensor-parallel layouts
+
+A node's `tp`. An omitted `tp` leaves the layout to the cost model's inference. A `GEMM`
+accepts `column`, `row` and `replicated`; an `Elementwise` or `Attention` node accepts
+`sharded` and `replicated`. No other primitive accepts one.
+
+--8<-- "docs/generated/enum/model.TPLayout.md"
+
+`column`
+:   The output width `n` splits across ranks.
+
+`row`
+:   The input width `k` splits across ranks. The partial sums are reduced by a collective
+    the graph states separately.
+
+`sharded`
+:   The work splits across ranks with the heads or columns it operates on.
+
+`replicated`
+:   Every rank holds the whole weight and does the whole node for every token it holds.
+
+### Cache kinds
+
+A cache's `kind`, which decides how it grows.
+
+--8<-- "docs/generated/enum/model.CacheKind.md"
+
+`kv`
+:   Keys and values, or a latent: one entry per `tokens_per_entry` context tokens.
+
+`index`
+:   A sparse-attention indexer's key cache. It grows like `kv`.
+
+`window`
+:   A sliding-window ring, bounded by `window` tokens per request.
+
+`state`
+:   Fixed per-request state, `entries` entries for the request's lifetime.
+
+### Gather residency
+
+A `Gather` node's `residency`, and the engine setting that can change it, its
+`residency_control`. An omitted `residency` means `device`; an omitted
+`residency_control` means no setting moves the table.
+
+--8<-- "docs/generated/enum/model.Residency.md"
+
+--8<-- "docs/generated/enum/model.ResidencyControl.md"
+
+`engram_cpu_offload`
+:   vLLM's Engram `cpu_offload`, which defaults to true, so a table it controls must state
+    `residency: host`. A deployment sets it with `engine.engram_config.cpu_offload`.
+
+### Gather shards
+
+A `Gather` node's `shard`. An omitted `shard` means `replicated`.
+
+--8<-- "docs/generated/enum/model.GatherShard.md"
+
+`rows`
+:   The rows split evenly across ranks, and each token's row is read on the rank that holds
+    it. vLLM's vocabulary embedding works this way.
+
+`heads`
+:   The table is `rows_per_token` sub-tables, one per hash head, split across S shards.
+    Each shard holds ceil(`rows_per_token` / S) of them and reads one row from each for
+    every token. S is the tensor-parallel width, or that times the node's data-parallel
+    replicas when they split the table rather than share one host copy, which the
+    deployment's `engram_config` decides. DeepSeek-V4.1's Engram works this way.
+
+### Context work
+
+An `Elementwise` node's `context.per`, `context.phase` and `context.decode_extent`.
+
+--8<-- "docs/generated/enum/model.ContextPer.md"
+
+`query_token`
+:   Once per scheduled token, each over the context.
+
+`request`
+:   Once per request per step, over its context, however many of its tokens are scheduled.
+
+--8<-- "docs/generated/enum/model.Phase.md"
+
+An omitted `phase` means every step; `prefill` means only steps that schedule the
+request's prompt tokens.
+
+--8<-- "docs/generated/enum/model.Extent.md"
+
+An omitted `decode_extent` means the request's context; `max_model_len` means the engine's
+`max_model_len`, for a kernel launched over a buffer padded to it.
+
+### Drafting modes
+
+A speculator's `drafting`. An omitted `drafting` means autoregressive.
+
+--8<-- "docs/generated/enum/model.Drafting.md"
+
+`parallel_block`
+:   The draft stack runs once per step over `num_spec_tokens` positions per request, and
+    each position predicts one draft token. DeepSeek-V4.1's DSpark drafts this way.
 
 ## Deployments
 

@@ -298,10 +298,10 @@ type TraceServer struct {
 	MaxNumSeqs           int     `yaml:"max_num_seqs,omitempty"`
 	BlockSize            int     `yaml:"block_size,omitempty"`
 	GPUMemoryUtilization float64 `yaml:"gpu_memory_utilization,omitempty"`
-	// MaxModelLen is int, not int64, to match deployment.Engine.MaxModelLen: the two
-	// describe the same quantity (a context length, in the millions at most), and a
-	// schema that typed one field wider than its sibling would invite a reader to think
-	// the two meant different things.
+	// MaxModelLen is the context length the traced server ran with. It is a plain int,
+	// not deployment.MaxModelLen, because a trace records a server that has started: the
+	// engine has resolved any `auto` request to a count by then, so the third state that
+	// type exists for cannot occur here.
 	MaxModelLen int `yaml:"max_model_len,omitempty"`
 }
 

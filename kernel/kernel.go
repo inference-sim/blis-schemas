@@ -59,6 +59,21 @@ type Kernel interface {
 	// parallelism axis shards KV.
 	PDTransferTime(tokens int, from, to Placement) time.Duration
 
+	// PDTransferDemand is the demand behind PDTransferTime: the same handoff, separated
+	// into payload, floor and links so a caller running several at once can arbitrate
+	// the links they share. The kernel never sees other transfers; dividing a shared
+	// link among them is the simulator's work.
+	//
+	// The law, part of this contract, is that alone a demand costs the existing price:
+	//
+	//	PDTransferTime(t, f, g) == PDTransferDemand(t, f, g).AloneTime()
+	//
+	// for every argument, exactly. An implementation keeps it by computing
+	// PDTransferTime from its own demand; one that priced in float seconds before
+	// adopting this may move by the nanosecond rounding AloneTime fixes. Package
+	// kerneltest checks the law against any implementation.
+	PDTransferDemand(tokens int, from, to Placement) TransferDemand
+
 	// --- Host overheads ------------------------------------------------------
 	// These price engine work around a request rather than GPU work inside a step.
 	// They belong here because the cost model already carries a host term for kernel

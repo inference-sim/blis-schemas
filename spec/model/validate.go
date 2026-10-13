@@ -32,9 +32,21 @@ func (g *Graph) Validate() *validate.Problems {
 	g.validateStack(p)
 	g.validateSpeculator(p)
 
+	for i, n := range g.Embedding {
+		n.validate(p, fmt.Sprintf("embedding[%d]", i))
+	}
 	for i, n := range g.Head {
 		n.validate(p, fmt.Sprintf("head[%d]", i))
 	}
+	g.validateCacheSharing(p, "stack", g.Stack)
+	if s := g.Speculator; s != nil {
+		g.validateCacheSharing(p, "speculator.stack", s.Stack)
+		if s.ContextStack != nil {
+			g.validateCacheSharing(p, "speculator.context_stack", *s.ContextStack)
+		}
+	}
+	g.validateAliases(p)
+	g.validateArchOverrides(p)
 	return p
 }
 
@@ -69,6 +81,39 @@ func (g *Graph) validateGlobal(p *validate.Problems) {
 	if !g.Global.WeightDType.Valid() {
 		p.Field("global.weight_dtype", "%q is not a recognized dtype", g.Global.WeightDType)
 	}
+	validateWeightScale(p, "global.weight_scale", g.Global.WeightScale)
+	if g.Global.ContextWindow < 0 {
+		p.Field("global.context_window", "must not be negative")
+	}
+	if g.Global.DefaultContextWindow < 0 {
+		p.Field("global.default_context_window", "must not be negative")
+	}
+	if g.Global.DefaultContextWindow > 0 && g.Global.ContextWindow > 0 &&
+		g.Global.DefaultContextWindow > g.Global.ContextWindow {
+		p.Field("global.default_context_window",
+			"%d exceeds context_window %d, which the engine would refuse",
+			g.Global.DefaultContextWindow, g.Global.ContextWindow)
+	}
+	// A sequence_parallel condition is decided by the model's own code, so it asks a
+	// question only a named architecture lets a rules pack answer.
+	if g.Global.Architecture == "" {
+		g.EachNode(func(at string, n Node) {
+			if n.Emit.SequenceParallelOnly() {
+				p.Field(at+".emit", "%q needs global.architecture, whose model code decides it", n.Emit)
+			}
+		})
+	}
+	if g.Global.DefaultContextWindow > 0 && g.Global.ContextWindow == 0 {
+		p.Field("global.default_context_window", "stated without context_window, which it narrows")
+	}
+}
+
+func validateWeightScale(p *validate.Problems, at string, s *WeightScale) {
+	if s == nil {
+		return
+	}
+	requirePositive(p, at, "elements", s.Elements)
+	requirePositive(p, at, "bytes", s.Bytes)
 }
 
 func (g *Graph) validateLayerKinds(p *validate.Problems) {
@@ -92,6 +137,7 @@ func (g *Graph) validateLayerKinds(p *validate.Problems) {
 		for j, n := range lk.Nodes {
 			n.validate(p, fmt.Sprintf("%s.nodes[%d]", at, j))
 		}
+		validateLayerCacheNames(p, at, lk)
 		validateEdges(p, at, len(lk.Nodes), lk.Edges)
 	}
 }
@@ -205,6 +251,11 @@ func (g *Graph) validateStack(p *validate.Problems) {
 		for _, id := range g.Speculator.Stack.Expand() {
 			used[id] = true
 		}
+		if g.Speculator.ContextStack != nil {
+			for _, id := range g.Speculator.ContextStack.Expand() {
+				used[id] = true
+			}
+		}
 	}
 	for _, lk := range g.LayerKinds {
 		if !used[lk.ID] {
@@ -232,6 +283,50 @@ func (g *Graph) validateSpeculator(p *validate.Problems) {
 	if s.Stack.Repeat < 1 {
 		p.Field("speculator.stack.repeat", "must be at least 1")
 	}
+	if !s.Drafting.Valid() {
+		p.Field("speculator.drafting", "%q is not a recognized drafting mode", s.Drafting)
+	}
+	if len(s.SequentialHead) > 0 && s.Drafting != DraftingParallelBlock {
+		p.Field("speculator.sequential_head",
+			"only a parallel_block drafter has a per-position head; an autoregressive one is sequential already")
+	}
+	ids := map[string]bool{}
+	for _, lk := range g.LayerKinds {
+		ids[lk.ID] = true
+	}
+	// The draft stacks name layer kinds like the target stack does, and a name that
+	// matches none would price nothing.
+	stacks := map[string]Stack{"speculator.stack": s.Stack}
+	if c := s.ContextStack; c != nil {
+		stacks["speculator.context_stack"] = *c
+		if c.Layers() < 1 {
+			p.Field("speculator.context_stack", "expands to no layers; omit it instead")
+		}
+		if len(c.Pattern) > 0 && c.Repeat < 1 {
+			p.Field("speculator.context_stack.repeat", "a pattern is stated but never repeated")
+		}
+		if len(c.Pattern) == 0 && c.Repeat > 0 {
+			p.Field("speculator.context_stack.pattern", "a repeat is stated but there is no pattern to repeat")
+		}
+	}
+	for field, st := range stacks {
+		for _, part := range []struct {
+			name string
+			seq  []string
+		}{{"prologue", st.Prologue}, {"pattern", st.Pattern}, {"epilogue", st.Epilogue}} {
+			for i, id := range part.seq {
+				if !ids[id] {
+					p.Field(fmt.Sprintf("%s.%s[%d]", field, part.name, i), "%q names no layer kind", id)
+				}
+			}
+		}
+	}
+	for i, n := range s.Head {
+		n.validate(p, fmt.Sprintf("speculator.head[%d]", i))
+	}
+	for i, n := range s.SequentialHead {
+		n.validate(p, fmt.Sprintf("speculator.sequential_head[%d]", i))
+	}
 }
 
 // validate checks one node: that its op is known, that the parameters its op prices
@@ -251,10 +346,62 @@ func (n Node) validate(p *validate.Problems, at string) {
 		p.Field(at+".emit",
 			"a collective node must name an emit condition; an unconditional %s would be emitted at tp=1", n.Op)
 	}
-	if !n.Op.Collective() && n.Emit != EmitAlways {
+	if !n.Op.Collective() && n.Emit != EmitAlways && !n.Emit.SequenceParallelOnly() {
 		// Allowed, but unusual enough to flag: a non-collective conditional node
 		// usually means the graph is encoding a deployment rather than a model.
 		p.Warnf("%s: a condition on a non-collective node encodes deployment in the model graph", at)
+	}
+
+	if !n.TP.ValidFor(n.Op) {
+		p.Field(at+".tp", "%q is not a layout a %s node accepts", n.TP, n.Op)
+	}
+	if n.Aliases != "" && n.Op != OpGEMM && n.Op != OpGather {
+		p.Field(at+".aliases", "only a GEMM or Gather reads weights another node holds")
+	}
+	if n.WeightScale != nil {
+		if n.Op != OpGEMM && n.Op != OpGroupedGEMM {
+			p.Field(at+".weight_scale", "only a GEMM or GroupedGEMM holds parameters")
+		}
+		validateWeightScale(p, at+".weight_scale", n.WeightScale)
+	}
+	n.validateNodeCaches(p, at)
+	if n.PerTokens != 0 && n.Op != OpElementwise {
+		p.Field(at+".per_tokens", "only an Elementwise node runs once per several tokens")
+	}
+	if n.PerTokens < 0 {
+		p.Field(at+".per_tokens", "must not be negative")
+	}
+	if n.Context != nil {
+		if n.Op != OpElementwise {
+			p.Field(at+".context", "only an Elementwise node carries context-proportional traffic")
+		}
+		validateContext(p, at+".context", *n.Context)
+	}
+	if n.Op != OpGather {
+		if n.Rows != 0 {
+			p.Field(at+".rows", "not priced by this op; remove it")
+		}
+		forbid(p, at, map[string]int{
+			"row_bytes": n.RowBytes, "rows_per_token": n.RowsPerToken,
+			"out_bytes_per_token": n.OutBytesPerToken,
+		})
+		for field, set := range map[string]bool{
+			"residency": n.Residency != "", "residency_control": n.ResidencyControl != "",
+			"shard": n.Shard != "",
+		} {
+			if set {
+				p.Field(at+"."+field, "only a Gather has a table; remove it")
+			}
+		}
+	}
+	if n.BytesPerToken != 0 {
+		switch n.Op {
+		case OpElementwise, OpAllReduce, OpAllGather, OpReduceScatter:
+		default:
+			// An All2All's volume follows from the routed top-k and the backend, and
+			// a GEMM's or an attention node's traffic from its shape.
+			p.Field(at+".bytes_per_token", "not priced by this op; remove it")
+		}
 	}
 
 	// A per-node weight dtype is only meaningful where the node holds parameters, and an
@@ -382,7 +529,48 @@ func (n Node) validate(p *validate.Problems, at string) {
 		if n.BytesPerToken < 0 {
 			p.Field(at+".bytes_per_token", "must not be negative")
 		}
+	case OpGather:
+		if n.Rows < 1 {
+			p.Field(at+".rows", "must be positive for this op, got %d", n.Rows)
+		}
+		requirePositive(p, at, "row_bytes", n.RowBytes)
+		requirePositive(p, at, "rows_per_token", n.RowsPerToken)
+		requirePositive(p, at, "out_bytes_per_token", n.OutBytesPerToken)
+		if int64(n.RowsPerToken) > n.Rows && n.Rows > 0 {
+			p.Field(at+".rows_per_token", "%d exceeds the table's %d rows", n.RowsPerToken, n.Rows)
+		}
+		if !n.Residency.Valid() {
+			p.Field(at+".residency", "%q is not a recognized residency", n.Residency)
+		}
+		if !n.ResidencyControl.Valid() {
+			p.Field(at+".residency_control", "%q is not a recognized residency control", n.ResidencyControl)
+		} else if n.ResidencyControl != ResidencyFixed {
+			// The graph states the engine's default; the deployment states a departure
+			// from it. A graph whose stated residency disagreed with the default of the
+			// setting it names would price the default wrong for every deployment that
+			// leaves the setting alone.
+			r := n.Residency
+			if r == "" {
+				r = ResidencyDevice
+			}
+			if want := n.ResidencyControl.DefaultResidency(); r != want {
+				p.Field(at+".residency", "is %s, but %s defaults to %s", r, n.ResidencyControl, want)
+			}
+		}
+		if !n.Shard.Valid() {
+			p.Field(at+".shard", "%q is not a recognized shard", n.Shard)
+		}
+		if n.Shard == ShardHeads && n.RowsPerToken < 2 {
+			p.Field(at+".shard", "a table split by heads needs one row per head per token, so rows_per_token of at least 2")
+		}
+		forbid(p, at, map[string]int{
+			"n": n.N, "k": n.K, "experts": n.Experts, "n_q": n.NumQHeads,
+			"n_kv": n.NumKVHeads, "state_size": n.StateSize,
+		})
 	case OpAllReduce, OpAllGather, OpReduceScatter, OpAll2All:
+		if n.BytesPerToken < 0 {
+			p.Field(at+".bytes_per_token", "must not be negative")
+		}
 		// A collective's byte volume follows from the activation shape and the
 		// layout, so it carries no shape of its own. Anything else is a mistake.
 		forbid(p, at, map[string]int{
@@ -405,5 +593,25 @@ func forbid(p *validate.Problems, at string, fields map[string]int) {
 		if v != 0 {
 			p.Field(at+"."+name, "not priced by this op; remove it")
 		}
+	}
+}
+
+func validateContext(p *validate.Problems, at string, c ContextWork) {
+	requirePositive(p, at, "bytes_per_entry", c.BytesPerEntry)
+	if c.TokensPerEntry < 0 {
+		p.Field(at+".tokens_per_entry", "must not be negative")
+	}
+	if !c.Per.Valid() {
+		p.Field(at+".per", "%q is not a recognized unit; use query_token or request", c.Per)
+	}
+	if !c.Phase.Valid() {
+		p.Field(at+".phase", "%q is not a recognized phase", c.Phase)
+	}
+	if !c.DecodeExtent.Valid() {
+		p.Field(at+".decode_extent", "%q is not a recognized extent", c.DecodeExtent)
+	}
+	// Work that runs only in prefill has no decode extent to state.
+	if c.Phase == PhasePrefill && c.DecodeExtent != ExtentContext {
+		p.Field(at+".decode_extent", "stated on work that runs only in prefill")
 	}
 }

@@ -248,3 +248,20 @@ func TestCommentNarrowingAppliesToFabricAndDevice(t *testing.T) {
 		}
 	})
 }
+
+func TestComputeCapability(t *testing.T) {
+	for _, c := range []struct {
+		cc    string
+		major int
+		ok    bool
+	}{
+		{"9.0", 9, true}, {"10.0", 10, true}, {"10.3", 10, true}, {"8.9", 8, true},
+		{"", 0, false}, {"9", 0, false}, {"sm90", 0, false}, {"9.x", 0, false},
+		{"0.0", 0, false}, {"9.+1", 0, false}, {"+9.0", 0, false}, {"09.0", 0, false}, {"9.-0", 0, false},
+	} {
+		chip := &Chip{ComputeCapability: c.cc}
+		if m, ok := chip.CapabilityMajor(); m != c.major || ok != c.ok {
+			t.Errorf("%q: CapabilityMajor() = %d, %v; want %d, %v", c.cc, m, ok, c.major, c.ok)
+		}
+	}
+}

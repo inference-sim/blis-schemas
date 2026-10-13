@@ -181,7 +181,8 @@ type Engine struct {
 	BlockSize           int `yaml:"block_size,omitempty"`
 	MaxNumBatchedTokens int `yaml:"max_num_batched_tokens,omitempty"`
 	MaxNumSeqs          int `yaml:"max_num_seqs,omitempty"`
-	MaxModelLen         int `yaml:"max_model_len,omitempty"`
+	// MaxModelLen is the context length: omitted, auto, or a count. See MaxModelLen.
+	MaxModelLen MaxModelLen `yaml:"max_model_len,omitempty"`
 
 	// Quantization is the weight format the engine serves in, where it differs from
 	// the format the checkpoint is stored in. A model whose config.json says bfloat16
@@ -203,6 +204,12 @@ type Engine struct {
 	// second covers the SSM state alone where it differs from the convolutional one.
 	MambaCacheDType    string `yaml:"mamba_cache_dtype,omitempty"`
 	MambaSSMCacheDType string `yaml:"mamba_ssm_cache_dtype,omitempty"`
+	// MoEBackend selects the expert-kernel backend (--moe-backend). Empty is the engine's
+	// "auto". A mega-MoE backend changes more than the expert kernel: it is one of the
+	// conditions under which DeepSeek-V4.1 turns on its own sequence parallelism, which
+	// replaces each attention all-reduce with an all-gather and reduce-scatter pair.
+	// Which names a release accepts is its rules pack's to say.
+	MoEBackend string `yaml:"moe_backend,omitempty"`
 	// MambaCacheMode decides whether recurrent state is fixed per sequence or
 	// proportional to the context bound — a difference of three orders of magnitude,
 	// and the reason a memory interface needs both a fixed and a variable term.
@@ -223,6 +230,11 @@ type Engine struct {
 	DBO         *DBO         `yaml:"dbo,omitempty"`
 	EPLB        *EPLB        `yaml:"eplb,omitempty"`
 	Speculative *Speculative `yaml:"speculative,omitempty"`
+
+	// EngramConfig is where DeepSeek-V4.1's Engram tables live and how they are shared.
+	// It decides the residency of every model Gather whose residency_control is
+	// engram_cpu_offload. Absent means the engine's defaults.
+	EngramConfig *EngramConfig `yaml:"engram_config,omitempty"`
 
 	// The decode-context-parallel knobs. Each changes what a DCP decode step costs, and
 	// each is a REQUEST: the engine fills an unstated one with its default, and a model
@@ -284,6 +296,35 @@ type EPLB struct {
 type Speculative struct {
 	Method        string `yaml:"method"`
 	NumSpecTokens int    `yaml:"num_spec_tokens"`
+}
+
+// EngramConfig mirrors the cost-bearing keys of vLLM's --engram-config (v0.31.0
+// vllm/config/engram.py). Each is a tri-state request: nil takes the engine default.
+//
+// Together they decide where each table lives and how many ranks split it. A table is
+// always split by hash head across the tensor-parallel ranks. When the node's
+// data-parallel replicas do not share one host copy and more than one of them is on the
+// node, it is split across those replicas too, tp x local-dp ways, and each lookup is
+// all-gathered over them (vllm/models/deepseek_v41/nvidia/engram.py _get_shard_info).
+// When they share one, each replica keeps the TP split and the node holds one copy.
+//
+// embedding_across_dp is not carried: in v0.31.0 it sizes a process group that
+// DeepSeek-V4.1's Engram path does not use.
+type EngramConfig struct {
+	// CPUOffload keeps the tables in pinned host memory, read over the host link through
+	// UVA. Nil is the default, true. False allocates them in HBM, split the same way.
+	CPUOffload *bool `yaml:"cpu_offload,omitempty"`
+	// DPSharedMemory keeps one host copy of every tensor-parallel shard per node, in
+	// /dev/shm, shared by the node's data-parallel replicas. Nil lets the engine decide,
+	// which it does by enabling it when cpu_offload is on, use_thp is off, dp exceeds
+	// one and elastic EP is off (resolve_dp_shared_memory). It then falls back to
+	// splitting the table across the replicas when they are not co-located or /dev/shm
+	// cannot hold it.
+	DPSharedMemory *bool `yaml:"dp_shared_memory,omitempty"`
+	// UseTHP backs a per-rank host table with transparent huge pages. It is carried
+	// because it changes placement, not only page size: the engine refuses it with
+	// dp_shared_memory, and its default resolution leaves sharing off when it is on.
+	UseTHP *bool `yaml:"use_thp,omitempty"`
 }
 
 // Offload is the KV tier hierarchy below HBM.

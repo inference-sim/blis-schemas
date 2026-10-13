@@ -30,7 +30,7 @@ the deriver. Nemotron-3-Ultra states no layer count at all. Its depth is the len
 per-layer type vector, and a deriver that read only the usual key would have produced a
 model with no layers.
 
-## Nine primitives
+## Ten primitives
 
 --8<-- "docs/generated/enum/model.Op.md"
 

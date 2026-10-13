@@ -535,12 +535,17 @@ func admissibleDCP(pcp int, block *big.Int) []*big.Int {
 func validateEngine(p *validate.Problems, at string, e Engine) {
 	for field, v := range map[string]int{
 		"block_size": e.BlockSize, "max_num_batched_tokens": e.MaxNumBatchedTokens,
-		"max_num_seqs": e.MaxNumSeqs, "max_model_len": e.MaxModelLen,
+		"max_num_seqs":                e.MaxNumSeqs,
 		"cp_kv_cache_interleave_size": e.CPKVCacheInterleaveSize,
 	} {
 		if v < 0 {
 			p.Field(at+".engine."+field, "must not be negative")
 		}
+	}
+	// -1 is auto, the one negative the engine gives a meaning; anything below it is a
+	// mistake.
+	if e.MaxModelLen < MaxModelLenAuto {
+		p.Field(at+".engine.max_model_len", "must be a positive count, or auto (-1), got %d", e.MaxModelLen)
 	}
 	// Stating both the boolean and the resolved name invites them to disagree, and
 	// which one an implementation honours would be arbitrary.
