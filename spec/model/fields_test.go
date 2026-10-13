@@ -409,3 +409,37 @@ func TestReadersReadTheOwnersRecord(t *testing.T) {
 		}
 	}
 }
+
+// Every graph that validates still validates under every family's overlay: a reader and
+// its owner stay equal however an override restates them. The case is an owner whose
+// record repeats its default beside a reader that lists none, which an override restating
+// only bytes_per_entry would split apart.
+func TestValidGraphsStayValidUnderEveryOverlay(t *testing.T) {
+	split := v41Graph()
+	split.LayerKinds[0].Nodes[1].Caches[1].BytesByCacheDType = map[string]int{"fp8_ds_mla": 584}
+	split.ArchOverrides[0].Caches = append(split.ArchOverrides[0].Caches,
+		CacheOverride{Name: "compressed", BytesPerEntry: 528})
+	if split.Validate().OK() {
+		t.Error("an owner and reader stating different records validated")
+	}
+	agreed := v41Graph()
+	for _, c := range []*Cache{&agreed.LayerKinds[0].Nodes[1].Caches[1], &agreed.LayerKinds[1].Nodes[0].Caches[1]} {
+		c.BytesByCacheDType = map[string]int{"fp8_ds_mla": 584}
+	}
+	agreed.ArchOverrides[0].Caches = append(agreed.ArchOverrides[0].Caches,
+		CacheOverride{Name: "compressed", BytesPerEntry: 528})
+	for _, g := range []*Graph{v41Graph(), agreed} {
+		if p := g.Validate(); !p.OK() {
+			t.Fatalf("base:\n%s", p.Error())
+		}
+		for major := 1; major <= 12; major++ {
+			r, err := g.ForCapability(major)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if p := r.Validate(); !p.OK() {
+				t.Fatalf("valid base, invalid under family %d:\n%s", major, p.Error())
+			}
+		}
+	}
+}

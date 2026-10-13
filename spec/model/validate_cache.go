@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"maps"
 	"sort"
 
 	"github.com/inference-sim/blis-schemas/internal/validate"
@@ -187,22 +188,16 @@ func validateLayerCacheNames(p *validate.Problems, at string, lk LayerKind) {
 	}
 }
 
-// sameRead reports whether a reader reads what its owner stores: the same kind of cache,
-// the same entry under every cache dtype either lists, and the same span.
+// sameRead reports whether a reader states exactly what its owner stores: the same kind,
+// entry, per-dtype records and span. The records must be equal as stated, not only as
+// looked up, because an arch override restates bytes_per_entry and the records separately:
+// an owner listing {fp8_ds_mla: 584} beside bytes_per_entry 584 and a reader listing
+// nothing agree until an override moves bytes_per_entry, and then they would not.
 func sameRead(owner, reader Cache) bool {
-	if owner.Kind != reader.Kind || owner.EntryTokens() != reader.EntryTokens() ||
-		owner.Window != reader.Window || owner.Entries != reader.Entries ||
-		owner.BytesPerEntry != reader.BytesPerEntry {
-		return false
-	}
-	for _, m := range []map[string]int{owner.BytesByCacheDType, reader.BytesByCacheDType} {
-		for dt := range m {
-			if owner.EntryBytes(dt) != reader.EntryBytes(dt) {
-				return false
-			}
-		}
-	}
-	return true
+	return owner.Kind == reader.Kind && owner.EntryTokens() == reader.EntryTokens() &&
+		owner.Window == reader.Window && owner.Entries == reader.Entries &&
+		owner.BytesPerEntry == reader.BytesPerEntry &&
+		maps.Equal(owner.BytesByCacheDType, reader.BytesByCacheDType)
 }
 
 func readShape(c Cache) string {

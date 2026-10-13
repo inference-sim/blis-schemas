@@ -68,7 +68,7 @@
 :   *error.* A graph states where an Engram table lives when the deployment leaves cpu_offload alone, and this release's default is cpu_offload true, host memory (vllm/config/engram.py); a graph stating the other residency would price every such deployment against the wrong memory.
 
 `deepseek-v41-refuses-mtp`
-:   *error.* This release refuses a multi-token-prediction draft for DeepSeek-V4.1 at startup: it rewrites every MTP-family method name to mtp, rewrites the V4.1 draft config to deepseek_mtp, and then raises "DeepSeek V4.1 has no classic-MTP draft" (vllm/config/speculative.py); dspark is the method it serves. The one launch that escapes is a model path whose name selects another method first (one containing eagle-, eagle3, dflash or dspark), which a deployment does not record.
+:   *error.* This release refuses a multi-token-prediction draft for DeepSeek-V4.1 at startup: it rewrites every MTP-family method name to mtp, rewrites the V4.1 draft config to deepseek_mtp, and then raises "DeepSeek V4.1 has no classic-MTP draft" (vllm/config/speculative.py); dspark is the method it serves. A launch escapes only where the draft model's path (containing eagle-, eagle3, dflash or dspark) or its own configuration (a DSpark, DFlash, Medusa or MLP-speculator draft) selects another method first, which a deployment does not record.
 
 `max-model-len-within-context-window`
 :   *warning.* This release refuses a stated max_model_len above the window it derives from the model configuration, unless the configuration's model_max_length admits it or VLLM_ALLOW_LONG_MAX_MODEL_LEN is set (vllm/config/model.py); a warning because the schema sees neither.

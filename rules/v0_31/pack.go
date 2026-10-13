@@ -693,7 +693,7 @@ func ruleList(p *rules.Pack) []rules.Rule {
 		},
 		{
 			Name:    "deepseek-v41-refuses-mtp",
-			Because: "this release refuses a multi-token-prediction draft for DeepSeek-V4.1 at startup: it rewrites every MTP-family method name to mtp, rewrites the V4.1 draft config to deepseek_mtp, and then raises \"DeepSeek V4.1 has no classic-MTP draft\" (vllm/config/speculative.py); dspark is the method it serves. The one launch that escapes is a model path whose name selects another method first (one containing eagle-, eagle3, dflash or dspark), which a deployment does not record",
+			Because: "this release refuses a multi-token-prediction draft for DeepSeek-V4.1 at startup: it rewrites every MTP-family method name to mtp, rewrites the V4.1 draft config to deepseek_mtp, and then raises \"DeepSeek V4.1 has no classic-MTP draft\" (vllm/config/speculative.py); dspark is the method it serves. A launch escapes only where the draft model's path (containing eagle-, eagle3, dflash or dspark) or its own configuration (a DSpark, DFlash, Medusa or MLP-speculator draft) selects another method first, which a deployment does not record",
 			Check: func(in rules.Input, out *validate.Problems) {
 				if in.Model == nil || in.Model.Global.Architecture != rules.ArchDeepseekV41 {
 					return
