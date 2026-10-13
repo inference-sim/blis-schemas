@@ -88,7 +88,10 @@ change a byte count or a peak rate appear. `nvfp4`, `mxfp4` and `int4` are three
 ### Attention kinds
 
 An `Attention` node's `kind`. `mla` and `sparse_mla` store one latent vector per token,
-which is why their `n_kv` is 1.
+which is why their `n_kv` is 1. `sparse_mla` is attention by a sparse kernel over an
+explicit set of positions, bounded by a top-k (`index_topk`), a compressed stream
+(`compress_ratio`), a sliding window (`window`), or a combination: DeepSeek-V4.1's
+window-only layers run the same sparse FlashMLA kernel as its compressed ones.
 
 --8<-- "docs/generated/enum/model.AttentionKind.md"
 
@@ -132,7 +135,11 @@ A model that decides its own sequence parallelism never consults the engine-wide
 `tensor_parallel_unless_sp_moe` names, so its decoder-layer reductions, the MoE's
 included, use `tensor_parallel_unless_sequence_parallel`. DeepSeek-V4.1 passes its own flag
 to its MoE, and vLLM's FusedMoE then skips the final tensor-parallel all-reduce. The
-0.31.0 rules pack reports the engine-wide condition on such a model as an error.
+0.31.0 rules pack reports the engine-wide condition on such a model as an error. One case
+is unverified: under DeepSeek-V4's mega-MoE backend with sequence parallelism off (at
+pipeline parallelism above one), the experts run in DeepGEMM's fused kernel rather than
+FusedMoE, and whether that path performs the final tensor-parallel reduction is not traced
+here; its shared expert reduces its own output.
 
 ### Modalities
 

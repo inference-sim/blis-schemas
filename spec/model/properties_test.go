@@ -2,6 +2,7 @@ package model
 
 import (
 	"math/rand"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -103,6 +104,15 @@ func TestForCapabilityIsAPureOverlay(t *testing.T) {
 	base.ArchOverrides = nil
 	for major := 1; major <= 12; major++ {
 		r, err := g.ForCapability(major)
+		if major != 9 && major != 10 {
+			if err == nil {
+				t.Fatalf("family %d is undescribed, yet it resolved", major)
+			}
+			if snapshot(t, g) != before {
+				t.Fatalf("a refused ForCapability(%d) modified its receiver", major)
+			}
+			continue
+		}
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -116,8 +126,14 @@ func TestForCapabilityIsAPureOverlay(t *testing.T) {
 		if snapshot(t, again) != snapshot(t, r) {
 			t.Fatalf("ForCapability(%d) is not idempotent", major)
 		}
-		if major != 10 && snapshot(t, r) != snapshot(t, &base) {
-			t.Fatalf("family %d has no override, yet the graph changed", major)
+		if major == 9 && snapshot(t, r) != snapshot(t, &base) {
+			t.Fatalf("family 9 is the base, yet the graph changed")
+		}
+		if !reflect.DeepEqual(r.BaseCapabilityFamilies, []int{major}) {
+			t.Fatalf("family %d resolved to a graph describing %v", major, r.BaseCapabilityFamilies)
+		}
+		if _, err := r.ForCapability(19 - major); err == nil {
+			t.Fatalf("a graph resolved for family %d resolved again for %d", major, 19-major)
 		}
 		if len(r.ArchOverrides) != 0 {
 			t.Fatalf("family %d: overrides survive resolution", major)
@@ -133,6 +149,11 @@ func TestForCapabilityIsAPureOverlay(t *testing.T) {
 		r.Embedding[0].RowBytes = 1
 		r.LayerKinds[0].Nodes[1].Caches[1].BytesByCacheDType["nvfp4_ds_mla"] = 1
 		r.LayerKinds[0].Nodes[5].Context.BytesPerEntry = 1
+		r.Stack.Prologue[0] = "written"
+		r.LayerKinds[0].Edges = append(r.LayerKinds[0].Edges[:0], [2]int{9, 9})
+		r.Speculator.Stack.Pattern[0] = "written"
+		r.Speculator.ContextStack.Pattern[0] = "written"
+		r.BaseCapabilityFamilies[0] = 99
 		if snapshot(t, g) != before {
 			t.Fatalf("a write to the family-%d copy reached the base graph", major)
 		}
@@ -161,9 +182,16 @@ func TestForCapabilityRefusesAnUnknownArchitecture(t *testing.T) {
 		t.Error("a graph with overrides resolved for an unknown architecture")
 	}
 	g := v41Graph()
-	g.ArchOverrides = nil
-	if _, err := g.ForCapability(0); err != nil {
-		t.Errorf("a graph with no overrides is the same everywhere: %v", err)
+	g.ArchOverrides, g.BaseCapabilityFamilies = nil, nil
+	for _, major := range []int{0, 9, 12} {
+		if _, err := g.ForCapability(major); err != nil {
+			t.Errorf("a graph that distinguishes no architectures is the same everywhere: %v", err)
+		}
+	}
+	// Stating a base alone still limits the graph to the families it describes.
+	g.BaseCapabilityFamilies = []int{9}
+	if _, err := g.ForCapability(12); err == nil {
+		t.Error("a graph whose base is SM90 resolved for SM120")
 	}
 }
 

@@ -99,8 +99,12 @@ func (n Node) validateNodeCaches(p *validate.Problems, at string) {
 					"is %d but the node reads at compress_ratio %d", c.EntryTokens(), ratio)
 			}
 		case CacheWindow:
-			// A sliding-window cache is read by a sliding-window read of the same width.
-			if c.Window != n.Window {
+			// A sliding-window cache is read by a sliding-window read at least as wide.
+			// Wider is real: a DSpark draft query reads the trailing window plus every
+			// position of its block, non-causally (vllm/v1/attention/backends/mla/
+			// sparse_swa.py; compressor_utils.py get_dspark_swa_index_width: window +
+			// num_speculative_tokens).
+			if n.Window < 1 || c.Window > n.Window {
 				p.Field(at+".window", "is %d but the node reads a window of %d", c.Window, n.Window)
 			}
 		}

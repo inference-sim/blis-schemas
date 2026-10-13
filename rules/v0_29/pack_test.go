@@ -85,9 +85,11 @@ func TestPackRuleSet(t *testing.T) {
 		"expert-divisibility-under-eplb",
 		"expert-imbalance-without-eplb",
 		"mamba-cache-mode-matches-model",
+		"model-sequence-parallel-collectives",
 		"offload-spec-known",
 		"pcp-excludes-data-parallelism",
 		"quantization-known",
+		"sequence-parallel-architecture-known",
 		"sequence-parallel-moe-implied",
 		"speculative-method-known",
 	}
@@ -511,16 +513,84 @@ func TestSequenceParallelMoEAgreesWithItsRule(t *testing.T) {
 	}
 }
 
-// 0.29.0 has no model of its own sequence parallelism, so ModelSequenceParallel is false
-// for every architecture and layout.
-func TestModelSequenceParallelIsOffIn029(t *testing.T) {
+// In 0.29.0 DeepSeek-V4 decides its own sequence parallelism, by the condition 0.31.0
+// keeps, and DeepSeek-V4.1 does not exist: over every layout and backend V4 follows the
+// condition and V4.1 is never on.
+func TestModelSequenceParallelIn029(t *testing.T) {
 	p := Pack()
 	for _, pl := range layoutGrid() {
 		for _, moe := range append(sortedKeys(p.MoEBackends), "") {
 			if p.ModelSequenceParallel(rules.ArchDeepseekV41, pl, moe) {
-				t.Fatalf("%+v %q: on in a release that predates the model", pl, moe)
+				t.Fatalf("%+v %q: V4.1 is on in a release that predates it", pl, moe)
+			}
+			base := pl.PP <= 1 && pl.EnableExpertParallel && pl.TP > 1
+			want := base && (pl.DP > 1 || p.MegaMoEBackends[moe])
+			if got := p.ModelSequenceParallel(rules.ArchDeepseekV4, pl, moe); got != want {
+				t.Fatalf("%+v %q: V4 got %v, want %v", pl, moe, got, want)
 			}
 		}
+	}
+}
+
+// pplx and naive are accepted and run as allgather_reducescatter, so they make the MoE
+// input sequence-parallel exactly where that backend does, and the rule names what runs.
+func TestRenamedAll2AllBackends(t *testing.T) {
+	p := Pack()
+	for _, pl := range layoutGrid() {
+		want := p.SequenceParallelMoE("allgather_reducescatter", pl.EnableExpertParallel, pl.TP, pl.DP)
+		for _, b := range []string{"pplx", "naive"} {
+			if got := p.SequenceParallelMoE(b, pl.EnableExpertParallel, pl.TP, pl.DP); got != want {
+				t.Fatalf("%+v %q: %v, but allgather_reducescatter gives %v", pl, b, got, want)
+			}
+		}
+	}
+	pl := deployment.Parallelism{TP: 8, PP: 1, DP: 1}
+	r := run(t, dep(colocated(pl, deployment.Engine{All2AllBackend: "pplx"})), graniteGraph())
+	if !fired(r, "all2all-backend-known") || !r.OK() || !strings.Contains(r.Error(), "allgather_reducescatter") {
+		t.Errorf("pplx should warn that allgather_reducescatter runs:\n%s", r.Error())
+	}
+}
+
+// vLLM spells the MoE backend in lower case with underscores before validating it.
+func TestMoEBackendIsNormalized(t *testing.T) {
+	pl := deployment.Parallelism{TP: 8, PP: 1, DP: 1}
+	for _, b := range []string{"deep-gemm-mega-moe", "DEEP_GEMM_MEGA_MOE", "Deep-Gemm"} {
+		if r := run(t, dep(colocated(pl, deployment.Engine{MoEBackend: b})), graniteGraph()); fired(r, "enum-values-known") {
+			t.Errorf("%q is accepted by the engine once normalized:\n%s", b, r.Error())
+		}
+	}
+	v4 := deployment.Parallelism{TP: 8, PP: 1, DP: 1, EnableExpertParallel: true}
+	if !Pack().ModelSequenceParallel(rules.ArchDeepseekV4, v4, "deep-gemm-mega-moe") {
+		t.Error("a dashed mega-MoE backend should count as one")
+	}
+}
+
+// A model that decides its own sequence parallelism never consults the engine-wide rule,
+// so the rule stays silent for it on a layout where the engine-wide rule is on.
+func TestSequenceParallelMoEImpliedSkipsOwnRule(t *testing.T) {
+	pl := deployment.Parallelism{TP: 2, PP: 2, DP: 2, EnableExpertParallel: true}
+	for arch, want := range map[string]bool{rules.ArchDeepseekV4: false, "DeepseekV3ForCausalLM": true} {
+		g := graniteGraph()
+		g.Global.Architecture = arch
+		if got := fired(run(t, dep(colocated(pl, deployment.Engine{})), g), "sequence-parallel-moe-implied"); got != want {
+			t.Errorf("%s: fired=%v, want %v", arch, got, want)
+		}
+	}
+}
+
+// This release lowers the checked block size to the smallest page size of every KV cache
+// group, so a cache paged at 32 tokens makes a stated 256 with interleave 64 fail.
+func TestInterleaveChecksTheEffectiveBlock(t *testing.T) {
+	pool := colocated(deployment.Parallelism{TP: 8, PP: 1, DP: 1, DCP: 8},
+		deployment.Engine{CPKVCacheInterleaveSize: 64, BlockSize: 256})
+	g := graniteGraph()
+	if p := run(t, dep(pool), g); fired(p, "cp-kv-cache-interleave-fits-block") {
+		t.Fatalf("256 is divisible by 64:\n%s", p.Error())
+	}
+	g.LayerKinds[0].Nodes[0].Caches = []model.Cache{{Name: "kv", Kind: model.CacheKV, Owned: true, BytesPerEntry: 256, BlockSize: 32}}
+	p := run(t, dep(pool), g)
+	if !fired(p, "cp-kv-cache-interleave-fits-block") || p.OK() || !strings.Contains(p.Error(), "checks 32, not the stated 256") {
+		t.Errorf("the engine checks 32, which 64 does not fit:\n%s", p.Error())
 	}
 }
 

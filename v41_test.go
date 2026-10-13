@@ -2,8 +2,12 @@ package blisschemas
 
 import (
 	"math"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/inference-sim/blis-schemas/rules"
 	"github.com/inference-sim/blis-schemas/spec/deployment"
 	"github.com/inference-sim/blis-schemas/spec/model"
 	"github.com/inference-sim/blis-schemas/spec/scenario"
@@ -102,11 +106,15 @@ func TestV41KVPerContextToken(t *testing.T) {
 // carries every input it needs. One decode token in flight and no extra retention.
 func TestV41WindowRingTerm(t *testing.T) {
 	g := v41(t)
+	pack := rules.Lookup("0.31.0")
 	kinds := map[string]model.LayerKind{}
 	for _, lk := range g.LayerKinds {
 		kinds[lk.ID] = lk
 	}
-	const inFlight, maxModelLen = 1, 1 << 20
+	// A decode step holds 1 + num_spec_tokens tokens of each request in flight, and
+	// DSpark, an EAGLE-family drafter, retains none beyond the window.
+	inFlight := 1 + g.Speculator.NumSpec
+	const engineBlock, maxModelLen = 64, 1 << 20
 	var total int64
 	for _, s := range []model.Stack{g.Stack, g.Speculator.Stack} {
 		for _, id := range s.Expand() {
@@ -115,8 +123,7 @@ func TestV41WindowRingTerm(t *testing.T) {
 					if !c.Owned || c.Kind != model.CacheWindow {
 						continue
 					}
-					tokens := min(c.Window-1+inFlight, maxModelLen)
-					pages := (tokens+c.BlockSize-1)/c.BlockSize + 1
+					pages := pack.WindowPagesPerRequest(c, engineBlock, inFlight, 0, maxModelLen)
 					page := c.BlockSize * c.BytesPerEntry
 					if a := c.PageAlignment; a > 0 {
 						page = (page + a - 1) / a * a
@@ -126,8 +133,9 @@ func TestV41WindowRingTerm(t *testing.T) {
 			}
 		}
 	}
-	// 43 rings x 5 pages x 19,008 B (32 x 584 = 18,688, padded to a multiple of 576).
-	if want := int64(43 * 5 * 19008); total != want {
+	// 43 rings x 6 pages (cdiv(127 + 6, 32) + 1) x 19,008 B (32 x 584 = 18,688, padded
+	// to a multiple of 576).
+	if want := int64(43 * 6 * 19008); total != want {
 		t.Errorf("window rings hold %d B per request, want %d", total, want)
 	}
 }
@@ -153,8 +161,11 @@ func TestV41WeightBytes(t *testing.T) {
 			t.Errorf("%s: %v B per parameter, want %v", role, got, want)
 		}
 	}
-	// 384 experts x 40 layers x three 2304 x 5120 matrices.
-	params := 384.0 * 40 * 3 * 2304 * 5120
+	// The routed experts' parameters, from the graph: every V4.1 target layer runs the same
+	// routed MoE, which the abridged example states once, so its shape times the stack's
+	// depth. Each expert is a SwiGLU MLP of three n x k matrices (gate, up and down).
+	e := byRole["experts"]
+	params := float64(g.Stack.Layers()) * float64(e.Experts) * 3 * float64(e.N) * float64(e.K)
 	if got := params * g.WeightBytesPerParam(byRole["experts"]) / 1e9; math.Abs(got-288.78) > 0.01 {
 		t.Errorf("routed experts = %.2f GB, want 288.78", got)
 	}
@@ -262,5 +273,35 @@ func TestV41BundleOnEngine031(t *testing.T) {
 	rep = Validate(Bundle{Scenario: s, Deployment: d, Model: g})
 	if rep.Rule.OK() {
 		t.Error("DBO beside Engram passed the 0.31.0 rules")
+	}
+}
+
+// A cache must say whether its layer owns it: an omitted owned would read as a reader and
+// silently drop the cache's residency, so decoding refuses it, and an unknown key too.
+func TestCacheOwnedIsRequired(t *testing.T) {
+	dir := t.TempDir()
+	src, err := os.ReadFile("docs/examples/model-graph-deepseek-v4.1.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, mutate := range map[string]func(string) string{
+		"owned omitted": func(s string) string {
+			return strings.Replace(s, "{name: compressor_ring, kind: state, owned: true,", "{name: compressor_ring, kind: state,", 1)
+		},
+		"unknown key": func(s string) string {
+			return strings.Replace(s, "{name: compressor_ring, kind: state, owned: true,", "{name: compressor_ring, kind: state, owned: true, ownd: true,", 1)
+		},
+	} {
+		changed := mutate(string(src))
+		if changed == string(src) {
+			t.Fatalf("%s: the mutation did not apply", name)
+		}
+		path := filepath.Join(dir, "graph.yaml")
+		if err := os.WriteFile(path, []byte(changed), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LoadModelGraph(path); err == nil {
+			t.Errorf("%s: the graph loaded", name)
+		}
 	}
 }

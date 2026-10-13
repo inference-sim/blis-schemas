@@ -1,5 +1,13 @@
 package model
 
+import (
+	"fmt"
+
+	"gopkg.in/yaml.v3"
+
+	"github.com/inference-sim/blis-schemas/internal/validate"
+)
+
 // Cache is one per-request cache an attention layer reads, with enough of its layout to
 // size it: who writes it, how many bytes one stored entry takes, how many tokens one
 // entry covers, and whether it is bounded by a window or a fixed entry count.
@@ -35,7 +43,8 @@ type Cache struct {
 	// layer 8's in the second, which no single stated index could say.
 	//
 	// Only an owned cache adds residency, PD-transfer volume and offload volume; a read
-	// one adds none.
+	// one adds none. It is required in a document (see UnmarshalYAML), because an omitted
+	// bool would read as a reader.
 	Owned bool `yaml:"owned"`
 
 	// BytesPerEntry is what one stored entry occupies, as stored: scales and padding
@@ -45,6 +54,12 @@ type Cache struct {
 	// comment on _use_v41_mxfp8_kv_record). On a cache the layer does not own it is the
 	// entry the layer reads, which must equal its owner's, as must every field but the
 	// owner's paging (BlockSize, PageAlignment), which a reader does not state.
+	// It is the whole layer's entry: an entry is not divided across tensor-parallel ranks
+	// (a latent cache has one head, and vLLM's window spec states max_tp_shards=1), and
+	// where the engine shards a cache by decode-context parallelism each rank holds 1/dcp
+	// of the entries (vllm/v1/kv_cache_interface.py max_num_blocks_per_req). A page of
+	// block_size tokens holds block_size / tokens_per_entry entries.
+	//
 	// It is the record under the cache dtype the graph's base description assumes, which
 	// for V4.1 on SM90 is fp8_ds_mla. Which dtype actually runs -- including an attention
 	// backend's own resolution of auto, such as SM100 mega attention resolving it to
@@ -68,9 +83,16 @@ type Cache struct {
 	// request at cdiv(min(Window - 1 + extra retained + tokens in flight, max_model_len),
 	// block) + 1 pages of it (v0.31.0 vllm/v1/kv_cache_interface.py
 	// max_admission_blocks_per_request), and frees pages that fall out of the window, so
-	// its residency does not grow with context. The tokens-in-flight and
-	// extra-retained terms come from the batch bound and the drafter, and are the
-	// consumer's to supply.
+	// its residency does not grow with context. The engine reserves for tokens in flight
+	// at its max_in_flight_tokens (concurrent batches x max_num_batched_tokens); a request
+	// holds its own in-flight tokens, 1 + num_spec_tokens per decode step. Pack method
+	// WindowPagesPerRequest applies the formula.
+	//
+	// The window is bounded only under the hybrid KV cache manager. With it off -- which
+	// the engine does on its own for a KV connector that does not support it
+	// (vllm/config/vllm.py) -- unify_hybrid_kv_cache_specs turns every sliding-window spec
+	// into a full-attention one (vllm/v1/core/kv_cache_utils.py), and the cache grows with
+	// context like a kv cache.
 	Window int `yaml:"window,omitempty"`
 
 	// Entries is the fixed entry count of a kind: state cache, per request for the
@@ -144,4 +166,31 @@ func (c Cache) EntryBytes(cacheDType string) int {
 		return b
 	}
 	return c.BytesPerEntry
+}
+
+// UnmarshalYAML requires the owned key. An omitted bool reads as false, which would make
+// a forgotten key turn an owner into a reader: the cache would validate and its residency
+// would silently vanish. Every cache must therefore say which it is.
+func (c *Cache) UnmarshalYAML(node *yaml.Node) error {
+	if err := validate.RejectUnknownKeys(node, Cache{}, nil); err != nil {
+		return err
+	}
+	if node.Kind == yaml.MappingNode {
+		stated := false
+		for i := 0; i+1 < len(node.Content); i += 2 {
+			if node.Content[i].Value == "owned" {
+				stated = true
+			}
+		}
+		if !stated {
+			return fmt.Errorf("line %d: a cache must state owned: true or owned: false", node.Line)
+		}
+	}
+	type shape Cache
+	var raw shape
+	if err := node.Decode(&raw); err != nil {
+		return err
+	}
+	*c = Cache(raw)
+	return nil
 }

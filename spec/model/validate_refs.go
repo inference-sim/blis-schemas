@@ -7,18 +7,56 @@ import (
 	"github.com/inference-sim/blis-schemas/internal/validate"
 )
 
-// validateAliases resolves every aliases reference to exactly one weight-holding node of
-// the same shape. An alias that resolved to nothing, to several nodes, or to a node that
-// is itself an alias would leave the residency it claims is counted elsewhere counted
-// nowhere, or twice.
-func (g *Graph) validateAliases(p *validate.Problems) {
-	kinds := map[string]int{}
-	for i, lk := range g.LayerKinds {
-		kinds[lk.ID] = i
+// resolveAlias finds the one node an aliases reference names, with its path, or says why
+// it names none. It is the one resolver, so validation and pricing cannot disagree about
+// which weights an alias reads.
+func (g *Graph) resolveAlias(ref string) (Node, string, error) {
+	// Split at the last dot, so a layer-kind id may contain dots and a role may not.
+	i := strings.LastIndex(ref, ".")
+	if i <= 0 || i == len(ref)-1 {
+		return Node{}, "", fmt.Errorf("%q must be <layer kind>.<role>, head.<role> or embedding.<role>", ref)
 	}
-	// A layer kind instantiated more than once holds one copy of its weights per
-	// instance, so "the node in that kind" names no single weight.
-	instances := map[string]int{}
+	scope, role := ref[:i], ref[i+1:]
+	li := -1
+	for k, lk := range g.LayerKinds {
+		if lk.ID == scope {
+			li = k
+		}
+	}
+	var pool []Node
+	var poolAt string
+	switch {
+	case li >= 0 && (scope == "head" || scope == "embedding"):
+		return Node{}, "", fmt.Errorf("%q is ambiguous: a layer kind is also named %q", ref, scope)
+	case scope == "head":
+		pool, poolAt = g.Head, "head"
+	case scope == "embedding":
+		pool, poolAt = g.Embedding, "embedding"
+	case li >= 0:
+		// A layer kind instantiated more than once holds one copy of its weights per
+		// instance, so "the node in that kind" names no single weight.
+		if c := g.instances()[scope]; c != 1 {
+			return Node{}, "", fmt.Errorf("layer kind %q runs %d times, so it holds no single weight to alias", scope, c)
+		}
+		pool, poolAt = g.LayerKinds[li].Nodes, fmt.Sprintf("layer_kinds[%d].nodes", li)
+	default:
+		return Node{}, "", fmt.Errorf("%q names no layer kind, and is neither head nor embedding", scope)
+	}
+	var hits []int
+	for k, m := range pool {
+		if m.Role == role {
+			hits = append(hits, k)
+		}
+	}
+	if len(hits) != 1 {
+		return Node{}, "", fmt.Errorf("%q matches %d nodes; it must match exactly one", ref, len(hits))
+	}
+	return pool[hits[0]], fmt.Sprintf("%s[%d]", poolAt, hits[0]), nil
+}
+
+// instances counts how many times each layer kind runs across every stack.
+func (g *Graph) instances() map[string]int {
+	out := map[string]int{}
 	stacks := []Stack{g.Stack}
 	if s := g.Speculator; s != nil {
 		stacks = append(stacks, s.Stack)
@@ -28,56 +66,29 @@ func (g *Graph) validateAliases(p *validate.Problems) {
 	}
 	for _, st := range stacks {
 		for _, id := range st.Expand() {
-			instances[id]++
+			out[id]++
 		}
 	}
+	return out
+}
+
+// validateAliases resolves every aliases reference to exactly one weight-holding node of
+// the same shape. An alias that resolved to nothing, to several nodes, or to a node that
+// is itself an alias would leave the residency it claims is counted elsewhere counted
+// nowhere, or twice. An alias reads its target's weights in the target's format, so it
+// states no format of its own: one that did could only repeat the target's or contradict it.
+func (g *Graph) validateAliases(p *validate.Problems) {
 	g.EachNode(func(at string, n Node) {
 		if n.Aliases == "" {
 			return
 		}
-		// Split at the last dot, so a layer-kind id may contain dots and a role may not.
-		i := strings.LastIndex(n.Aliases, ".")
-		scope, role, ok := "", "", i > 0
-		if ok {
-			scope, role = n.Aliases[:i], n.Aliases[i+1:]
+		if n.WeightDType != "" || n.WeightScale != nil {
+			p.Field(at+".aliases", "an alias reads its target's weights in the target's format; remove its weight_dtype and weight_scale")
 		}
-		if !ok || scope == "" || role == "" {
-			p.Field(at+".aliases", "%q must be <layer kind>.<role>, head.<role> or embedding.<role>", n.Aliases)
-			return
-		}
-		var pool []Node
-		var poolAt string
-		li, isKind := kinds[scope]
+		target, targetAt, err := g.resolveAlias(n.Aliases)
 		switch {
-		case isKind && (scope == "head" || scope == "embedding"):
-			p.Field(at+".aliases", "%q is ambiguous: a layer kind is also named %q", n.Aliases, scope)
-			return
-		case scope == "head":
-			pool, poolAt = g.Head, "head"
-		case scope == "embedding":
-			pool, poolAt = g.Embedding, "embedding"
-		case isKind:
-			if c := instances[scope]; c != 1 {
-				p.Field(at+".aliases", "layer kind %q runs %d times, so it holds no single weight to alias", scope, c)
-				return
-			}
-			pool, poolAt = g.LayerKinds[li].Nodes, fmt.Sprintf("layer_kinds[%d].nodes", li)
-		default:
-			p.Field(at+".aliases", "%q names no layer kind, and is neither head nor embedding", scope)
-			return
-		}
-		var hits []int
-		for i, m := range pool {
-			if m.Role == role {
-				hits = append(hits, i)
-			}
-		}
-		if len(hits) != 1 {
-			p.Field(at+".aliases", "%q matches %d nodes; it must match exactly one", n.Aliases, len(hits))
-			return
-		}
-		target, targetAt := pool[hits[0]], fmt.Sprintf("%s[%d]", poolAt, hits[0])
-		switch {
+		case err != nil:
+			p.Field(at+".aliases", "%v", err)
 		case targetAt == at:
 			p.Field(at+".aliases", "a node cannot alias itself")
 		case target.Aliases != "":
@@ -121,6 +132,20 @@ func weightShape(n Node) string {
 // served model that changes nothing. Each miss is reported at its own entry, so a graph
 // with several reports all of them.
 func (g *Graph) validateArchOverrides(p *validate.Problems) {
+	if len(g.ArchOverrides) > 0 && len(g.BaseCapabilityFamilies) == 0 {
+		p.Field("base_capability_families", "required with arch_overrides: say which families the base graph describes")
+	}
+	base := map[int]bool{}
+	for i, f := range g.BaseCapabilityFamilies {
+		at := fmt.Sprintf("base_capability_families[%d]", i)
+		switch {
+		case f < 1:
+			p.Field(at, "must be a positive compute-capability major version, got %d", f)
+		case base[f]:
+			p.Field(at, "family %d is listed twice", f)
+		}
+		base[f] = true
+	}
 	seen := map[int]bool{}
 	for i, o := range g.ArchOverrides {
 		at := fmt.Sprintf("arch_overrides[%d]", i)
@@ -128,6 +153,8 @@ func (g *Graph) validateArchOverrides(p *validate.Problems) {
 			p.Field(at+".capability_family", "must be a positive compute-capability major version, got %d", o.CapabilityFamily)
 		} else if seen[o.CapabilityFamily] {
 			p.Field(at+".capability_family", "family %d is overridden twice", o.CapabilityFamily)
+		} else if base[o.CapabilityFamily] {
+			p.Field(at+".capability_family", "family %d is listed as the base; it cannot also be overridden", o.CapabilityFamily)
 		}
 		seen[o.CapabilityFamily] = true
 		if len(o.Nodes) == 0 && len(o.Caches) == 0 {

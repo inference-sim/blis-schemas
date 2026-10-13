@@ -20,11 +20,21 @@ package model
 // max_model_len]"), and the mask kernel writes every column of it, so decode-time mask
 // traffic follows max_model_len, not the context.
 type ContextWork struct {
-	// BytesPerEntry is the traffic per context entry, per unit of Per: reads and writes
-	// together.
+	// ReadsCache names a cache of the same layer whose entries this work reads. Each entry
+	// then costs that cache's record -- under the cache dtype that runs, on the
+	// architecture ForCapability resolved -- plus BytesPerEntry, and an entry covers that
+	// cache's tokens_per_entry. Naming the cache rather than stating its record is what
+	// keeps the figure right when the record moves: V4.1's prefill dequantize reads a
+	// 584 B record on SM90, 528 B on SM100 and 288 B under nvfp4_ds_mla, and writes 1,024
+	// BF16 bytes in every case. Empty means BytesPerEntry is the whole traffic.
+	ReadsCache string `yaml:"reads_cache,omitempty"`
+	// BytesPerEntry is the traffic per context entry, per unit of Per, reads and writes
+	// together -- beyond the named cache's record when ReadsCache is set, where it may be
+	// zero.
 	BytesPerEntry int `yaml:"bytes_per_entry"`
 	// TokensPerEntry is how many context tokens one entry covers, the compress ratio of
-	// the stream the work walks. Zero means one.
+	// the stream the work walks. Zero means one. With ReadsCache it is the cache's and
+	// is not stated.
 	TokensPerEntry int `yaml:"tokens_per_entry,omitempty"`
 	// Per is what multiplies the context. See ContextPer.
 	Per ContextPer `yaml:"per"`

@@ -81,6 +81,7 @@ jobs:
       - name: verify pack constants
         env:
           VLLM_SOURCE: ${{ github.workspace }}/vllm-source
+          VLLM_SOURCE_REQUIRED: "1"
         run: go test -v -run MatchSource ./rules/v0_29/
 
   # The same check for the 0.31.0 pack, against its own release. Each pack is checked
@@ -102,4 +103,5 @@ jobs:
       - name: verify pack constants
         env:
           VLLM_SOURCE: ${{ github.workspace }}/vllm-source
+          VLLM_SOURCE_REQUIRED: "1"
         run: go test -v -run MatchSource ./rules/v0_31/

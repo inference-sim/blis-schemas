@@ -3,10 +3,13 @@ package v0_29
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/inference-sim/blis-schemas/rules"
 )
 
 // This file re-derives the pack's constants from an engine checkout, when one is
@@ -26,13 +29,19 @@ import (
 func vllmSource(t *testing.T) string {
 	t.Helper()
 	root := os.Getenv("VLLM_SOURCE")
+	// CI sets VLLM_SOURCE_REQUIRED, so a checkout that went missing fails the job rather
+	// than skipping every check and leaving it green.
+	skip := t.Skipf
+	if os.Getenv("VLLM_SOURCE_REQUIRED") != "" {
+		skip = t.Fatalf
+	}
 	if root == "" {
-		t.Skip("VLLM_SOURCE is unset: the pack's constants were NOT checked against " +
+		skip("VLLM_SOURCE is unset: the pack's constants were NOT checked against " +
 			"an engine checkout. Set it to a vllm tree at version " + Version +
 			" to verify them.")
 	}
 	if _, err := os.Stat(filepath.Join(root, "vllm", "config")); err != nil {
-		t.Skipf("VLLM_SOURCE=%s has no vllm/config: the pack's constants were NOT checked", root)
+		skip("VLLM_SOURCE=%s has no vllm/config: the pack's constants were NOT checked", root)
 	}
 	return root
 }
@@ -401,5 +410,177 @@ func TestNoEngramConfigMatchSource(t *testing.T) {
 	}
 	if strings.Contains(readSource(t, root, "vllm", "engine", "arg_utils.py"), "--engram-config") {
 		t.Error("this release accepts --engram-config; the engram-config-unsupported rule is wrong")
+	}
+}
+
+// spCondition parses an architecture's _use_sequence_parallel into the condition the pack
+// encodes, clause by clause, failing on a clause it does not recognize -- so a release that
+// adds, drops or changes one fails here rather than leaving the pack's data stale.
+func spCondition(t *testing.T, src string) rules.SequenceParallelCondition {
+	t.Helper()
+	i := strings.Index(src, "def _use_sequence_parallel(")
+	if i < 0 {
+		t.Fatal("_use_sequence_parallel not found; the model may have moved its rule")
+	}
+	body := src[i:]
+	r := strings.Index(body, "return (")
+	if r < 0 {
+		t.Fatal("_use_sequence_parallel no longer returns one parenthesized condition")
+	}
+	body = body[r+len("return ("):]
+	body = body[:strings.Index(body, "\n    )")]
+	var c rules.SequenceParallelCondition
+	for _, clause := range strings.Split(body, "\n") {
+		clause = strings.TrimPrefix(strings.TrimSpace(clause), "and ")
+		switch clause {
+		case "":
+		case "parallel_config.pipeline_parallel_size == 1":
+			c.PipelineParallelOne = true
+		case "parallel_config.enable_expert_parallel":
+			c.ExpertParallel = true
+		case "parallel_config.tensor_parallel_size > 1":
+			c.TensorParallelAboveOne = true
+		case "(use_mega_moe or parallel_config.data_parallel_size > 1)":
+			c.MegaMoEOrDataParallelAboveOne = true
+		default:
+			t.Fatalf("_use_sequence_parallel has a clause the pack cannot encode: %q", clause)
+		}
+	}
+	if !strings.Contains(src, "use_mega_moe = vllm_config.kernel_config.moe_backend in MEGA_MOE_BACKENDS") {
+		t.Error("use_mega_moe no longer reads moe_backend against MEGA_MOE_BACKENDS")
+	}
+	return c
+}
+
+// Each architecture the pack gives a sequence-parallelism rule has that rule, parsed from
+// its own model module, and every module that defines one is in the pack.
+func TestModelSequenceParallelRulesMatchSource(t *testing.T) {
+	root := vllmSource(t)
+	modules := map[string][]string{
+		rules.ArchDeepseekV4:  {"vllm", "models", "deepseek_v4", "nvidia", "model.py"},
+		rules.ArchDeepseekV41: {"vllm", "models", "deepseek_v41", "nvidia", "model.py"},
+	}
+	for arch, parts := range modules {
+		if _, err := os.Stat(filepath.Join(append([]string{root}, parts...)...)); err != nil {
+			if _, inPack := Pack().ModelSequenceParallelRules[arch]; inPack {
+				t.Errorf("%s has a rule in the pack but no module in this release", arch)
+			}
+			continue
+		}
+		want := spCondition(t, readSource(t, root, parts...))
+		got, ok := Pack().ModelSequenceParallelRules[arch]
+		if !ok || got != want {
+			t.Errorf("%s: pack has %+v (present %v), the engine's rule is %+v", arch, got, ok, want)
+		}
+	}
+}
+
+// The collectives a model-level sequence parallelism changes, for each architecture the
+// pack gives a rule: the attention input is all-gathered and its output reduce-scattered,
+// the MoE and its shared expert take the model's flag, the shared expert's weights are
+// replicated under it, the embedding runs before the stream is sharded, and FusedMoE skips
+// its final all-reduce. The model-sequence-parallel-collectives rule rests on each.
+func TestModelSequenceParallelCollectivesMatchSource(t *testing.T) {
+	root := vllmSource(t)
+	for _, dir := range []string{"deepseek_v4", "deepseek_v41"} {
+		base := filepath.Join(root, "vllm", "models", dir)
+		if _, err := os.Stat(base); err != nil {
+			continue
+		}
+		err := filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() || !strings.HasSuffix(path, ".py") {
+				return err
+			}
+			b, err := os.ReadFile(path)
+			if err == nil && strings.Contains(string(b), "use_sequence_parallel_moe") {
+				t.Errorf("%s reads use_sequence_parallel_moe; the rule's premise no longer holds", path)
+			}
+			return err
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		model := readSource(t, root, "vllm", "models", dir, "nvidia", "model.py")
+		for _, want := range []string{
+			"x = sp_all_gather(x)[: positions.shape[0]]",
+			"x = sp_reduce_scatter(x)",
+			"use_sequence_parallel=self.use_sequence_parallel,",
+		} {
+			if !strings.Contains(model, want) {
+				t.Errorf("%s: %q is gone", dir, want)
+			}
+		}
+		embed := strings.Index(model, "hidden_states = self.embed_input_ids(input_ids)")
+		shard := strings.Index(model, "hidden_states = sp_shard(hidden_states)")
+		if embed < 0 || shard < 0 || embed > shard {
+			t.Errorf("%s: the embedding no longer runs before the stream is sharded", dir)
+		}
+	}
+	v4 := readSource(t, root, "vllm", "models", "deepseek_v4", "nvidia", "model.py")
+	if strings.Count(v4, "disable_tp=is_sequence_parallel,") < 2 ||
+		!strings.Contains(v4, "replicated and no collective ops are needed") {
+		t.Error("the shared expert is no longer replicated under sequence parallelism")
+	}
+	runner := readSource(t, root, "vllm", "model_executor", "layers", "fused_moe", "runner", "moe_runner.py")
+	i := strings.Index(runner, "def _maybe_reduce_final_output(")
+	if i < 0 {
+		t.Fatal("_maybe_reduce_final_output not found; FusedMoE's reduction may have moved")
+	}
+	body := runner[i:]
+	if j := strings.Index(body[1:], "\n    def "); j > 0 {
+		body = body[:j+1]
+	}
+	if !strings.Contains(body, "not self.moe_config.is_sequence_parallel") ||
+		!strings.Contains(body, "tensor_model_parallel_all_reduce(") {
+		t.Error("FusedMoE's final all-reduce no longer depends on sequence parallelism")
+	}
+}
+
+// pplx and naive run as allgather_reducescatter.
+func TestAll2AllBackendRenamesMatchSource(t *testing.T) {
+	root := vllmSource(t)
+	src := readSource(t, root, "vllm", "config", "parallel.py")
+	if !strings.Contains(src, `if self.all2all_backend in ["pplx", "naive"]:`) ||
+		!strings.Contains(src, `self.all2all_backend = "allgather_reducescatter"`) {
+		t.Error("the engine no longer replaces pplx and naive with allgather_reducescatter")
+	}
+	want := map[string]string{"pplx": "allgather_reducescatter", "naive": "allgather_reducescatter"}
+	if !reflect.DeepEqual(Pack().All2AllBackendRenames, want) {
+		t.Errorf("All2AllBackendRenames: pack has %v, the engine %v", Pack().All2AllBackendRenames, want)
+	}
+}
+
+// The engine lower-cases --moe-backend and turns dashes into underscores, as
+// rules.NormalizeMoEBackend does.
+func TestMoEBackendNormalizationMatchSource(t *testing.T) {
+	root := vllmSource(t)
+	if !strings.Contains(readSource(t, root, "vllm", "config", "kernel.py"),
+		`return value.lower().replace("-", "_")`) {
+		t.Error("the engine no longer normalizes moe_backend as rules.NormalizeMoEBackend does")
+	}
+}
+
+// WindowPagesPerRequest's formula is the engine's per-request admission cap.
+func TestWindowPagesMatchSource(t *testing.T) {
+	root := vllmSource(t)
+	src := readSource(t, root, "vllm", "v1", "kv_cache_interface.py")
+	for _, want := range []string{
+		"self.sliding_window - 1 + self.extra_retained_tokens + max_in_flight_tokens,",
+		"return cdiv(num_tokens, self.block_size) + 1",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("the window admission cap changed: %q is gone", want)
+		}
+	}
+}
+
+// The block size validate_block_size checks is the smallest group's, which effectiveBlocks
+// encodes; this release does not yet exclude groups outside prefix caching.
+func TestEffectiveBlockMatchSource(t *testing.T) {
+	root := vllmSource(t)
+	src := readSource(t, root, "vllm", "v1", "engine", "core.py")
+	if !strings.Contains(src, "g.kv_cache_spec.block_size for g in kv_cache_groups") ||
+		strings.Contains(src, "if g.kv_cache_spec.prefix_cacheable") {
+		t.Error("the block-size replacement changed; effectiveBlocks encodes the minimum over every group")
 	}
 }

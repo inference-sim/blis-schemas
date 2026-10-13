@@ -34,9 +34,11 @@ func (g *Graph) Validate() *validate.Problems {
 
 	for i, n := range g.Embedding {
 		n.validate(p, fmt.Sprintf("embedding[%d]", i))
+		validateOutsideLayers(p, fmt.Sprintf("embedding[%d]", i), n)
 	}
 	for i, n := range g.Head {
 		n.validate(p, fmt.Sprintf("head[%d]", i))
+		validateOutsideLayers(p, fmt.Sprintf("head[%d]", i), n)
 	}
 	g.validateCacheSharing(p, "stack", g.Stack)
 	if s := g.Speculator; s != nil {
@@ -138,6 +140,7 @@ func (g *Graph) validateLayerKinds(p *validate.Problems) {
 			n.validate(p, fmt.Sprintf("%s.nodes[%d]", at, j))
 		}
 		validateLayerCacheNames(p, at, lk)
+		validateLayerCacheRefs(p, at, lk)
 		validateEdges(p, at, len(lk.Nodes), lk.Edges)
 	}
 }
@@ -377,6 +380,9 @@ func (n Node) validate(p *validate.Problems, at string) {
 		}
 		validateContext(p, at+".context", *n.Context)
 	}
+	if n.WritesCache != "" && n.Op != OpElementwise {
+		p.Field(at+".writes_cache", "only an Elementwise node is a cache insert")
+	}
 	if n.Op != OpGather {
 		if n.Rows != 0 {
 			p.Field(at+".rows", "not priced by this op; remove it")
@@ -498,13 +504,20 @@ func (n Node) validate(p *validate.Problems, at string) {
 		// A set index_topk must still be positive: a negative count is a mistake, not a
 		// compress-only layer, so it is rejected even when compress_ratio carries the
 		// sparsity.
+		//
+		// A window is the third bound. DeepSeek-V4.1's window-only layers (compress ratio
+		// 0, and its DSpark draft layers) run the same sparse FlashMLA kernel as its
+		// compressed ones, with the window's positions as the indices and no extra cache
+		// (v0.31.0 vllm/models/deepseek_v41/nvidia/flashmla.py: tile_sched_swaonly,
+		// indices=swa_indices). Stating them as mla would route them to a different
+		// kernel's coefficients.
 		if n.AttentionKind == AttentionSparseMLA {
 			switch {
 			case n.IndexTopK < 0:
 				p.Field(at+".index_topk", "must be positive, got %d", n.IndexTopK)
-			case n.IndexTopK < 1 && n.CompressRatio < 1:
+			case n.IndexTopK < 1 && n.CompressRatio < 1 && n.Window < 1:
 				p.Field(at+".index_topk",
-					"sparse MLA requires a positive index_topk or compress_ratio")
+					"sparse MLA requires a positive index_topk, compress_ratio or window")
 			}
 		}
 		forbid(p, at, map[string]int{"experts": n.Experts, "state_size": n.StateSize})
@@ -585,7 +598,16 @@ func forbid(p *validate.Problems, at string, fields map[string]int) {
 }
 
 func validateContext(p *validate.Problems, at string, c ContextWork) {
-	requirePositive(p, at, "bytes_per_entry", c.BytesPerEntry)
+	if c.ReadsCache == "" {
+		requirePositive(p, at, "bytes_per_entry", c.BytesPerEntry)
+	} else {
+		if c.BytesPerEntry < 0 {
+			p.Field(at+".bytes_per_entry", "must not be negative")
+		}
+		if c.TokensPerEntry != 0 {
+			p.Field(at+".tokens_per_entry", "is the read cache's; remove it")
+		}
+	}
 	if c.TokensPerEntry < 0 {
 		p.Field(at+".tokens_per_entry", "must not be negative")
 	}
@@ -601,5 +623,62 @@ func validateContext(p *validate.Problems, at string, c ContextWork) {
 	// Work that runs only in prefill has no decode extent to state.
 	if c.Phase == PhasePrefill && c.DecodeExtent != ExtentContext {
 		p.Field(at+".decode_extent", "stated on work that runs only in prefill")
+	}
+}
+
+// validateLayerCacheRefs resolves the caches a layer's work names -- a cache insert's
+// writes_cache, a context read's reads_cache -- against the caches the same layer states,
+// and ties per-entry work to a stream the layer has. Work done once every N tokens is
+// done once per compressed entry, so N must be a compress ratio the layer reads at, or,
+// for an insert, the tokens per entry of the cache it writes.
+func validateLayerCacheRefs(p *validate.Problems, at string, lk LayerKind) {
+	caches := map[string]Cache{}
+	ratios := map[int]bool{}
+	for _, n := range lk.Nodes {
+		for _, c := range n.Caches {
+			caches[c.Name] = c
+		}
+		if n.CompressRatio > 0 {
+			ratios[n.CompressRatio] = true
+		}
+	}
+	for j, n := range lk.Nodes {
+		nat := fmt.Sprintf("%s.nodes[%d]", at, j)
+		if n.WritesCache != "" {
+			c, ok := caches[n.WritesCache]
+			switch {
+			case !ok:
+				p.Field(nat+".writes_cache", "%q names no cache of this layer", n.WritesCache)
+			case !c.Owned:
+				p.Field(nat+".writes_cache", "%q is read from another layer, which writes it", n.WritesCache)
+			case max(n.PerTokens, 1) != c.EntryTokens():
+				p.Field(nat+".per_tokens", "is %d but %q holds one entry per %d tokens", max(n.PerTokens, 1), c.Name, c.EntryTokens())
+			}
+		} else if n.PerTokens > 1 && !ratios[n.PerTokens] {
+			p.Field(nat+".per_tokens", "%d is no compress ratio this layer reads at", n.PerTokens)
+		}
+		if n.Context != nil && n.Context.ReadsCache != "" {
+			if _, ok := caches[n.Context.ReadsCache]; !ok {
+				p.Field(nat+".context.reads_cache", "%q names no cache of this layer", n.Context.ReadsCache)
+			}
+		}
+	}
+}
+
+// validateOutsideLayers refuses, on an embedding or head node, the keys that tie work to a
+// layer's caches: those nodes run outside every layer, so there is no cache for them to
+// own, read or write, and no compressed stream for per-entry work to follow.
+func validateOutsideLayers(p *validate.Problems, at string, n Node) {
+	if len(n.Caches) > 0 {
+		p.Field(at+".caches", "only a node in a layer kind reads a cache")
+	}
+	if n.WritesCache != "" {
+		p.Field(at+".writes_cache", "only a node in a layer kind writes a cache")
+	}
+	if n.Context != nil && n.Context.ReadsCache != "" {
+		p.Field(at+".context.reads_cache", "only a node in a layer kind reads a cache")
+	}
+	if n.PerTokens > 1 {
+		p.Field(at+".per_tokens", "only a layer's per-entry work runs once per several tokens")
 	}
 }

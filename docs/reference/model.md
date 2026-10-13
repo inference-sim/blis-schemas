@@ -56,6 +56,7 @@ head:
 | `head` | list of nodes | no | Nodes after the stack, such as the final norm and the LM head. |
 | `speculator` | mapping | no | A draft module, as its own stack. |
 | `arch_overrides` | list | no | Facts about the served model that differ by GPU architecture, [below](#arch_overrides). |
+| `base_capability_families` | list of integers | with `arch_overrides` | The compute-capability major versions the base graph describes as served. A family listed neither here nor in an override is refused by `ForCapability`. |
 | `modality` | string | no | What the graph covers. Omitted means `text_only`. `text_decoder_of_multimodal` marks the decoder of a model whose encoder the graph does not price. See [modalities](vocabularies.md#modalities). |
 
 ### `derived_from`
@@ -154,7 +155,7 @@ Common to every node:
 | `role` | string | no | A label for readers, such as `qkv_proj`. |
 | `emit` | string | for collectives | When the node exists. One of the [emit conditions](vocabularies.md#emit-conditions); omitted means always. |
 | `tp` | string | no | How the node divides across tensor-parallel ranks, on a `GEMM`, `Elementwise` or `Attention` node. One of the [layouts](vocabularies.md#tensor-parallel-layouts); omitted leaves it to the cost model's inference. |
-| `aliases` | string | no | On a `GEMM` or `Gather`: the node whose weights this one reads, as `<layer kind>.<role>`, `head.<role>` or `embedding.<role>`. The node is priced for its compute and weight reads but adds no resident bytes. |
+| `aliases` | string | no | On a `GEMM` or `Gather`: the node whose weights this one reads, as `<layer kind>.<role>`, `head.<role>` or `embedding.<role>`. The node is priced for its compute and weight reads, at its target's format, but adds no resident bytes. It states no `weight_dtype` or `weight_scale` of its own. |
 
 `GEMM` and `GroupedGEMM`:
 
@@ -191,9 +192,9 @@ Common to every node:
 | `d_h` | integer | yes | Head dimension. |
 | `kv_lora_rank` | integer | no | MLA latent rank. |
 | `qk_rope_head_dim` | integer | no | MLA rotary head dimension. |
-| `window` | integer | for `swa` | Sliding window in tokens. |
-| `index_topk` | integer | for `sparse_mla`, unless `compress_ratio` is set | Cache entries a sparse layer selects. |
-| `compress_ratio` | integer | for `sparse_mla`, unless `index_topk` is set | Factor by which a sparse layer compresses its latent read. |
+| `window` | integer | for `swa` | Sliding window in tokens. On `sparse_mla`, one of its three bounds. |
+| `index_topk` | integer | for `sparse_mla`, unless `compress_ratio` or `window` is set | Cache entries a sparse layer selects. |
+| `compress_ratio` | integer | for `sparse_mla`, unless `index_topk` or `window` is set | Factor by which a sparse layer compresses its latent read. |
 | `caches` | list | no | The per-request caches the node reads and which its layer owns, [below](#caches). Omitted means one cache inferred from the read shape. |
 
 `RecurrentUpdate`, for linear-attention and state-space layers:
@@ -219,6 +220,7 @@ Common to every node:
 | `bytes_per_token` | integer | no | Bytes touched per token, where `hidden_size` does not determine it. On an `AllReduce`, `AllGather` or `ReduceScatter`, the bytes per token of the collective's full tensor, where it is not one hidden-width activation. Not accepted on an `All2All`, whose volume follows from the routing. |
 | `per_tokens` | integer | no | Run once every this many tokens rather than once per token, as a store done once per compressed entry is. |
 | `context` | mapping | no | Traffic that scales with the attended context, [below](#context-work). |
+| `writes_cache` | string | no | On an `Elementwise` node in a layer kind: a cache of the same layer this node writes one entry of each time it runs. The entry's record adds to `bytes_per_token`, and `per_tokens` must be the cache's `tokens_per_entry`. |
 
 `Gather`, for a table of which each token reads a few rows:
 
@@ -252,11 +254,11 @@ caches add memory, transfer volume and offload volume.
 |---|---|---|---|
 | `name` | string | yes | Unique within the layer. Pairs a reader with its writer. |
 | `kind` | string | yes | One of the [cache kinds](vocabularies.md#cache-kinds). |
-| `owned` | boolean | no | Whether this layer allocates the cache. Omitted means false: the layer reads another's. |
+| `owned` | boolean | yes | Whether this layer allocates the cache. Required, because an omitted false would turn an owner into a reader and drop its memory. |
 | `bytes_per_entry` | integer | yes | One stored entry, scales and in-record padding included, under the cache dtype the graph's base description assumes. Which dtype runs is the cost model's to resolve. On a cache the layer reads, the entry it reads, which must equal its owner's. |
 | `bytes_by_cache_dtype` | mapping | no | The entry size under cache dtypes whose record differs, keyed by the engine's cache-dtype name; each positive. The rules pack checks the names. |
 | `tokens_per_entry` | integer | no | Context tokens one entry covers. Omitted means 1. A `kv` or `index` cache must match the node's `compress_ratio`, or 1 when it has none. |
-| `window` | integer | for `window` | Tokens a window cache retains. Must match the node's `window`. |
+| `window` | integer | for `window` | Tokens a window cache retains. At most the node's `window`, which can be wider: a DSpark draft query reads the window plus its block. |
 | `entries` | integer | for `state` | Entries a state cache holds per request. |
 | `block_size` | integer | no | Page size in tokens, where the model fixes it rather than taking the engine's `block_size`. Owned caches only. |
 | `page_alignment` | integer | no | Each page's bytes are rounded up to a multiple of this. Owned caches only. |
@@ -264,7 +266,22 @@ caches add memory, transfer volume and offload volume.
 A cache the layer reads but does not own states what it reads: its kind, its entry under
 every cache dtype, tokens per entry, window and entries. Each must equal its owner's, so a
 read is priced with the record the owner stores. How the owner pages the cache,
-`block_size` and `page_alignment`, is the owner's alone and is refused on a reader.
+`block_size` and `page_alignment`, is the owner's alone and is refused on a reader. Only
+nodes in a layer kind state caches.
+
+An entry is the whole layer's: tensor parallelism does not divide it (a latent cache has
+one head), and where the engine shards a cache by decode-context parallelism each rank
+holds 1/`dcp` of the entries. A page of `block_size` tokens holds `block_size` /
+`tokens_per_entry` entries. A window cache is bounded only under vLLM's hybrid KV cache
+manager, which the engine turns off for a KV connector that does not support it; then it
+grows with context like a `kv` cache.
+
+The record under a cache dtype is the one the backend that runs stores. The same name can
+mean different records on different backends: on DeepSeek-V4.1's packed layout `fp8` is
+rewritten to the packed record, and on a plain-row backend it is an FP8 row. Which dtype
+runs is resolved by the rules pack (`Pack.ResolveCacheDType`). The 68-byte MXFP4 indexer
+record DeepSeek-V4.1 can opt into is selected by vLLM's `indexer_kv_dtype`, which no
+deployment key carries yet, so the graph states the default FP8 record.
 
 DeepSeek-V4.1-Flash is the case caches exist for. Only layers 2, 8, 14 and 20 own a
 compressed cache, and the ratio-2 ones hold one entry per two tokens. Every layer's sliding
@@ -277,8 +294,9 @@ window is a bounded ring. Its KV is 1,790 bytes per context token, where one ful
 
 | Key | Type | Required | Meaning |
 |---|---|---|---|
-| `bytes_per_entry` | integer | yes | Traffic per context entry, per unit of `per`. |
-| `tokens_per_entry` | integer | no | Context tokens one entry covers. Omitted means 1. |
+| `reads_cache` | string | no | A cache of the same layer whose entries the work reads. Each entry then costs that cache's record, on the architecture and cache dtype that run, plus `bytes_per_entry`, and covers that cache's `tokens_per_entry`. |
+| `bytes_per_entry` | integer | yes | Traffic per context entry, per unit of `per`; beyond the read cache's record when `reads_cache` is set, where it may be zero. |
+| `tokens_per_entry` | integer | no | Context tokens one entry covers. Omitted means 1. Not stated with `reads_cache`. |
 | `per` | string | yes | `query_token` or `request`: what multiplies the context. See [context work](vocabularies.md#context-work). |
 | `phase` | string | no | `prefill` restricts the work to steps that schedule the request's prompt. |
 | `decode_extent` | string | no | `max_model_len` when a decode step's work covers the engine's `max_model_len` rather than the context. |
@@ -326,9 +344,11 @@ in `spec/model` applies these rules, so every consumer gets the same number.
 | `bytes_by_cache_dtype` | mapping | no | Entries merged over each named cache's, owners and readers alike. |
 
 The base graph describes the architecture the catalog prices by default.
-`Graph.ForCapability` returns the graph with the matching override applied and none left,
-so consumers apply the overlay one way. On a graph with overrides it refuses a chip whose
-compute capability is unknown, rather than silently pricing it as the base architecture. An override restates what is resident. Kernel
+`Graph.ForCapability` returns the graph with the matching override applied, none left, and
+that family as its only base, so consumers apply the overlay one way. It refuses a family
+the graph describes neither as its base nor by override, including the zero a chip with no
+compute capability yields, rather than pricing it as the base architecture: DeepSeek-V4.1's
+base is SM90, and SM120 runs a plain-row KV cache the base does not describe. An override restates what is resident. Kernel
 selection and launch fusion are not restated here, because they change the cost of nodes
 the graph already states, and they also depend on the layout and the build. DeepSeek-V4.1
 needs an override because its `wo_a` is resident in BF16 on SM90 and FP8 on SM100, and its
@@ -390,8 +410,10 @@ A graph is invalid if
   an alias;
 - `context_window` or `default_context_window` is negative, or the second exceeds the
   first or is stated without it;
-- an `arch_overrides` entry repeats a family, overrides nothing, or names a role or cache
-  that no node has, or a role held by a node with no parameters;
+- `arch_overrides` is stated without `base_capability_families`; a family in either is not
+  positive, is listed twice, or is both a base and an override; or an override
+  overrides nothing, or names a role or cache that no node has, or a role held by a node
+  with no parameters;
 - any node, in the embedding, a layer kind, the head or the speculator's heads, is
   invalid.
 
@@ -418,13 +440,21 @@ A node is invalid if
 - a `Gather` lacks a positive `rows`, `row_bytes`, `rows_per_token` or
   `out_bytes_per_token`, reads more rows per token than it has, or is split by `heads` with
   fewer than two; a `Gather` key is set on another primitive;
-- `per_tokens` or `context` is set on anything other than an `Elementwise` node, or a
-  `context` lacks a positive `bytes_per_entry` or a recognized `per`, or states a
-  `decode_extent` on prefill-only work;
+- `per_tokens`, `context` or `writes_cache` is set on anything other than an
+  `Elementwise` node; a `context` lacks a positive `bytes_per_entry` (or a non-negative
+  one with `reads_cache`) or a recognized `per`, states a `decode_extent` on prefill-only
+  work, or states `tokens_per_entry` beside `reads_cache`;
+- in a layer kind, `writes_cache` or `reads_cache` names no cache of the layer,
+  `writes_cache` names a cache the layer does not own or `per_tokens` differs from that
+  cache's `tokens_per_entry`, or `per_tokens` above 1 is no `compress_ratio` the layer
+  reads at; on an embedding or head node, any of `caches`, `writes_cache`, `reads_cache`
+  or a `per_tokens` above 1 is set;
+- an `aliases` node states its own `weight_dtype` or `weight_scale`;
 - `bytes_per_token` is set on a primitive other than `Elementwise`, `AllReduce`,
   `AllGather` or `ReduceScatter`;
 - `index_topk` or `compress_ratio` is set on anything other than a `sparse_mla` attention
-  node, or is negative;
+  node, or is negative, or a `sparse_mla` node has none of `index_topk`, `compress_ratio`
+  and `window`;
 - it carries one of the keys its primitive rejects, such as `n_q` on a `GEMM`.
 
 Two problems are warnings: a layer kind that neither the stack nor the speculator uses,

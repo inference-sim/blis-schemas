@@ -1,6 +1,7 @@
 package deployment
 
 import (
+	"math"
 	"math/rand"
 	"strconv"
 	"strings"
@@ -103,11 +104,18 @@ func TestMaxModelLenProperties(t *testing.T) {
 		if err := yaml.Unmarshal(out, &back); err != nil || back.MaxModelLen != m {
 			t.Fatalf("%d round-tripped through %q to %d (%v)", m, out, back.MaxModelLen, err)
 		}
-		n := 1 + r.Intn(1<<20)
-		for suffix, mult := range map[string]int{"k": 1000, "m": 1000000, "K": 1 << 10, "M": 1 << 20} {
-			got, err := decode(strconv.Itoa(n) + suffix)
-			if err != nil || int(got) != n*mult {
-				t.Fatalf("%d%s decoded to %d (%v), want %d", n, suffix, got, err, n*mult)
+		n := int64(1 + r.Intn(1<<20))
+		for suffix, mult := range map[string]int64{"k": 1000, "m": 1000000, "K": 1 << 10, "M": 1 << 20} {
+			want := n * mult // computed in int64, so it is exact on every platform
+			got, err := decode(strconv.FormatInt(n, 10) + suffix)
+			if want > math.MaxInt {
+				if err == nil {
+					t.Fatalf("%d%s decoded to %d on a platform whose int cannot hold %d", n, suffix, got, want)
+				}
+				continue
+			}
+			if err != nil || int64(got) != want {
+				t.Fatalf("%d%s decoded to %d (%v), want %d", n, suffix, got, err, want)
 			}
 		}
 	}

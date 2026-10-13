@@ -87,7 +87,9 @@ func parseHumanReadableIntOrAuto(s string) (int, error) {
 			if err != nil {
 				return 0, err
 			}
-			if v := f * mult; v < math.MaxInt64 {
+			// Below the largest int on this platform, not int64's, so a 32-bit build
+			// refuses what it cannot hold rather than converting it to garbage.
+			if v := f * mult; v < float64(math.MaxInt) {
 				return int(v), nil
 			}
 			return 0, errTooLarge

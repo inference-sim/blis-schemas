@@ -151,8 +151,20 @@ func Pack() *rules.Pack {
 
 		CascadeAttnOptIn: true,
 
-		// all2all_backend: All2AllBackend = "allgather_reducescatter" (vllm/config/parallel.py).
+		// all2all_backend: All2AllBackend = "allgather_reducescatter" (vllm/config/parallel.py),
+		// and the two accepted names it replaces with that one ("has been removed. Falling
+		// back to 'allgather_reducescatter'").
 		DefaultAll2AllBackend: "allgather_reducescatter",
+
+		// DeepSeek-V4 decides its own sequence parallelism in this release too, by the
+		// condition 0.31.0 keeps (vllm/models/deepseek_v4/nvidia/model.py
+		// _use_sequence_parallel). DeepSeek-V4.1 does not exist here.
+		ModelSequenceParallelRules: map[string]rules.SequenceParallelCondition{
+			rules.ArchDeepseekV4: rules.SequenceParallelCondition{PipelineParallelOne: true, ExpertParallel: true,
+				TensorParallelAboveOne: true, MegaMoEOrDataParallelAboveOne: true},
+		},
+		All2AllBackendRenames: map[string]string{
+			"pplx": "allgather_reducescatter", "naive": "allgather_reducescatter"},
 	}
 	p.Rules = ruleList(p)
 	return p
@@ -162,7 +174,7 @@ func ruleList(p *rules.Pack) []rules.Rule {
 	return []rules.Rule{
 		{
 			Name:    "all2all-backend-known",
-			Because: "an unrecognized backend name would be priced with the default volume basis, which differs by a factor of top_k",
+			Because: "an unrecognized backend name would be priced with the default volume basis, which differs by a factor of top_k; an accepted name the engine replaces (pplx, naive) is priced as what runs, which the warning names",
 			Check: func(in rules.Input, out *validate.Problems) {
 				forEachEngine(in, func(at string, e deployment.Engine) {
 					if e.All2AllBackend == "" {
@@ -172,6 +184,10 @@ func ruleList(p *rules.Pack) []rules.Rule {
 						out.RuleErrorf("all2all-backend-known",
 							"%s.engine.all2all_backend: %q is not accepted by engine %s",
 							at, e.All2AllBackend, p.Version)
+					} else if to, ok := p.All2AllBackendRenames[e.All2AllBackend]; ok {
+						out.RuleWarnf("all2all-backend-known",
+							"%s.engine.all2all_backend: engine %s accepts %q but runs %q in its place; price that one",
+							at, p.Version, e.All2AllBackend, to)
 					}
 				})
 			},
@@ -209,7 +225,7 @@ func ruleList(p *rules.Pack) []rules.Rule {
 					check("cache_dtype", e.CacheDType, p.CacheDTypes)
 					check("mamba_cache_dtype", e.MambaCacheDType, p.MambaDTypes)
 					check("mamba_ssm_cache_dtype", e.MambaSSMCacheDType, p.MambaDTypes)
-					check("moe_backend", e.MoEBackend, p.MoEBackends)
+					check("moe_backend", rules.NormalizeMoEBackend(e.MoEBackend), p.MoEBackends)
 					check("mamba_cache_mode", e.MambaCacheMode, p.MambaCacheModes)
 					check("scheduling_policy", e.SchedulingPolicy, p.SchedulerPolicies)
 				})
@@ -253,7 +269,7 @@ func ruleList(p *rules.Pack) []rules.Rule {
 		},
 		{
 			Name:    "cp-kv-cache-interleave-fits-block",
-			Because: "with decode-context parallelism on and no KV connector configured, this release asserts at startup that block_size is at least, and divisible by, cp_kv_cache_interleave_size (vllm/config/vllm.py validate_block_size), so a layout breaking it does not start",
+			Because: "with decode-context parallelism on and no KV connector configured, this release asserts at startup that block_size is at least, and divisible by, cp_kv_cache_interleave_size (vllm/config/vllm.py validate_block_size), so a layout breaking it does not start. The block size it checks is the smallest KV cache group's, which can be a model's own cache page size rather than the stated one",
 			Check: func(in rules.Input, out *validate.Problems) {
 				// Only where the assert is certain to run on the values stated:
 				//   - a KV connector of any kind makes this release pin the size to the
@@ -268,16 +284,35 @@ func ruleList(p *rules.Pack) []rules.Rule {
 				}
 				forEachPool(in, func(at string, pool deployment.Pool) {
 					e := pool.Engine
-					size, block := e.CPKVCacheInterleaveSize, e.BlockSize
-					if pool.Parallel.DCP <= 1 || size < 1 || block < 1 {
+					size, stated := e.CPKVCacheInterleaveSize, e.BlockSize
+					if pool.Parallel.DCP <= 1 || size < 1 || stated < 1 {
 						return
 					}
-					// One test covers both halves of the engine's assert: a size above
-					// the block leaves the block itself as the remainder.
-					if block%size != 0 {
+					// The assert reads the block size after the engine has replaced the
+					// stated one with the smallest KV cache group's (vllm/v1/engine/core.py),
+					// which a cache with its own page size lowers. One test covers both
+					// halves of the assert: a size above the block leaves the block itself
+					// as the remainder.
+					blocks := effectiveBlocks(in.Model, stated)
+					failing := 0
+					for _, b := range blocks {
+						if b%size != 0 {
+							failing++
+						}
+					}
+					switch {
+					case failing == len(blocks):
+						checked := fmt.Sprintf("block_size %d", blocks[0])
+						if blocks[0] != stated {
+							checked = fmt.Sprintf("block_size %d (the engine checks %d, not the stated %d)", blocks[0], blocks[0], stated)
+						}
 						out.RuleErrorf("cp-kv-cache-interleave-fits-block",
-							"%s.engine: block_size %d must be at least, and divisible by, cp_kv_cache_interleave_size %d when dcp is %d; engine %s refuses it at startup",
-							at, block, size, pool.Parallel.DCP, Version)
+							"%s.engine: %s must be at least, and divisible by, cp_kv_cache_interleave_size %d when dcp is %d; engine %s refuses it at startup",
+							at, checked, size, pool.Parallel.DCP, Version)
+					case failing > 0:
+						out.RuleWarnf("cp-kv-cache-interleave-fits-block",
+							"%s.engine: cp_kv_cache_interleave_size %d fits some of the block sizes the engine may check, %v, and not others; which applies turns on whether the window cache takes part in prefix caching, so engine %s may refuse it at startup",
+							at, size, blocks, Version)
 					}
 				})
 			},
@@ -548,19 +583,74 @@ func ruleList(p *rules.Pack) []rules.Rule {
 			},
 		},
 		{
+			Name:    "sequence-parallel-architecture-known",
+			Because: "a graph's sequence_parallel emit conditions are decided by its architecture's own code, so on an architecture this release has no such rule for they never fire and the graph prices tensor parallelism alone",
+			Check: func(in rules.Input, out *validate.Problems) {
+				if in.Model == nil {
+					return
+				}
+				if _, ok := p.ModelSequenceParallelRules[in.Model.Global.Architecture]; ok {
+					return
+				}
+				reported := false
+				in.Model.EachNode(func(at string, n model.Node) {
+					if reported || !n.Emit.SequenceParallelOnly() {
+						return
+					}
+					reported = true
+					out.RuleWarnf("sequence-parallel-architecture-known",
+						"model %s.emit: %q, but engine %s has no sequence-parallelism rule for architecture %q; architectures with one are %v",
+						at, n.Emit, p.Version, in.Model.Global.Architecture, ruleArchitectures(p))
+				})
+			},
+		},
+		{
+			Name:    "model-sequence-parallel-collectives",
+			Because: "an architecture that decides its own sequence parallelism never consults the engine-wide sequence-parallel-MoE rule -- DeepSeek-V4 passes its own _use_sequence_parallel to its MoE and shared expert, and FusedMoE then skips the final tensor-parallel all-reduce (vllm/model_executor/layers/fused_moe/runner/moe_runner.py, \"Skipped when sequence-parallel is active\") -- so a decoder-layer reduction conditioned on that rule fires or not on the wrong layouts; and a plain tensor-parallel all-reduce inside a decoder layer is replaced under the model's sequence parallelism, which shards the residual stream by token",
+			Check: func(in rules.Input, out *validate.Problems) {
+				if in.Model == nil {
+					return
+				}
+				arch := in.Model.Global.Architecture
+				if _, ok := p.ModelSequenceParallelRules[arch]; !ok {
+					return
+				}
+				// Only decoder layers run on the sharded stream: the embedding reduces before
+				// the stream is sharded and the head after it is gathered back.
+				for i, lk := range in.Model.LayerKinds {
+					for j, n := range lk.Nodes {
+						at := fmt.Sprintf("model layer_kinds[%d].nodes[%d]", i, j)
+						switch {
+						case n.Emit == model.EmitTensorParallelUnlessSequenceParallelMoE:
+							out.RuleErrorf("model-sequence-parallel-collectives",
+								"%s.emit: %q, but %s decides sequence parallelism itself and never consults that rule in engine %s; use %q",
+								at, n.Emit, arch, p.Version, model.EmitTensorParallelUnlessSequenceParallel)
+						case n.Op == model.OpAllReduce && n.Emit == model.EmitTensorParallel:
+							out.RuleWarnf("model-sequence-parallel-collectives",
+								"%s: a tensor-parallel all-reduce in a decoder layer of %s, which engine %s replaces under the model's sequence parallelism; emit it %q, with its replacement under %q",
+								at, arch, p.Version, model.EmitTensorParallelUnlessSequenceParallel, model.EmitSequenceParallel)
+						}
+					}
+				}
+			},
+		},
+		{
 			Name:    "sequence-parallel-moe-implied",
 			Because: "on this backend with tensor and data parallelism both above one, the engine makes the MoE input sequence-parallel, which replaces the layer's all-reduce with a different pair of collectives",
 			Check: func(in rules.Input, out *validate.Problems) {
+				// A model that decides its own sequence parallelism never consults the
+				// engine-wide rule, so the rule says nothing about it.
+				if in.Model != nil {
+					if _, own := p.ModelSequenceParallelRules[in.Model.Global.Architecture]; own {
+						return
+					}
+				}
 				forEachPool(in, func(at string, pool deployment.Pool) {
 					pl := pool.Parallel
 					if !p.SequenceParallelMoE(pool.Engine.All2AllBackend, pl.EnableExpertParallel, pl.TP, pl.DP) {
 						return
 					}
-					// An unstated backend is the engine default, which the method applies.
-					backend := pool.Engine.All2AllBackend
-					if backend == "" {
-						backend = p.DefaultAll2AllBackend
-					}
+					backend := p.EffectiveAll2AllBackend(pool.Engine.All2AllBackend)
 					out.RuleWarnf("sequence-parallel-moe-implied",
 						"%s: engine %s makes the MoE input sequence-parallel here (backend %q, tp %d, dp %d), so the model graph must emit a reduce-scatter and all-gather pair rather than an all-reduce",
 						at, p.Version, backend, pl.TP, pl.DP)
@@ -574,6 +664,15 @@ func sortedIntKeys(m map[string]int) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
 		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func ruleArchitectures(p *rules.Pack) []string {
+	out := make([]string, 0, len(p.ModelSequenceParallelRules))
+	for a := range p.ModelSequenceParallelRules {
+		out = append(out, a)
 	}
 	sort.Strings(out)
 	return out
@@ -653,4 +752,19 @@ func modelHasRecurrent(in rules.Input) bool {
 		}
 	}
 	return false
+}
+
+// effectiveBlocks is the block size validate_block_size reads: this release replaces the
+// stated block size with the smallest page size among all KV cache groups
+// (vllm/v1/engine/core.py), so every cache the graph pages at its own size lowers it.
+func effectiveBlocks(g *model.Graph, stated int) []int {
+	block := stated
+	g.EachNode(func(_ string, n model.Node) {
+		for _, c := range n.Caches {
+			if c.BlockSize > 0 && c.BlockSize < block {
+				block = c.BlockSize
+			}
+		}
+	})
+	return []int{block}
 }

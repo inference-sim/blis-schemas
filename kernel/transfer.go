@@ -28,10 +28,12 @@ type LinkUse struct {
 // floor no amount of bandwidth removes, and every link it crosses.
 //
 // It separates what concurrency changes from what it does not. Sharing a link divides
-// the rate a transfer sees on it, so the bandwidth-bound part stretches; the floor is
-// per-transfer setup and completion latency, which a second transfer on the same link
-// does not lengthen. A duration alone cannot be split back into the two, which is why a
-// simulator arbitrating concurrent handoffs needs this rather than PDTransferTime.
+// the rate a transfer sees on it, so the bandwidth-bound part stretches. The floor is the
+// least time a transfer takes however much bandwidth it has, and it is not added to the
+// bandwidth-bound part: alone a transfer costs the larger of the two, so the floor
+// overlaps the transfer rather than preceding it, and a second transfer on the same link
+// does not lengthen it. A duration alone cannot be split back into the two, which is why
+// a simulator arbitrating concurrent handoffs needs this rather than PDTransferTime.
 //
 // Which links a transfer crosses is a pricing fact, derived from the placements and the
 // fabric, so the kernel states it. How a link shared by several in-flight transfers is
@@ -42,8 +44,9 @@ type TransferDemand struct {
 	Bytes int64
 	// Floor is the time the transfer takes however much bandwidth it is given.
 	Floor time.Duration
-	// Links are the links the payload crosses, each named once. Empty means the
-	// transfer crosses no shared link and costs its floor alone.
+	// Links are the links the payload crosses, each named once. A payload crosses at
+	// least one, so Links is empty only for a demand with no payload, which costs its
+	// floor alone.
 	Links []LinkUse
 }
 
@@ -84,15 +87,20 @@ func (d TransferDemand) AloneTime() time.Duration {
 }
 
 // Check reports the first way the demand is malformed, or nil: a negative payload or
-// floor, a link with no ID, a link named twice, or a rate that is not a positive finite
-// number. A link named twice would be counted twice by an arbiter dividing its
-// bandwidth, and a zero rate describes a link nothing can cross.
+// floor, a payload that crosses no link, a link with no ID, a link named twice, or a rate
+// that is not a positive finite number. A payload on no link leaves an arbiter nothing to
+// share, so a kernel could pass every concurrent transfer at its solo price; a link named
+// twice would be counted twice by an arbiter dividing its bandwidth; and a zero rate
+// describes a link nothing can cross.
 func (d TransferDemand) Check() error {
 	if d.Bytes < 0 {
 		return fmt.Errorf("bytes %d is negative", d.Bytes)
 	}
 	if d.Floor < 0 {
 		return fmt.Errorf("floor %v is negative", d.Floor)
+	}
+	if d.Bytes > 0 && len(d.Links) == 0 {
+		return fmt.Errorf("%d bytes cross no link", d.Bytes)
 	}
 	seen := make(map[LinkID]bool, len(d.Links))
 	for i, l := range d.Links {

@@ -100,7 +100,8 @@ type Chip struct {
 	// and H200, "10.0" for B200 and GB200, "10.3" for B300 and GB300. An engine selects
 	// kernels, and with them what some weights and caches are resident as, by its major
 	// version (vLLM's is_device_capability_family), so a model graph's arch_overrides are
-	// keyed by it. Empty means not stated, and a graph's base description applies.
+	// keyed by it. Empty means not stated: a graph that is the same on every chip still
+	// resolves, and one that distinguishes architectures cannot be resolved for this chip.
 	ComputeCapability string `yaml:"ComputeCapability,omitempty"`
 
 	// GPUsPerNode and GPUsPerRack describe packaging. GPUsPerRack is non-zero only

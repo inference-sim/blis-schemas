@@ -36,6 +36,14 @@ type Graph struct {
 	// ArchOverrides restate facts that differ by GPU architecture, applied for the
 	// deployment's chip by ForCapability. See ArchOverride.
 	ArchOverrides []ArchOverride `yaml:"arch_overrides,omitempty"`
+	// BaseCapabilityFamilies are the CUDA compute-capability major versions the base
+	// graph describes as served, without an override. Required with ArchOverrides: a
+	// graph that distinguishes architectures must also say which ones its base is, so a
+	// family it describes neither way is refused rather than given the base's facts.
+	// DeepSeek-V4.1's base is SM90; SM120 runs a plain-row KV cache under FlashInfer
+	// (vllm/models/deepseek_v41/nvidia/model.py _select_dsv4_attn_cls), so the SM90
+	// records do not describe it.
+	BaseCapabilityFamilies []int `yaml:"base_capability_families,omitempty"`
 
 	// Modality records what a graph covers when its source describes more than a
 	// language model. Several shipped configurations nest the text shapes under a
@@ -115,8 +123,9 @@ type GlobalShape struct {
 	// ModelConfig, the smallest of the configuration's length keys
 	// (max_position_embeddings and its aliases), scaled by a RoPE factor for scaling
 	// types other than su, longrope, llama3, yarn, deepseek_yarn and
-	// deepseek_llama_scaling, and for a pooling model with absolute positions capped by
-	// the tokenizer's model_max_length (vllm/config/model.py _get_and_verify_max_len). A
+	// deepseek_llama_scaling, for a pooling model with absolute positions capped by the
+	// tokenizer's model_max_length, and capped by the sliding window when the deployment
+	// disables sliding-window attention (vllm/config/model.py _get_and_verify_max_len). A
 	// deployment that states a longer max_model_len is refused at startup unless the
 	// configuration's model_max_length admits it or VLLM_ALLOW_LONG_MAX_MODEL_LEN is
 	// set. Zero means not stated.
@@ -511,4 +520,12 @@ type Node struct {
 	// rather than with the scheduled tokens. It is in addition to BytesPerToken. See
 	// ContextWork.
 	Context *ContextWork `yaml:"context,omitempty"`
+
+	// WritesCache, on an Elementwise node in a layer kind, names a cache of the same layer
+	// this node writes one entry of each time it runs: a cache insert. The entry's record
+	// -- under the cache dtype that runs, on the resolved architecture -- adds to
+	// BytesPerToken, which is then the traffic beyond the record, and PerTokens must be
+	// that cache's tokens_per_entry. Naming the cache keeps the write's size with the
+	// record it writes rather than restating a number an arch override would leave behind.
+	WritesCache string `yaml:"writes_cache,omitempty"`
 }

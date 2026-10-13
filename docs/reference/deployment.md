@@ -133,8 +133,8 @@ Decode-context parallelism. These have no effect when `dcp` is 0 or 1:
 | Key | Type | Required | Meaning |
 |---|---|---|---|
 | `enable_dbo` | boolean | no | Split a batch so one half's communication overlaps the other's compute. |
-| `dbo_decode_token_threshold` | integer | no | Batch size in tokens at or above which a uniform-decode batch is split. Omitted takes the engine's default; a stated 0 is a different request, which vLLM 0.31.0 refuses. |
-| `dbo_prefill_token_threshold` | integer | no | Batch size in tokens at or above which any other batch is split. Omitted and 0 differ as for the decode threshold. |
+| `dbo_decode_token_threshold` | integer | no | Batch size in tokens at or above which a uniform-decode batch is split. Omitted takes the engine's default. With `enable_dbo` on, vLLM 0.31.0 refuses a stated value below the two microbatches, 0 or 1. Not negative. |
+| `dbo_prefill_token_threshold` | integer | no | Batch size in tokens at or above which any other batch is split. As for the decode threshold. |
 
 #### `engine.eplb`
 
@@ -167,7 +167,7 @@ lookups.
 | Key | Type | Required | Meaning |
 |---|---|---|---|
 | `cpu_offload` | boolean | no | Keep the tables in pinned host memory, read over the host link. Omitted means true. `false` puts them in GPU memory. |
-| `dp_shared_memory` | boolean | no | Keep one host copy per node, shared by its data-parallel replicas. Omitted lets the engine decide: it enables it when `cpu_offload` is on, `use_thp` is off and `dp` exceeds 1. Without sharing, the node's co-located replicas split each table between them instead. |
+| `dp_shared_memory` | boolean | no | Keep one host copy per node, shared by its data-parallel replicas. Omitted lets the engine decide: it enables it when `cpu_offload` is on, `use_thp` is off, `dp` exceeds 1 and elastic EP is off. Without sharing, the node's co-located replicas split each table between them instead. |
 | `use_thp` | boolean | no | Back a per-rank host table with transparent huge pages. Refused with `dp_shared_memory`. |
 
 ## Offload

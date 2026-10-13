@@ -160,6 +160,8 @@ var packFields = map[string]string{
 	"MegaMoEBackends":            "MoE backends that run the mega-MoE model path",
 	"ModelSequenceParallelRules": "Architectures (`global.architecture`) whose own code decides sequence parallelism, and the condition",
 	"DefaultAll2AllBackend":      "The backend an unstated `engine.all2all_backend` selects",
+	"All2AllBackendRenames":      "Accepted `engine.all2all_backend` names the engine runs as another",
+	"CacheDTypeResolutions":      "Cache dtypes an architecture's attention backend runs for a request, by compute capability and tp",
 	"EngramArchitectures":        "Architectures `engine.engram_config` may be given for",
 	"EngramCPUOffloadDefault":    "Whether an Engram table lives in host memory when `engine.engram_config.cpu_offload` is unstated; meaningless where `EngramArchitectures` is none",
 	"MambaCacheModes":            "`engine.mamba_cache_mode`",
@@ -274,7 +276,19 @@ func versionLess(a, b string) bool {
 func render(v reflect.Value) string {
 	switch v.Kind() {
 	case reflect.Map:
-		if v.Type().Elem().Kind() == reflect.Struct {
+		if k := v.Type().Elem().Kind(); k == reflect.String {
+			keys := v.MapKeys()
+			members := make([]string, 0, len(keys))
+			for _, key := range keys {
+				members = append(members, fmt.Sprintf("`%v` -> `%v`", key.Interface(), v.MapIndex(key).Interface()))
+			}
+			sort.Strings(members)
+			if len(members) == 0 {
+				return "none"
+			}
+			return strings.Join(members, " ")
+		}
+		if k := v.Type().Elem().Kind(); k == reflect.Struct || k == reflect.Slice {
 			// A map to a condition renders each key with the condition's String.
 			keys := v.MapKeys()
 			members := make([]string, 0, len(keys))

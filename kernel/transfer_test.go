@@ -18,7 +18,7 @@ func TestAloneTimeIsSlowestLinkOrFloor(t *testing.T) {
 		want time.Duration
 	}{
 		{"no transfer", TransferDemand{}, 0},
-		{"no link costs the floor", TransferDemand{Bytes: 1 << 30, Floor: 7 * time.Microsecond}, 7 * time.Microsecond},
+		{"no link costs the floor", TransferDemand{Floor: 7 * time.Microsecond}, 7 * time.Microsecond},
 		{"bandwidth bound", TransferDemand{Bytes: 50e9, Floor: time.Millisecond, Links: []LinkUse{nic}}, time.Second},
 		{"floor bound", TransferDemand{Bytes: 50, Floor: time.Millisecond, Links: []LinkUse{nic}}, time.Millisecond},
 		// The payload crosses every link in series, so the slowest binds whatever the order.
@@ -52,8 +52,14 @@ func TestCheckRejectsMalformedDemands(t *testing.T) {
 	if err := (TransferDemand{Bytes: 1, Links: []LinkUse{ok}}).Check(); err != nil {
 		t.Errorf("a well-formed demand was rejected: %v", err)
 	}
-	if err := (TransferDemand{Links: []LinkUse{ok, ok}}).Check(); !strings.Contains(err.Error(), "twice") {
+	if err := (TransferDemand{Links: []LinkUse{ok, ok}}).Check(); err == nil || !strings.Contains(err.Error(), "twice") {
 		t.Errorf("duplicate link: got %v", err)
+	}
+	if err := (TransferDemand{Bytes: 1 << 20, Floor: time.Millisecond}).Check(); err == nil || !strings.Contains(err.Error(), "cross no link") {
+		t.Errorf("a payload on no link: got %v", err)
+	}
+	if err := (TransferDemand{Floor: time.Millisecond}).Check(); err != nil {
+		t.Errorf("a demand with no payload needs no link: %v", err)
 	}
 }
 

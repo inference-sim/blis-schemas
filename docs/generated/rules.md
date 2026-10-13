@@ -5,7 +5,7 @@
 ### Rules
 
 `all2all-backend-known`
-:   *error.* An unrecognized backend name would be priced with the default volume basis, which differs by a factor of top_k.
+:   *error or warning.* An unrecognized backend name would be priced with the default volume basis, which differs by a factor of top_k; an accepted name the engine replaces (pplx, naive) is priced as what runs, which the warning names.
 
 `allreduce-backend-known`
 :   *error.* The backend decides whether a reduction consumes SMs or the NIC, so an unknown name leaves the cost on no resource.
@@ -20,7 +20,7 @@
 :   *error.* The engine types this setting as a closed literal and refuses any other name at startup.
 
 `cp-kv-cache-interleave-fits-block`
-:   *error.* With decode-context parallelism on and no NixlConnector configured, this release asserts at startup that block_size is at least, and divisible by, cp_kv_cache_interleave_size (vllm/config/vllm.py validate_block_size), so a layout breaking it does not start; unlike v0.29.0, any other connector leaves the assert in force.
+:   *error or warning.* With decode-context parallelism on and no NixlConnector configured, this release asserts at startup that block_size is at least, and divisible by, cp_kv_cache_interleave_size (vllm/config/vllm.py validate_block_size), so a layout breaking it does not start; unlike v0.29.0, any other connector leaves the assert in force. The block size it checks is the smallest prefix-cacheable KV cache group's, which can be a model's own window-cache page size rather than the stated one.
 
 `expert-divisibility-under-eplb`
 :   *error.* With load balancing on, the engine asserts that the expert-parallel width divides the physical expert count, so an indivisible layout does not start.
@@ -80,7 +80,7 @@
 :   *error or warning.* An architecture that decides its own sequence parallelism never consults the engine-wide sequence-parallel-MoE rule -- DeepSeek-V4.1 passes its own _use_sequence_parallel to its MoE and shared expert, and FusedMoE then skips the final tensor-parallel all-reduce (vllm/model_executor/layers/fused_moe/runner/moe_runner.py, "Skipped when sequence-parallel is active") -- so a decoder-layer reduction conditioned on that rule fires or not on the wrong layouts; and a plain tensor-parallel all-reduce inside a decoder layer is replaced under the model's sequence parallelism, which shards the residual stream by token.
 
 `moonep-requirements`
-:   *error.* This release refuses the moonep all2all backend at startup for a quantized model, a model whose dtype is not BF16, and with EPLB (vllm/config/vllm.py), so such a pool does not run; its refusal of a non-linear expert placement needs no check, because a deployment cannot state one and the default is linear.
+:   *error or warning.* This release refuses the moonep all2all backend at startup for a quantized model, a model whose runtime dtype is not BF16, and with EPLB (vllm/config/vllm.py), so such a pool does not run; an FP16 checkpoint is a warning, since --dtype bfloat16 casts it and a deployment does not record the dtype; the refusal of a non-linear expert placement needs no check, because a deployment cannot state one and the default is linear.
 
 `sequence-parallel-moe-implied`
 :   *warning.* On this backend with tensor and data parallelism both above one, the engine makes the MoE input sequence-parallel, which replaces the layer's all-reduce with a different pair of collectives.
@@ -98,8 +98,10 @@
 | `MambaCacheModes` | `engine.mamba_cache_mode` | `align` `all` `none` |
 | `MoEBackends` | `engine.moe_backend` | `aiter` `aiter_triton_mxfp4_bf16` `auto` `b12x` `batched_triton` `cutlass` `deep_gemm` `deep_gemm_mega_moe` `emulation` `flashinfer_b12x` `flashinfer_cutedsl` `flashinfer_cutlass` `flashinfer_moe_ep_mega_cutedsl` `flashinfer_moe_ep_mega_deep_gemm` `flashinfer_trtllm` `flydsl` `hpc` `humming` `marlin` `rdna3` `triton` `triton_unfused` |
 | `MegaMoEBackends` | MoE backends that run the mega-MoE model path | `deep_gemm_mega_moe` `flashinfer_moe_ep_mega_cutedsl` `flashinfer_moe_ep_mega_deep_gemm` |
-| `ModelSequenceParallelRules` | Architectures (`global.architecture`) whose own code decides sequence parallelism, and the condition | `DeepseekV41ForCausalLM` (pp 1, expert parallelism on, tp above 1, a mega-MoE backend or dp above 1) |
+| `ModelSequenceParallelRules` | Architectures (`global.architecture`) whose own code decides sequence parallelism, and the condition | `DeepseekV41ForCausalLM` (pp 1, expert parallelism on, tp above 1, a mega-MoE backend or dp above 1) `DeepseekV4ForCausalLM` (pp 1, expert parallelism on, tp above 1, a mega-MoE backend or dp above 1) |
 | `DefaultAll2AllBackend` | The backend an unstated `engine.all2all_backend` selects | `allgather_reducescatter` |
+| `All2AllBackendRenames` | Accepted `engine.all2all_backend` names the engine runs as another | `naive` -> `allgather_reducescatter` `pplx` -> `allgather_reducescatter` |
+| `CacheDTypeResolutions` | Cache dtypes an architecture's attention backend runs for a request, by compute capability and tp | `DeepseekV41ForCausalLM` (sm100: auto/fp8 -> nvfp4_ds_mla where tp divides 8; sm100: auto/fp8 -> fp8_ds_mla; sm90: auto/fp8 -> fp8_ds_mla) |
 | `EngramArchitectures` | Architectures `engine.engram_config` may be given for | `DeepseekV41ForCausalLM` `Qwen4ExpForCausalLM` `Qwen4ExpForConditionalGeneration` |
 | `EngramCPUOffloadDefault` | Whether an Engram table lives in host memory when `engine.engram_config.cpu_offload` is unstated; meaningless where `EngramArchitectures` is none | `true` |
 | `SchedulerPolicies` | `engine.scheduling_policy` | `fcfs` `priority` |
@@ -122,7 +124,7 @@
 ### Rules
 
 `all2all-backend-known`
-:   *error.* An unrecognized backend name would be priced with the default volume basis, which differs by a factor of top_k.
+:   *error or warning.* An unrecognized backend name would be priced with the default volume basis, which differs by a factor of top_k; an accepted name the engine replaces (pplx, naive) is priced as what runs, which the warning names.
 
 `allreduce-backend-known`
 :   *error.* The backend decides whether a reduction consumes SMs or the NIC, so an unknown name leaves the cost on no resource.
@@ -137,7 +139,7 @@
 :   *error.* The engine types this setting as a closed literal and refuses any other name at startup.
 
 `cp-kv-cache-interleave-fits-block`
-:   *error.* With decode-context parallelism on and no KV connector configured, this release asserts at startup that block_size is at least, and divisible by, cp_kv_cache_interleave_size (vllm/config/vllm.py validate_block_size), so a layout breaking it does not start.
+:   *error or warning.* With decode-context parallelism on and no KV connector configured, this release asserts at startup that block_size is at least, and divisible by, cp_kv_cache_interleave_size (vllm/config/vllm.py validate_block_size), so a layout breaking it does not start. The block size it checks is the smallest KV cache group's, which can be a model's own cache page size rather than the stated one.
 
 `pcp-excludes-data-parallelism`
 :   *error.* This release refuses prefill-context parallelism combined with data parallelism at startup ("PCP does not support data parallelism yet", vllm/config/parallel.py), so such a layout does not run; later releases support it from e6dc16cebd, which is why the refusal is here and not a field check.
@@ -178,6 +180,12 @@
 `engram-config-unsupported`
 :   *error.* This release has no Engram config (no vllm/config/engram.py, no --engram-config), so a launch line carrying one does not parse.
 
+`sequence-parallel-architecture-known`
+:   *warning.* A graph's sequence_parallel emit conditions are decided by its architecture's own code, so on an architecture this release has no such rule for they never fire and the graph prices tensor parallelism alone.
+
+`model-sequence-parallel-collectives`
+:   *error or warning.* An architecture that decides its own sequence parallelism never consults the engine-wide sequence-parallel-MoE rule -- DeepSeek-V4 passes its own _use_sequence_parallel to its MoE and shared expert, and FusedMoE then skips the final tensor-parallel all-reduce (vllm/model_executor/layers/fused_moe/runner/moe_runner.py, "Skipped when sequence-parallel is active") -- so a decoder-layer reduction conditioned on that rule fires or not on the wrong layouts; and a plain tensor-parallel all-reduce inside a decoder layer is replaced under the model's sequence parallelism, which shards the residual stream by token.
+
 `sequence-parallel-moe-implied`
 :   *warning.* On this backend with tensor and data parallelism both above one, the engine makes the MoE input sequence-parallel, which replaces the layer's all-reduce with a different pair of collectives.
 
@@ -194,8 +202,10 @@
 | `MambaCacheModes` | `engine.mamba_cache_mode` | `align` `all` `none` |
 | `MoEBackends` | `engine.moe_backend` | `aiter` `auto` `b12x` `batched_triton` `cutlass` `deep_gemm` `deep_gemm_mega_moe` `emulation` `flashinfer_b12x` `flashinfer_cutedsl` `flashinfer_cutlass` `flashinfer_moe_ep_mega_cutedsl` `flashinfer_moe_ep_mega_deep_gemm` `flashinfer_trtllm` `flydsl` `hpc` `humming` `marlin` `triton` `triton_unfused` |
 | `MegaMoEBackends` | MoE backends that run the mega-MoE model path | `deep_gemm_mega_moe` `flashinfer_moe_ep_mega_cutedsl` `flashinfer_moe_ep_mega_deep_gemm` |
-| `ModelSequenceParallelRules` | Architectures (`global.architecture`) whose own code decides sequence parallelism, and the condition | none |
+| `ModelSequenceParallelRules` | Architectures (`global.architecture`) whose own code decides sequence parallelism, and the condition | `DeepseekV4ForCausalLM` (pp 1, expert parallelism on, tp above 1, a mega-MoE backend or dp above 1) |
 | `DefaultAll2AllBackend` | The backend an unstated `engine.all2all_backend` selects | `allgather_reducescatter` |
+| `All2AllBackendRenames` | Accepted `engine.all2all_backend` names the engine runs as another | `naive` -> `allgather_reducescatter` `pplx` -> `allgather_reducescatter` |
+| `CacheDTypeResolutions` | Cache dtypes an architecture's attention backend runs for a request, by compute capability and tp | none |
 | `EngramArchitectures` | Architectures `engine.engram_config` may be given for | none |
 | `EngramCPUOffloadDefault` | Whether an Engram table lives in host memory when `engine.engram_config.cpu_offload` is unstated; meaningless where `EngramArchitectures` is none | `false` |
 | `SchedulerPolicies` | `engine.scheduling_policy` | `fcfs` `priority` |

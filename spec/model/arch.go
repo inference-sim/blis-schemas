@@ -56,22 +56,40 @@ type CacheOverride struct {
 }
 
 // ForCapability returns the graph as served on a chip of the given compute-capability
-// major version: a copy with the matching override applied and no overrides left. A
-// family no override names gets the base graph. The receiver is not modified.
+// major version: a copy with the matching override applied, no overrides left, and that
+// family as its only base. A base family gets the base graph. The receiver is not
+// modified.
 //
-// A major version below one is an error on a graph that has overrides: it is what a chip
-// with no ComputeCapability yields, and pricing such a chip with the base graph would
-// silently give a B200 its SM90 records. A graph with no overrides is the same on every
-// chip, so it is returned for any major version.
+// A graph that distinguishes architectures (it states overrides or base families)
+// resolves only for a family it describes: a base family gets the base graph, an
+// override family its override, and any other family -- including the zero a chip with
+// no ComputeCapability yields -- is an error rather than the base's facts, which would
+// give a B200 SM90 records or an SM120 part a cache layout it does not run. A graph that
+// states neither is the same on every chip and resolves for any major version.
 //
 // It is the one implementation of the overlay, so the catalog, the kernel and a
 // simulator cannot apply it three different ways.
 func (g *Graph) ForCapability(major int) (*Graph, error) {
-	if major < 1 && len(g.ArchOverrides) > 0 {
-		return nil, fmt.Errorf("the graph states arch_overrides, so the chip's compute capability must be known to choose among them; got major version %d", major)
+	if len(g.ArchOverrides) > 0 || len(g.BaseCapabilityFamilies) > 0 {
+		described := false
+		for _, f := range g.BaseCapabilityFamilies {
+			described = described || f == major
+		}
+		for _, o := range g.ArchOverrides {
+			described = described || o.CapabilityFamily == major
+		}
+		if !described {
+			return nil, fmt.Errorf("the graph describes compute-capability families %v as its base and %v by override, not %d",
+				g.BaseCapabilityFamilies, overrideFamilies(g), major)
+		}
 	}
 	out := g.clone()
 	out.ArchOverrides = nil
+	// The result is the graph as served on this family alone, so it says so: resolving
+	// it again for the same family is the identity, and for any other is refused.
+	if len(g.ArchOverrides) > 0 || len(g.BaseCapabilityFamilies) > 0 {
+		out.BaseCapabilityFamilies = []int{major}
+	}
 	for _, o := range g.ArchOverrides {
 		if o.CapabilityFamily != major {
 			continue
@@ -137,8 +155,8 @@ func (g *Graph) apply(o ArchOverride) error {
 	return nil
 }
 
-// clone copies the graph deeply enough that applying an override to the copy leaves the
-// original untouched: every node slice, cache slice and pointer an override writes.
+// clone copies the graph deeply: every slice, map and pointer it holds, so no write to
+// the copy -- by an override or by a caller -- reaches the original.
 func (g *Graph) clone() *Graph {
 	out := *g
 	cloneNodes := func(ns []Node) []Node {
@@ -171,15 +189,29 @@ func (g *Graph) clone() *Graph {
 		}
 		return cp
 	}
+	cloneStack := func(s Stack) Stack {
+		s.Prologue = append([]string(nil), s.Prologue...)
+		s.Pattern = append([]string(nil), s.Pattern...)
+		s.Epilogue = append([]string(nil), s.Epilogue...)
+		return s
+	}
+	out.Stack = cloneStack(g.Stack)
 	out.LayerKinds = make([]LayerKind, len(g.LayerKinds))
 	for i, lk := range g.LayerKinds {
 		lk.Nodes = cloneNodes(lk.Nodes)
+		lk.Edges = append([][2]int(nil), lk.Edges...)
 		out.LayerKinds[i] = lk
 	}
 	out.Embedding = cloneNodes(g.Embedding)
+	out.BaseCapabilityFamilies = append([]int(nil), g.BaseCapabilityFamilies...)
 	out.Head = cloneNodes(g.Head)
 	if g.Speculator != nil {
 		s := *g.Speculator
+		s.Stack = cloneStack(s.Stack)
+		if s.ContextStack != nil {
+			c := cloneStack(*s.ContextStack)
+			s.ContextStack = &c
+		}
 		s.Head = cloneNodes(s.Head)
 		s.SequentialHead = cloneNodes(s.SequentialHead)
 		out.Speculator = &s
@@ -189,4 +221,12 @@ func (g *Graph) clone() *Graph {
 		out.Global.WeightScale = &s
 	}
 	return &out
+}
+
+func overrideFamilies(g *Graph) []int {
+	var out []int
+	for _, o := range g.ArchOverrides {
+		out = append(out, o.CapabilityFamily)
+	}
+	return out
 }

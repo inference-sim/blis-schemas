@@ -3,6 +3,7 @@ package v0_31
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -28,13 +29,19 @@ import (
 func vllmSource(t *testing.T) string {
 	t.Helper()
 	root := os.Getenv("VLLM_SOURCE")
+	// CI sets VLLM_SOURCE_REQUIRED, so a checkout that went missing fails the job rather
+	// than skipping every check and leaving it green.
+	skip := t.Skipf
+	if os.Getenv("VLLM_SOURCE_REQUIRED") != "" {
+		skip = t.Fatalf
+	}
 	if root == "" {
-		t.Skip("VLLM_SOURCE is unset: the pack's constants were NOT checked against " +
+		skip("VLLM_SOURCE is unset: the pack's constants were NOT checked against " +
 			"an engine checkout. Set it to a vllm tree at version " + Version +
 			" to verify them.")
 	}
 	if _, err := os.Stat(filepath.Join(root, "vllm", "config")); err != nil {
-		t.Skipf("VLLM_SOURCE=%s has no vllm/config: the pack's constants were NOT checked", root)
+		skip("VLLM_SOURCE=%s has no vllm/config: the pack's constants were NOT checked", root)
 	}
 	return root
 }
@@ -417,10 +424,12 @@ func TestAsyncCompatibleSpecMatchSource(t *testing.T) {
 	assertSameSet(t, "AsyncCompatibleSpec", Pack().AsyncCompatibleSpec, names)
 }
 
-// Each startup refusal a 0.31.0 rule encodes is asserted present by its message text, so
-// a release that drops one fails here rather than leaving a rule refusing what the engine
-// runs. The PCP-with-DP refusal 0.29.0 had is asserted absent.
-func TestStartupRefusalsMatchSource(t *testing.T) {
+// Each startup refusal a 0.31.0 rule encodes is asserted present by its message text, and
+// the PCP-with-DP refusal 0.29.0 had is asserted absent. This pins that the refusals exist,
+// not the conditions that trigger them, which rest on review and on the rules' own tests;
+// a release that drops a refusal fails here rather than leaving a rule refusing what the
+// engine runs.
+func TestRefusalMessagesMatchSource(t *testing.T) {
 	root := vllmSource(t)
 	parallel := readSource(t, root, "vllm", "config", "parallel.py")
 	cfg := readSource(t, root, "vllm", "config", "vllm.py")
@@ -486,23 +495,6 @@ func TestMoEBackendsMatchSource(t *testing.T) {
 	assertSameSet(t, "MegaMoEBackends", Pack().MegaMoEBackends, names)
 }
 
-// ModelSequenceParallel encodes DeepSeek-V4.1's _use_sequence_parallel; its body is pinned
-// so a release that changes the condition fails here.
-func TestV41SequenceParallelRuleMatchSource(t *testing.T) {
-	root := vllmSource(t)
-	src := readSource(t, root, "vllm", "models", "deepseek_v41", "nvidia", "model.py")
-	want := `return (
-        parallel_config.pipeline_parallel_size == 1
-        and parallel_config.enable_expert_parallel
-        and parallel_config.tensor_parallel_size > 1
-        and (use_mega_moe or parallel_config.data_parallel_size > 1)
-    )`
-	if !strings.Contains(src, "use_mega_moe = vllm_config.kernel_config.moe_backend in MEGA_MOE_BACKENDS") ||
-		!strings.Contains(src, want) {
-		t.Error("DeepSeek-V4.1's _use_sequence_parallel changed; ModelSequenceParallel encodes the old rule")
-	}
-}
-
 func TestDefaultAll2AllBackendMatchSource(t *testing.T) {
 	root := vllmSource(t)
 	src := readSource(t, root, "vllm", "config", "parallel.py")
@@ -549,26 +541,79 @@ func TestMTPMethodsMatchSource(t *testing.T) {
 	assertSameSet(t, "mtpMethods", set(mtpMethods...), literalMembers(t, src, "MTPModelTypes"))
 }
 
-// The pack's DeepSeek-V4.1 condition is the one the source pin above describes: each of
-// the four requirements is on.
-func TestV41SequenceParallelDataMatchSource(t *testing.T) {
-	vllmSource(t)
-	want := rules.SequenceParallelCondition{PipelineParallelOne: true, ExpertParallel: true,
-		TensorParallelAboveOne: true, MegaMoEOrDataParallelAboveOne: true}
-	if got := Pack().ModelSequenceParallelRules[rules.ArchDeepseekV41]; got != want {
-		t.Errorf("the pack's V4.1 condition is %+v, the engine's is %+v", got, want)
+// spCondition parses an architecture's _use_sequence_parallel into the condition the pack
+// encodes, clause by clause, failing on a clause it does not recognize -- so a release that
+// adds, drops or changes one fails here rather than leaving the pack's data stale.
+func spCondition(t *testing.T, src string) rules.SequenceParallelCondition {
+	t.Helper()
+	i := strings.Index(src, "def _use_sequence_parallel(")
+	if i < 0 {
+		t.Fatal("_use_sequence_parallel not found; the model may have moved its rule")
+	}
+	body := src[i:]
+	r := strings.Index(body, "return (")
+	if r < 0 {
+		t.Fatal("_use_sequence_parallel no longer returns one parenthesized condition")
+	}
+	body = body[r+len("return ("):]
+	body = body[:strings.Index(body, "\n    )")]
+	var c rules.SequenceParallelCondition
+	for _, clause := range strings.Split(body, "\n") {
+		clause = strings.TrimPrefix(strings.TrimSpace(clause), "and ")
+		switch clause {
+		case "":
+		case "parallel_config.pipeline_parallel_size == 1":
+			c.PipelineParallelOne = true
+		case "parallel_config.enable_expert_parallel":
+			c.ExpertParallel = true
+		case "parallel_config.tensor_parallel_size > 1":
+			c.TensorParallelAboveOne = true
+		case "(use_mega_moe or parallel_config.data_parallel_size > 1)":
+			c.MegaMoEOrDataParallelAboveOne = true
+		default:
+			t.Fatalf("_use_sequence_parallel has a clause the pack cannot encode: %q", clause)
+		}
+	}
+	if !strings.Contains(src, "use_mega_moe = vllm_config.kernel_config.moe_backend in MEGA_MOE_BACKENDS") {
+		t.Error("use_mega_moe no longer reads moe_backend against MEGA_MOE_BACKENDS")
+	}
+	return c
+}
+
+// Each architecture the pack gives a sequence-parallelism rule has that rule, parsed from
+// its own model module, and every module that defines one is in the pack.
+func TestModelSequenceParallelRulesMatchSource(t *testing.T) {
+	root := vllmSource(t)
+	modules := map[string][]string{
+		rules.ArchDeepseekV4:  {"vllm", "models", "deepseek_v4", "nvidia", "model.py"},
+		rules.ArchDeepseekV41: {"vllm", "models", "deepseek_v41", "nvidia", "model.py"},
+	}
+	for arch, parts := range modules {
+		if _, err := os.Stat(filepath.Join(append([]string{root}, parts...)...)); err != nil {
+			if _, inPack := Pack().ModelSequenceParallelRules[arch]; inPack {
+				t.Errorf("%s has a rule in the pack but no module in this release", arch)
+			}
+			continue
+		}
+		want := spCondition(t, readSource(t, root, parts...))
+		got, ok := Pack().ModelSequenceParallelRules[arch]
+		if !ok || got != want {
+			t.Errorf("%s: pack has %+v (present %v), the engine's rule is %+v", arch, got, ok, want)
+		}
 	}
 }
 
-// The model-sequence-parallel-collectives rule rests on two facts: DeepSeek-V4's and V4.1's
-// model code never reads the engine-wide use_sequence_parallel_moe, and FusedMoE skips its
-// final tensor-parallel all-reduce when the model makes it sequence-parallel.
+// The collectives a model-level sequence parallelism changes, for each architecture the
+// pack gives a rule: the attention input is all-gathered and its output reduce-scattered,
+// the MoE and its shared expert take the model's flag, the shared expert's weights are
+// replicated under it, the embedding runs before the stream is sharded, and FusedMoE skips
+// its final all-reduce. The model-sequence-parallel-collectives rule rests on each.
 func TestModelSequenceParallelCollectivesMatchSource(t *testing.T) {
 	root := vllmSource(t)
 	for _, dir := range []string{"deepseek_v4", "deepseek_v41"} {
 		base := filepath.Join(root, "vllm", "models", dir)
 		if _, err := os.Stat(base); err != nil {
-			t.Fatalf("%s: %v", base, err)
+			continue
 		}
 		err := filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
 			if err != nil || d.IsDir() || !strings.HasSuffix(path, ".py") {
@@ -583,6 +628,26 @@ func TestModelSequenceParallelCollectivesMatchSource(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		model := readSource(t, root, "vllm", "models", dir, "nvidia", "model.py")
+		for _, want := range []string{
+			"x = sp_all_gather(x)[: positions.shape[0]]",
+			"x = sp_reduce_scatter(x)",
+			"use_sequence_parallel=self.use_sequence_parallel,",
+		} {
+			if !strings.Contains(model, want) {
+				t.Errorf("%s: %q is gone", dir, want)
+			}
+		}
+		embed := strings.Index(model, "hidden_states = self.embed_input_ids(input_ids)")
+		shard := strings.Index(model, "hidden_states = sp_shard(hidden_states)")
+		if embed < 0 || shard < 0 || embed > shard {
+			t.Errorf("%s: the embedding no longer runs before the stream is sharded", dir)
+		}
+	}
+	v4 := readSource(t, root, "vllm", "models", "deepseek_v4", "nvidia", "model.py")
+	if strings.Count(v4, "disable_tp=is_sequence_parallel,") < 2 ||
+		!strings.Contains(v4, "replicated and no collective ops are needed") {
+		t.Error("the shared expert is no longer replicated under sequence parallelism")
 	}
 	runner := readSource(t, root, "vllm", "model_executor", "layers", "fused_moe", "runner", "moe_runner.py")
 	i := strings.Index(runner, "def _maybe_reduce_final_output(")
@@ -590,13 +655,87 @@ func TestModelSequenceParallelCollectivesMatchSource(t *testing.T) {
 		t.Fatal("_maybe_reduce_final_output not found; FusedMoE's reduction may have moved")
 	}
 	body := runner[i:]
-	body = body[:strings.Index(body, "return states")]
+	if j := strings.Index(body[1:], "\n    def "); j > 0 {
+		body = body[:j+1]
+	}
 	if !strings.Contains(body, "not self.moe_config.is_sequence_parallel") ||
-		!strings.Contains(body, "tensor_model_parallel_all_reduce(states)") {
+		!strings.Contains(body, "tensor_model_parallel_all_reduce(") {
 		t.Error("FusedMoE's final all-reduce no longer depends on sequence parallelism")
 	}
-	v41 := readSource(t, root, "vllm", "models", "deepseek_v41", "nvidia", "model.py")
-	if !strings.Contains(v41, "use_sequence_parallel=self.use_sequence_parallel,") {
-		t.Error("DeepSeek-V4.1 no longer passes its own sequence-parallel flag to its MoE")
+}
+
+// pplx and naive run as allgather_reducescatter.
+func TestAll2AllBackendRenamesMatchSource(t *testing.T) {
+	root := vllmSource(t)
+	src := readSource(t, root, "vllm", "config", "parallel.py")
+	if !strings.Contains(src, `if self.all2all_backend in ["pplx", "naive"]:`) ||
+		!strings.Contains(src, `self.all2all_backend = "allgather_reducescatter"`) {
+		t.Error("the engine no longer replaces pplx and naive with allgather_reducescatter")
+	}
+	want := map[string]string{"pplx": "allgather_reducescatter", "naive": "allgather_reducescatter"}
+	if !reflect.DeepEqual(Pack().All2AllBackendRenames, want) {
+		t.Errorf("All2AllBackendRenames: pack has %v, the engine %v", Pack().All2AllBackendRenames, want)
+	}
+}
+
+// The engine lower-cases --moe-backend and turns dashes into underscores, as
+// rules.NormalizeMoEBackend does.
+func TestMoEBackendNormalizationMatchSource(t *testing.T) {
+	root := vllmSource(t)
+	if !strings.Contains(readSource(t, root, "vllm", "config", "kernel.py"),
+		`return value.lower().replace("-", "_")`) {
+		t.Error("the engine no longer normalizes moe_backend as rules.NormalizeMoEBackend does")
+	}
+}
+
+// WindowPagesPerRequest's formula is the engine's per-request admission cap.
+func TestWindowPagesMatchSource(t *testing.T) {
+	root := vllmSource(t)
+	src := readSource(t, root, "vllm", "v1", "kv_cache_interface.py")
+	for _, want := range []string{
+		"self.sliding_window - 1 + self.extra_retained_tokens + max_in_flight_tokens,",
+		"return cdiv(num_tokens, self.block_size) + 1",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("the window admission cap changed: %q is gone", want)
+		}
+	}
+}
+
+// The block size validate_block_size checks is the smallest prefix-cacheable group's,
+// which effectiveBlocks encodes.
+func TestEffectiveBlockMatchSource(t *testing.T) {
+	root := vllmSource(t)
+	src := readSource(t, root, "vllm", "v1", "engine", "core.py")
+	for _, want := range []string{"if g.kv_cache_spec.prefix_cacheable", "vllm_config.cache_config.block_size = min(", "vllm_config.validate_block_size()"} {
+		if !strings.Contains(src, want) {
+			t.Errorf("the block-size replacement changed: %q is gone", want)
+		}
+	}
+}
+
+// The resolutions ResolveCacheDType encodes for DeepSeek-V4.1: on the packed layout auto
+// and fp8 become the backend's record; FlashMLA's is fp8_ds_mla and mega attention's
+// nvfp4_ds_mla; mega attention is SM100's default where it can serve the width, which
+// needs tp to divide the heads and output groups. The pack's TPDivides of 8 is
+// DeepSeek-V4.1-Flash's o_groups, which every width dividing it also leaves 8 heads per
+// group (64 heads), as the rule's last clause needs.
+func TestCacheDTypeResolutionsMatchSource(t *testing.T) {
+	root := vllmSource(t)
+	attn := readSource(t, root, "vllm", "models", "deepseek_v41", "attention.py")
+	mega := readSource(t, root, "vllm", "models", "deepseek_v41", "nvidia", "flash_mla_mega_attn.py")
+	sel := readSource(t, root, "vllm", "models", "deepseek_v41", "nvidia", "model.py")
+	for _, c := range []struct{ src, what, text string }{
+		{attn, "the auto/fp8 rewrite", `if kv_cache_dtype in ("auto", "fp8"):`},
+		{attn, "FlashMLA's record", `return "fp8_ds_mla"`},
+		{mega, "mega attention's record", `return "nvfp4_ds_mla"`},
+		{mega, "the SM100 requirement", "if not current_platform.is_device_capability_family(100):"},
+		{mega, "the width rule", "if n_heads % tp_size or n_groups % tp_size:"},
+		{mega, "the group rule", "return n_local_heads // n_local_groups == WV_GROUP_SIZE"},
+		{sel, "mega attention as the default", "if DeepseekV4MegaAttnAttention.is_available_for(vllm_config):"},
+	} {
+		if !strings.Contains(c.src, c.text) {
+			t.Errorf("%s changed: %q is gone", c.what, c.text)
+		}
 	}
 }

@@ -921,3 +921,141 @@ func TestModelSequenceParallelCollectives(t *testing.T) {
 		}
 	}
 }
+
+// pplx and naive are accepted and run as allgather_reducescatter, so they make the MoE
+// input sequence-parallel exactly where that backend does, and the rule names what runs.
+func TestRenamedAll2AllBackends(t *testing.T) {
+	p := Pack()
+	for _, pl := range layoutGrid() {
+		want := p.SequenceParallelMoE("allgather_reducescatter", pl.EnableExpertParallel, pl.TP, pl.DP)
+		for _, b := range []string{"pplx", "naive"} {
+			if got := p.SequenceParallelMoE(b, pl.EnableExpertParallel, pl.TP, pl.DP); got != want {
+				t.Fatalf("%+v %q: %v, but allgather_reducescatter gives %v", pl, b, got, want)
+			}
+		}
+	}
+	pl := deployment.Parallelism{TP: 8, PP: 1, DP: 1}
+	r := run(t, dep(colocated(pl, deployment.Engine{All2AllBackend: "pplx"})), graniteGraph())
+	if !fired(r, "all2all-backend-known") || !r.OK() || !strings.Contains(r.Error(), "allgather_reducescatter") {
+		t.Errorf("pplx should warn that allgather_reducescatter runs:\n%s", r.Error())
+	}
+}
+
+// vLLM spells the MoE backend in lower case with underscores before validating it.
+func TestMoEBackendIsNormalized(t *testing.T) {
+	pl := deployment.Parallelism{TP: 8, PP: 1, DP: 1}
+	for _, b := range []string{"deep-gemm-mega-moe", "DEEP_GEMM_MEGA_MOE", "Deep-Gemm"} {
+		if r := run(t, dep(colocated(pl, deployment.Engine{MoEBackend: b})), graniteGraph()); fired(r, "enum-values-known") {
+			t.Errorf("%q is accepted by the engine once normalized:\n%s", b, r.Error())
+		}
+	}
+	v4 := deployment.Parallelism{TP: 8, PP: 1, DP: 1, EnableExpertParallel: true}
+	if !Pack().ModelSequenceParallel(rules.ArchDeepseekV4, v4, "deep-gemm-mega-moe") {
+		t.Error("a dashed mega-MoE backend should count as one")
+	}
+}
+
+// A model that decides its own sequence parallelism never consults the engine-wide rule,
+// so the rule stays silent for it on a layout where the engine-wide rule is on.
+func TestSequenceParallelMoEImpliedSkipsOwnRule(t *testing.T) {
+	pl := deployment.Parallelism{TP: 2, PP: 2, DP: 2, EnableExpertParallel: true}
+	for arch, want := range map[string]bool{rules.ArchDeepseekV4: false, "DeepseekV3ForCausalLM": true} {
+		g := graniteGraph()
+		g.Global.Architecture = arch
+		if got := fired(run(t, dep(colocated(pl, deployment.Engine{})), g), "sequence-parallel-moe-implied"); got != want {
+			t.Errorf("%s: fired=%v, want %v", arch, got, want)
+		}
+	}
+}
+
+// This release lowers the checked block size to the smallest prefix-cacheable group's. A
+// kv cache paged at 32 always takes part, so the failure is certain; a window cache paged
+// at 32 takes part only without bounded replay, so the failure is possible and warns.
+func TestInterleaveChecksTheEffectiveBlock(t *testing.T) {
+	pool := colocated(deployment.Parallelism{TP: 8, PP: 1, DP: 1, DCP: 8},
+		deployment.Engine{CPKVCacheInterleaveSize: 64, BlockSize: 256})
+	severity := func(kind model.CacheKind) string {
+		g := graniteGraph()
+		c := model.Cache{Name: "c", Kind: kind, Owned: true, BytesPerEntry: 584, BlockSize: 32}
+		if kind == model.CacheWindow {
+			c.Window = 128
+			g.LayerKinds[0].Nodes[0].Window = 128
+		}
+		g.LayerKinds[0].Nodes[0].Caches = []model.Cache{c}
+		for _, pr := range run(t, dep(pool), g).All() {
+			if pr.Rule == "cp-kv-cache-interleave-fits-block" {
+				return string(pr.Severity)
+			}
+		}
+		return ""
+	}
+	if got := severity(model.CacheKV); got != "error" {
+		t.Errorf("a kv cache paged at 32: got %q, want error", got)
+	}
+	if got := severity(model.CacheWindow); got != "warning" {
+		t.Errorf("a window cache paged at 32: got %q, want warning", got)
+	}
+	if got := severity(model.CacheState); got != "" {
+		t.Errorf("a state cache never takes part in prefix caching: got %q", got)
+	}
+}
+
+// On a moonep pool an FP16 checkpoint may be cast to BF16 by --dtype, which a deployment
+// does not record, so it warns where a quantized checkpoint is refused.
+func TestMoonEPOnFP16Warns(t *testing.T) {
+	pl := deployment.Parallelism{TP: 1, PP: 1, DP: 8, EnableExpertParallel: true}
+	g := graniteGraph()
+	g.Global.WeightDType = model.DTypeFP16
+	p := run(t, dep(colocated(pl, deployment.Engine{All2AllBackend: "moonep"})), g)
+	if !fired(p, "moonep-requirements") || !p.OK() {
+		t.Errorf("want a warning, not an error:\n%s", p.Error())
+	}
+}
+
+// The cache dtype that runs on DeepSeek-V4.1: on SM100 mega attention's NVFP4 record
+// wherever tp divides 8, FlashMLA's MXFP8 record otherwise, FlashMLA's FP8 record on SM90;
+// a stated packed dtype runs as stated; other architectures run what they request.
+func TestResolveCacheDType(t *testing.T) {
+	p := Pack()
+	v41 := rules.ArchDeepseekV41
+	for _, c := range []struct {
+		arch            string
+		family, tp      int
+		requested, want string
+	}{
+		{v41, 10, 8, "", "nvfp4_ds_mla"},
+		{v41, 10, 4, "fp8", "nvfp4_ds_mla"},
+		{v41, 10, 1, "auto", "nvfp4_ds_mla"},
+		{v41, 10, 16, "auto", "fp8_ds_mla"},
+		{v41, 10, 3, "auto", "fp8_ds_mla"},
+		{v41, 10, 8, "fp8_ds_mla", "fp8_ds_mla"},
+		{v41, 9, 8, "auto", "fp8_ds_mla"},
+		{v41, 9, 8, "fp8", "fp8_ds_mla"},
+		{"DeepseekV3ForCausalLM", 10, 8, "auto", "auto"},
+	} {
+		if got := p.ResolveCacheDType(c.arch, c.family, c.tp, c.requested); got != c.want {
+			t.Errorf("%s sm%d0 tp %d %q: %q, want %q", c.arch, c.family, c.tp, c.requested, got, c.want)
+		}
+	}
+}
+
+// The window-pages formula: a 128-token window at 32-token pages holds 5 pages with one
+// token in flight and 6 with DSpark's 1 + 5; max_model_len caps it; a non-window cache has none.
+func TestWindowPagesPerRequest(t *testing.T) {
+	p := Pack()
+	w := model.Cache{Kind: model.CacheWindow, Window: 128, BlockSize: 32}
+	for _, c := range []struct{ inFlight, extra, maxLen, want int }{
+		{1, 0, 0, 5}, {6, 0, 0, 6}, {6, 0, 64, 3}, {1, 4, 0, 6},
+	} {
+		if got := p.WindowPagesPerRequest(w, 64, c.inFlight, c.extra, c.maxLen); got != c.want {
+			t.Errorf("%+v: %d pages, want %d", c, got, c.want)
+		}
+	}
+	if got := p.WindowPagesPerRequest(model.Cache{Kind: model.CacheKV, BlockSize: 32}, 64, 6, 0, 0); got != 0 {
+		t.Errorf("a kv cache is not a window: %d", got)
+	}
+	// The engine block applies where the cache states none.
+	if got := p.WindowPagesPerRequest(model.Cache{Kind: model.CacheWindow, Window: 128}, 64, 1, 0, 0); got != 3 {
+		t.Errorf("at 64-token pages: %d, want 3", got)
+	}
+}

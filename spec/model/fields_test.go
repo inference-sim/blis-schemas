@@ -55,6 +55,7 @@ func v41Graph() *Graph {
 		SequentialHead: []Node{{Op: OpGather, Role: "markov_w1", Rows: 100352, RowBytes: 512,
 			RowsPerToken: 1, OutBytesPerToken: 512}},
 	}
+	g.BaseCapabilityFamilies = []int{9}
 	g.ArchOverrides = []ArchOverride{{CapabilityFamily: 10,
 		Nodes:  []NodeOverride{{Role: "fused_wqa_wkv", WeightDType: DTypeBF16}},
 		Caches: []CacheOverride{{Name: "swa", BytesPerEntry: 528}}}}
@@ -100,7 +101,7 @@ func TestV41FieldRejects(t *testing.T) {
 		}},
 		{"entries on a kv cache", "only a state cache", func(g *Graph) { source(g)[1].Caches[1].Entries = 8 }},
 		{"kv granularity disagrees with the read", "reads at compress_ratio 2", func(g *Graph) { source(g)[1].Caches[1].TokensPerEntry = 1 }},
-		{"window disagrees with the read", "reads a window of 128", func(g *Graph) { source(g)[1].Caches[0].Window = 64 }},
+		{"window cache wider than the read", "is 256 but the node reads a window of 128", func(g *Graph) { source(g)[1].Caches[0].Window = 256 }},
 		{"duplicate name in a layer", "duplicate cache name", func(g *Graph) {
 			source(g)[1].Caches = append(source(g)[1].Caches, source(g)[1].Caches[0])
 		}},
@@ -297,13 +298,18 @@ func TestStoredBytes(t *testing.T) {
 
 func TestForCapabilityLeavesOtherFamiliesAlone(t *testing.T) {
 	g := v41Graph()
-	for _, major := range []int{8, 9, 12} {
-		r, err := g.ForCapability(major)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got := r.LayerKinds[0].Nodes[0].WeightDType; got != "" {
-			t.Errorf("family %d picked up the family-10 override: %q", major, got)
+	r9, err := g.ForCapability(9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := r9.LayerKinds[0].Nodes[0].WeightDType; got != "" {
+		t.Errorf("the base family picked up the family-10 override: %q", got)
+	}
+	// A family the graph describes neither as its base nor by override is refused rather
+	// than given the base's facts.
+	for _, major := range []int{0, 8, 12} {
+		if _, err := g.ForCapability(major); err == nil {
+			t.Errorf("family %d resolved, though the graph describes only 9 and 10", major)
 		}
 	}
 	r, err := g.ForCapability(10)
@@ -432,7 +438,7 @@ func TestValidGraphsStayValidUnderEveryOverlay(t *testing.T) {
 		if p := g.Validate(); !p.OK() {
 			t.Fatalf("base:\n%s", p.Error())
 		}
-		for major := 1; major <= 12; major++ {
+		for _, major := range []int{9, 10} {
 			r, err := g.ForCapability(major)
 			if err != nil {
 				t.Fatal(err)
@@ -440,6 +446,122 @@ func TestValidGraphsStayValidUnderEveryOverlay(t *testing.T) {
 			if p := r.Validate(); !p.OK() {
 				t.Fatalf("valid base, invalid under family %d:\n%s", major, p.Error())
 			}
+		}
+	}
+}
+
+// A window-only layer on the sparse kernel is sparse_mla with a window as its bound; with
+// no bound at all it is refused.
+func TestWindowOnlySparseMLA(t *testing.T) {
+	g := validGraph()
+	g.LayerKinds[0].Nodes[2] = Node{Op: OpAttention, AttentionKind: AttentionSparseMLA,
+		NumQHeads: 64, NumKVHeads: 1, HeadDim: 512, Window: 128}
+	if p := g.Validate(); !p.OK() {
+		t.Fatalf("a window-only sparse_mla node was refused:\n%s", p.Error())
+	}
+	g.LayerKinds[0].Nodes[2].Window = 0
+	if p := g.Validate(); p.OK() || !strings.Contains(p.Error(), "index_topk, compress_ratio or window") {
+		t.Errorf("an unbounded sparse_mla node validated:\n%s", p.Error())
+	}
+}
+
+// An alias reads its target's weights in the target's format: it may not state one, and
+// it is priced at the target's bytes per parameter -- BF16 for a DSpark head reading the
+// BF16 LM head under an FP8 global dtype -- and a tied head at its table's row width.
+func TestAliasInheritsItsTargetsFormat(t *testing.T) {
+	g := v41Graph()
+	g.Head[0].WeightDType = DTypeBF16
+	if p := g.Validate(); !p.OK() {
+		t.Fatal(p.Error())
+	}
+	if got := g.WeightBytesPerParam(g.Speculator.Head[0]); got != 2 {
+		t.Errorf("the alias of a BF16 head costs %v B per parameter, want 2", got)
+	}
+	g.Speculator.Head[0].WeightDType = DTypeNVFP4
+	if p := g.Validate(); p.OK() || !strings.Contains(p.Error(), "remove its weight_dtype and weight_scale") {
+		t.Errorf("an alias stating its own format validated:\n%s", p.Error())
+	}
+	tied := v41Graph()
+	tied.Head[0] = Node{Op: OpGEMM, Role: "lm_head", N: 100352, K: 3072, Aliases: "embedding.embed_tokens"}
+	tied.Speculator.Head[0].Aliases = ""
+	if p := tied.Validate(); !p.OK() {
+		t.Fatal(p.Error())
+	}
+	if got, want := tied.WeightBytesPerParam(tied.Head[0]), 6144.0/3072; got != want {
+		t.Errorf("a tied head costs %v B per parameter, want its table's %v", got, want)
+	}
+}
+
+// Work that names a cache names one of its own layer's, and per-entry work follows a
+// stream the layer has; nodes outside every layer have no cache to name.
+func TestCacheReferences(t *testing.T) {
+	cases := []struct {
+		name, want string
+		mutate     func(*Graph)
+	}{
+		{"insert into an absent cache", `writes_cache: "nope" names no cache of this layer`, func(g *Graph) {
+			g.LayerKinds[0].Nodes[4].WritesCache = "nope"
+		}},
+		{"insert into a cache another layer writes", "is read from another layer, which writes it", func(g *Graph) {
+			g.LayerKinds[1].Nodes = append(g.LayerKinds[1].Nodes, Node{Op: OpElementwise, WritesCache: "compressed", PerTokens: 2})
+		}},
+		{"insert at the wrong granularity", `per_tokens: is 1 but "compressed" holds one entry per 2 tokens`, func(g *Graph) {
+			g.LayerKinds[0].Nodes[4].WritesCache = "compressed"
+			g.LayerKinds[0].Nodes[4].PerTokens = 0
+		}},
+		{"per-entry work at no ratio the layer has", "per_tokens: 4 is no compress ratio this layer reads at", func(g *Graph) {
+			g.LayerKinds[0].Nodes[4].PerTokens = 4
+		}},
+		{"context read of an absent cache", `reads_cache: "nope" names no cache of this layer`, func(g *Graph) {
+			g.LayerKinds[0].Nodes[5].Context.ReadsCache = "nope"
+		}},
+		{"context read restating the cache's tokens", "tokens_per_entry: is the read cache's", func(g *Graph) {
+			g.LayerKinds[0].Nodes[5].Context.ReadsCache = "compressed"
+			g.LayerKinds[0].Nodes[5].Context.TokensPerEntry = 2
+		}},
+		{"a head node with caches", "head[0].caches: only a node in a layer kind reads a cache", func(g *Graph) {
+			g.Head = append([]Node{{Op: OpAttention, AttentionKind: AttentionGQA, NumQHeads: 8, NumKVHeads: 8, HeadDim: 64,
+				Caches: []Cache{{Name: "x", Kind: CacheKV, Owned: true, BytesPerEntry: 1}}}}, g.Head...)
+		}},
+		{"per-entry work in the embedding", "embedding[1].per_tokens: only a layer's per-entry work", func(g *Graph) {
+			g.Embedding = append(g.Embedding, Node{Op: OpElementwise, PerTokens: 2})
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			g := v41Graph()
+			c.mutate(g)
+			if p := g.Validate(); p.OK() || !strings.Contains(p.Error(), c.want) {
+				t.Errorf("want a finding containing %q, got:\n%s", c.want, p.Error())
+			}
+		})
+	}
+	// The references that hold validate: an insert into the layer's own cache at its
+	// granularity, and a context read of a cache the layer reads.
+	g := v41Graph()
+	g.LayerKinds[0].Nodes[4].WritesCache = "compressed"
+	g.LayerKinds[0].Nodes[5].Context = &ContextWork{ReadsCache: "compressed", BytesPerEntry: 1024, Per: PerRequest, Phase: PhasePrefill}
+	if p := g.Validate(); !p.OK() {
+		t.Errorf("valid references were refused:\n%s", p.Error())
+	}
+}
+
+// The families a graph's base describes are stated with its overrides, listed once each,
+// and never also overridden.
+func TestBaseCapabilityFamilies(t *testing.T) {
+	for _, c := range []struct {
+		name, want string
+		mutate     func(*Graph)
+	}{
+		{"overrides without a base", "base_capability_families: required with arch_overrides", func(g *Graph) { g.BaseCapabilityFamilies = nil }},
+		{"a base family twice", "family 9 is listed twice", func(g *Graph) { g.BaseCapabilityFamilies = []int{9, 9} }},
+		{"a base family overridden", "family 10 is listed as the base", func(g *Graph) { g.BaseCapabilityFamilies = []int{9, 10} }},
+		{"family zero", "base_capability_families[0]: must be a positive", func(g *Graph) { g.BaseCapabilityFamilies = []int{0} }},
+	} {
+		g := v41Graph()
+		c.mutate(g)
+		if p := g.Validate(); p.OK() || !strings.Contains(p.Error(), c.want) {
+			t.Errorf("%s: want %q, got:\n%s", c.name, c.want, p.Error())
 		}
 	}
 }

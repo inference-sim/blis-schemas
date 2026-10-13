@@ -62,7 +62,8 @@ const (
 	// ShardRows: the table's rows split evenly across ranks, and each token's row is
 	// read by the one rank that holds it; the others contribute zeros to a reduction.
 	// vLLM's VocabParallelEmbedding divides the padded vocabulary this way and ends
-	// with a tensor-parallel all-reduce.
+	// with a tensor-parallel all-reduce, which the graph states as its own collective
+	// node after the gather.
 	ShardRows GatherShard = "rows"
 	// ShardHeads: the table is rows_per_token sub-tables, one per hash head, split across
 	// S shards, each holding ceil(rows_per_token / S) whole heads and reading one row from

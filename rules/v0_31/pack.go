@@ -128,9 +128,25 @@ func Pack() *rules.Pack {
 		// model.py; the ROCm module's is always False, see SequenceParallelCondition):
 		// pipeline_parallel_size == 1 and enable_expert_parallel and tensor_parallel_size
 		// > 1 and (use_mega_moe or data_parallel_size > 1).
+		// DeepSeek-V4's is the same function (vllm/models/deepseek_v4/nvidia/model.py).
 		ModelSequenceParallelRules: map[string]rules.SequenceParallelCondition{
-			rules.ArchDeepseekV41: {PipelineParallelOne: true, ExpertParallel: true,
+			rules.ArchDeepseekV41: rules.SequenceParallelCondition{PipelineParallelOne: true, ExpertParallel: true,
 				TensorParallelAboveOne: true, MegaMoEOrDataParallelAboveOne: true},
+			rules.ArchDeepseekV4: rules.SequenceParallelCondition{PipelineParallelOne: true, ExpertParallel: true,
+				TensorParallelAboveOne: true, MegaMoEOrDataParallelAboveOne: true},
+		},
+
+		// DeepSeek-V4.1's packed layout rewrites auto and fp8 to its backend's record
+		// (vllm/models/deepseek_v41/attention.py): mega attention's nvfp4_ds_mla where it
+		// serves the layout -- SM100, tp dividing the 8 output groups -- and FlashMLA's
+		// fp8_ds_mla otherwise. SM120 runs a plain-row FlashInfer cache, which no
+		// resolution here describes.
+		CacheDTypeResolutions: map[string]rules.CacheDTypeResolutions{
+			rules.ArchDeepseekV41: {
+				{CapabilityFamily: 10, Requested: []string{"auto", "fp8"}, ResolvesTo: "nvfp4_ds_mla", TPDivides: 8},
+				{CapabilityFamily: 10, Requested: []string{"auto", "fp8"}, ResolvesTo: "fp8_ds_mla"},
+				{CapabilityFamily: 9, Requested: []string{"auto", "fp8"}, ResolvesTo: "fp8_ds_mla"},
+			},
 		},
 
 		SchedulerPolicies: set("fcfs", "priority"),
@@ -189,8 +205,12 @@ func Pack() *rules.Pack {
 
 		CascadeAttnOptIn: true,
 
-		// all2all_backend: All2AllBackend = "allgather_reducescatter" (vllm/config/parallel.py).
+		// all2all_backend: All2AllBackend = "allgather_reducescatter" (vllm/config/parallel.py),
+		// and the two accepted names it replaces with that one ("has been removed. Falling
+		// back to 'allgather_reducescatter'").
 		DefaultAll2AllBackend: "allgather_reducescatter",
+		All2AllBackendRenames: map[string]string{
+			"pplx": "allgather_reducescatter", "naive": "allgather_reducescatter"},
 
 		// _NGRAM_LAYER_FIELDS (vllm/config/engram.py), and EngramConfig.cpu_offload: bool = True.
 		EngramArchitectures: set(rules.ArchDeepseekV41, "Qwen4ExpForCausalLM",
@@ -205,7 +225,7 @@ func ruleList(p *rules.Pack) []rules.Rule {
 	return []rules.Rule{
 		{
 			Name:    "all2all-backend-known",
-			Because: "an unrecognized backend name would be priced with the default volume basis, which differs by a factor of top_k",
+			Because: "an unrecognized backend name would be priced with the default volume basis, which differs by a factor of top_k; an accepted name the engine replaces (pplx, naive) is priced as what runs, which the warning names",
 			Check: func(in rules.Input, out *validate.Problems) {
 				forEachEngine(in, func(at string, e deployment.Engine) {
 					if e.All2AllBackend == "" {
@@ -215,6 +235,10 @@ func ruleList(p *rules.Pack) []rules.Rule {
 						out.RuleErrorf("all2all-backend-known",
 							"%s.engine.all2all_backend: %q is not accepted by engine %s",
 							at, e.All2AllBackend, p.Version)
+					} else if to, ok := p.All2AllBackendRenames[e.All2AllBackend]; ok {
+						out.RuleWarnf("all2all-backend-known",
+							"%s.engine.all2all_backend: engine %s accepts %q but runs %q in its place; price that one",
+							at, p.Version, e.All2AllBackend, to)
 					}
 				})
 			},
@@ -252,7 +276,7 @@ func ruleList(p *rules.Pack) []rules.Rule {
 					check("cache_dtype", e.CacheDType, p.CacheDTypes)
 					check("mamba_cache_dtype", e.MambaCacheDType, p.MambaDTypes)
 					check("mamba_ssm_cache_dtype", e.MambaSSMCacheDType, p.MambaDTypes)
-					check("moe_backend", e.MoEBackend, p.MoEBackends)
+					check("moe_backend", rules.NormalizeMoEBackend(e.MoEBackend), p.MoEBackends)
 					check("mamba_cache_mode", e.MambaCacheMode, p.MambaCacheModes)
 					check("scheduling_policy", e.SchedulingPolicy, p.SchedulerPolicies)
 				})
@@ -296,7 +320,7 @@ func ruleList(p *rules.Pack) []rules.Rule {
 		},
 		{
 			Name:    "cp-kv-cache-interleave-fits-block",
-			Because: "with decode-context parallelism on and no NixlConnector configured, this release asserts at startup that block_size is at least, and divisible by, cp_kv_cache_interleave_size (vllm/config/vllm.py validate_block_size), so a layout breaking it does not start; unlike v0.29.0, any other connector leaves the assert in force",
+			Because: "with decode-context parallelism on and no NixlConnector configured, this release asserts at startup that block_size is at least, and divisible by, cp_kv_cache_interleave_size (vllm/config/vllm.py validate_block_size), so a layout breaking it does not start; unlike v0.29.0, any other connector leaves the assert in force. The block size it checks is the smallest prefix-cacheable KV cache group's, which can be a model's own window-cache page size rather than the stated one",
 			Check: func(in rules.Input, out *validate.Problems) {
 				// Only where the assert is certain to run on the values stated:
 				//   - a NixlConnector, directly or as a MultiConnector child, skips the
@@ -313,16 +337,35 @@ func ruleList(p *rules.Pack) []rules.Rule {
 				}
 				forEachPool(in, func(at string, pool deployment.Pool) {
 					e := pool.Engine
-					size, block := e.CPKVCacheInterleaveSize, e.BlockSize
-					if pool.Parallel.DCP <= 1 || size < 1 || block < 1 {
+					size, stated := e.CPKVCacheInterleaveSize, e.BlockSize
+					if pool.Parallel.DCP <= 1 || size < 1 || stated < 1 {
 						return
 					}
-					// One test covers both halves of the engine's assert: a size above
-					// the block leaves the block itself as the remainder.
-					if block%size != 0 {
+					// The assert reads the block size after the engine has replaced the
+					// stated one with the smallest KV cache group's (vllm/v1/engine/core.py),
+					// which a cache with its own page size lowers. One test covers both
+					// halves of the assert: a size above the block leaves the block itself
+					// as the remainder.
+					blocks := effectiveBlocks(in.Model, stated)
+					failing := 0
+					for _, b := range blocks {
+						if b%size != 0 {
+							failing++
+						}
+					}
+					switch {
+					case failing == len(blocks):
+						checked := fmt.Sprintf("block_size %d", blocks[0])
+						if blocks[0] != stated {
+							checked = fmt.Sprintf("block_size %d (the engine checks %d, not the stated %d)", blocks[0], blocks[0], stated)
+						}
 						out.RuleErrorf("cp-kv-cache-interleave-fits-block",
-							"%s.engine: block_size %d must be at least, and divisible by, cp_kv_cache_interleave_size %d when dcp is %d; engine %s refuses it at startup",
-							at, block, size, pool.Parallel.DCP, Version)
+							"%s.engine: %s must be at least, and divisible by, cp_kv_cache_interleave_size %d when dcp is %d; engine %s refuses it at startup",
+							at, checked, size, pool.Parallel.DCP, Version)
+					case failing > 0:
+						out.RuleWarnf("cp-kv-cache-interleave-fits-block",
+							"%s.engine: cp_kv_cache_interleave_size %d fits some of the block sizes the engine may check, %v, and not others; which applies turns on whether the window cache takes part in prefix caching, so engine %s may refuse it at startup",
+							at, size, blocks, Version)
 					}
 				})
 			},
@@ -787,15 +830,18 @@ func ruleList(p *rules.Pack) []rules.Rule {
 		},
 		{
 			Name:    "moonep-requirements",
-			Because: "this release refuses the moonep all2all backend at startup for a quantized model, a model whose dtype is not BF16, and with EPLB (vllm/config/vllm.py), so such a pool does not run; its refusal of a non-linear expert placement needs no check, because a deployment cannot state one and the default is linear",
+			Because: "this release refuses the moonep all2all backend at startup for a quantized model, a model whose runtime dtype is not BF16, and with EPLB (vllm/config/vllm.py), so such a pool does not run; an FP16 checkpoint is a warning, since --dtype bfloat16 casts it and a deployment does not record the dtype; the refusal of a non-linear expert placement needs no check, because a deployment cannot state one and the default is linear",
 			Check: func(in rules.Input, out *validate.Problems) {
 				forEachEngine(in, func(at string, e deployment.Engine) {
 					if e.All2AllBackend != "moonep" {
 						return
 					}
+					// The engine checks the runtime dtype, and --dtype bfloat16 casts an FP16
+					// checkpoint (vllm/config/model.py: "Casting between float16 and
+					// bfloat16 is allowed"), which the deployment does not record.
 					if in.Model != nil && in.Model.Global.WeightDType == model.DTypeFP16 {
-						out.RuleErrorf("moonep-requirements",
-							"%s.engine: all2all_backend moonep on an FP16 checkpoint; engine %s supports moonep for BF16 models only",
+						out.RuleWarnf("moonep-requirements",
+							"%s.engine: all2all_backend moonep on an FP16 checkpoint; engine %s supports moonep for BF16 models only, so it starts only if served with --dtype bfloat16",
 							at, p.Version)
 					}
 					if e.Quantization != "" {
@@ -819,16 +865,19 @@ func ruleList(p *rules.Pack) []rules.Rule {
 			Name:    "sequence-parallel-moe-implied",
 			Because: "on this backend with tensor and data parallelism both above one, the engine makes the MoE input sequence-parallel, which replaces the layer's all-reduce with a different pair of collectives",
 			Check: func(in rules.Input, out *validate.Problems) {
+				// A model that decides its own sequence parallelism never consults the
+				// engine-wide rule, so the rule says nothing about it.
+				if in.Model != nil {
+					if _, own := p.ModelSequenceParallelRules[in.Model.Global.Architecture]; own {
+						return
+					}
+				}
 				forEachPool(in, func(at string, pool deployment.Pool) {
 					pl := pool.Parallel
 					if !p.SequenceParallelMoE(pool.Engine.All2AllBackend, pl.EnableExpertParallel, pl.TP, pl.DP) {
 						return
 					}
-					// An unstated backend is the engine default, which the method applies.
-					backend := pool.Engine.All2AllBackend
-					if backend == "" {
-						backend = p.DefaultAll2AllBackend
-					}
+					backend := p.EffectiveAll2AllBackend(pool.Engine.All2AllBackend)
 					out.RuleWarnf("sequence-parallel-moe-implied",
 						"%s: engine %s makes the MoE input sequence-parallel here (backend %q, tp %d, dp %d), so the model graph must emit a reduce-scatter and all-gather pair rather than an all-reduce",
 						at, p.Version, backend, pl.TP, pl.DP)
@@ -993,4 +1042,31 @@ func modelHasRecurrent(in rules.Input) bool {
 		}
 	}
 	return false
+}
+
+// effectiveBlocks is the block size validate_block_size reads, as the set it may be. This
+// release replaces the stated block size with the smallest page size among the KV cache
+// groups that take part in prefix caching (vllm/v1/engine/core.py). A kv or index cache
+// with its own page size always does; a state cache never does; a window cache does unless
+// bounded replay is on, which needs the V2 model runner and no prefill-context
+// parallelism (vllm/models/deepseek_v41/attention.py), so either answer is possible.
+func effectiveBlocks(g *model.Graph, stated int) []int {
+	sure, window := stated, stated
+	g.EachNode(func(_ string, n model.Node) {
+		for _, c := range n.Caches {
+			if c.BlockSize < 1 {
+				continue
+			}
+			switch c.Kind {
+			case model.CacheKV, model.CacheIndex:
+				sure = min(sure, c.BlockSize)
+			case model.CacheWindow:
+				window = min(window, c.BlockSize)
+			}
+		}
+	})
+	if with := min(sure, window); with != sure {
+		return []int{sure, with}
+	}
+	return []int{sure}
 }

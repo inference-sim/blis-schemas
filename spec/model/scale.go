@@ -69,7 +69,23 @@ func StoredBytes(d DType, s *WeightScale) float64 {
 // failing that, the dtype's intrinsic layout. The global layout does not follow a node
 // stored in a different format, because a scale layout belongs to a format: DeepSeek-
 // V4.1's BF16 router and FP32 mHC projections carry none of its FP8 weights' scales.
+//
+// An alias reads its target's weights, so it is priced at the target's format: the
+// weight-read traffic of a DSpark head reading the BF16 LM head is BF16's, whatever the
+// global dtype. An alias whose target does not resolve gets zero, as validation reports.
 func (g *Graph) WeightBytesPerParam(n Node) float64 {
+	if n.Aliases != "" {
+		target, _, err := g.resolveAlias(n.Aliases)
+		if err != nil || target.Aliases != "" {
+			return 0
+		}
+		// A tied LM head reads its embedding table: k elements per row, stored in the
+		// table's row width, scales included.
+		if n.Op == OpGEMM && target.Op == OpGather && n.K > 0 {
+			return float64(target.RowBytes) / float64(n.K)
+		}
+		n = target
+	}
 	if n.Op != OpGEMM && n.Op != OpGroupedGEMM {
 		return 0
 	}

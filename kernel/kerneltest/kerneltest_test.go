@@ -156,3 +156,53 @@ func TestNoCasesIsAFailure(t *testing.T) {
 		t.Error("TestPDTransfer with no cases passed, having checked nothing")
 	}
 }
+
+// floorOnly puts the whole price in the floor and names no link, which leaves an arbiter
+// nothing to share; it must not pass conformance.
+type floorOnly struct{ fake }
+
+func (f floorOnly) PDTransferDemand(tokens int, from, to kernel.Placement) kernel.TransferDemand {
+	d := f.fake.PDTransferDemand(tokens, from, to)
+	d.Floor, d.Links = d.AloneTime(), nil
+	return d
+}
+
+func (f floorOnly) PDTransferTime(tokens int, from, to kernel.Placement) time.Duration {
+	return f.PDTransferDemand(tokens, from, to).AloneTime()
+}
+
+// shrinking moves fewer bytes for more tokens past a threshold.
+type shrinking struct{ fake }
+
+func (s shrinking) PDTransferDemand(tokens int, from, to kernel.Placement) kernel.TransferDemand {
+	if tokens > 4096 {
+		tokens = 1
+	}
+	return s.fake.PDTransferDemand(tokens, from, to)
+}
+
+func (s shrinking) PDTransferTime(tokens int, from, to kernel.Placement) time.Duration {
+	return s.PDTransferDemand(tokens, from, to).AloneTime()
+}
+
+func TestConformanceRefusesUnarbitrableAndShrinkingDemands(t *testing.T) {
+	var malformed bool
+	for _, c := range PDCases() {
+		if err := CheckPDTransfer(floorOnly{}, c); err != nil && strings.Contains(err.Error(), "cross no link") {
+			malformed = true
+		}
+	}
+	if !malformed {
+		t.Error("a kernel pricing everything as floor with no links passed")
+	}
+	if err := CheckPayloadGrows(shrinking{}, PDCases()); err == nil {
+		t.Error("a kernel moving fewer bytes for more tokens passed")
+	}
+	if err := CheckPayloadGrows(fake{}, PDCases()); err != nil {
+		t.Errorf("a conforming kernel failed: %v", err)
+	}
+	// CheckLinksAgree now refuses a malformed demand from either kernel.
+	if err := CheckLinksAgree(fake{}, doubled{}, PDCase{Tokens: 4096, To: kernel.Placement{Node: 1}}); err == nil {
+		t.Error("CheckLinksAgree accepted a demand naming a link twice")
+	}
+}

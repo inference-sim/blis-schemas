@@ -84,8 +84,17 @@ type Pack struct {
 	// evaluates.
 	ModelSequenceParallelRules map[string]SequenceParallelCondition
 
-	// DefaultAll2AllBackend is the backend an unstated all2all_backend selects.
+	// DefaultAll2AllBackend is the backend an unstated all2all_backend selects, and
+	// All2AllBackendRenames the accepted names the engine replaces with another before
+	// using them (pplx and naive run as allgather_reducescatter in both registered
+	// releases, vllm/config/parallel.py).
 	DefaultAll2AllBackend string
+	All2AllBackendRenames map[string]string
+
+	// CacheDTypeResolutions say, per architecture, which cache dtype runs when the
+	// deployment requests one the attention backend resolves for itself, by compute
+	// capability and tensor-parallel width. See ResolveCacheDType.
+	CacheDTypeResolutions map[string]CacheDTypeResolutions
 
 	// EngramArchitectures are the architectures --engram-config may be given for, the
 	// keys of the engine's _NGRAM_LAYER_FIELDS; EngramCPUOffloadDefault is
@@ -238,19 +247,122 @@ func (p *Pack) Names() []string {
 //
 // An empty backend is the engine's default, DefaultAll2AllBackend, which is a member in
 // both registered releases, so an unstated backend is not a reason to answer false.
+//
+// A name the engine renames is looked up under the name it runs as.
 func (p *Pack) SequenceParallelMoE(backend string, expertParallel bool, tp, dp int) bool {
 	if !expertParallel || tp <= 1 || dp <= 1 {
 		return false
 	}
+	return p.SPMoEBackends[p.EffectiveAll2AllBackend(backend)]
+}
+
+// EffectiveAll2AllBackend is the backend the engine runs for a stated one: the default
+// for an unstated backend, and the replacement for a renamed one.
+func (p *Pack) EffectiveAll2AllBackend(backend string) string {
 	if backend == "" {
-		backend = p.DefaultAll2AllBackend
+		return p.DefaultAll2AllBackend
 	}
-	return p.SPMoEBackends[backend]
+	if to, ok := p.All2AllBackendRenames[backend]; ok {
+		return to
+	}
+	return backend
+}
+
+// NormalizeMoEBackend spells a --moe-backend value as the engine does before validating
+// it: lower case, dashes as underscores (vllm/config/kernel.py _normalize_moe_backend),
+// so deep-gemm-mega-moe is deep_gemm_mega_moe. Both registered releases normalize alike.
+func NormalizeMoEBackend(s string) string {
+	return strings.ReplaceAll(strings.ToLower(s), "-", "_")
+}
+
+// CacheDTypeResolution is one way an attention backend resolves a requested cache dtype:
+// on CapabilityFamily, a request in Requested runs as ResolvesTo, provided the tensor-
+// parallel width divides TPDivides (0: any width). Entries are tried in order and the
+// first that applies wins; a request no entry covers runs as stated.
+type CacheDTypeResolution struct {
+	CapabilityFamily int
+	Requested        []string
+	ResolvesTo       string
+	TPDivides        int
+}
+
+// CacheDTypeResolutions is one architecture's resolutions, in the order they are tried.
+type CacheDTypeResolutions []CacheDTypeResolution
+
+// String renders the resolutions for the generated documentation.
+func (rs CacheDTypeResolutions) String() string {
+	parts := make([]string, 0, len(rs))
+	for _, r := range rs {
+		when := ""
+		if r.TPDivides > 0 {
+			when = fmt.Sprintf(" where tp divides %d", r.TPDivides)
+		}
+		parts = append(parts, fmt.Sprintf("sm%d0: %s -> %s%s", r.CapabilityFamily, strings.Join(r.Requested, "/"), r.ResolvesTo, when))
+	}
+	return strings.Join(parts, "; ")
+}
+
+// ResolveCacheDType returns the cache dtype that runs for a requested one -- unstated
+// is auto -- on an architecture, compute-capability family and tensor-parallel width. It
+// is what a consumer looks a cache's record up by (Cache.EntryBytes).
+//
+// DeepSeek-V4.1 is why it exists: on its packed layout the backend rewrites auto and fp8
+// to the record its kernel prefers (vllm/models/deepseek_v41/attention.py), which is
+// fp8_ds_mla under FlashMLA and nvfp4_ds_mla under SM100's mega attention -- the SM100
+// default wherever mega attention can serve the width, which needs tp to divide the
+// model's 8 output groups (nvidia/flash_mla_mega_attn.py is_available_for). A deployment
+// that selects another attention backend, which the schema does not record, can change
+// the answer.
+func (p *Pack) ResolveCacheDType(architecture string, family, tp int, requested string) string {
+	if requested == "" {
+		requested = "auto"
+	}
+	if tp < 1 {
+		tp = 1
+	}
+	for _, r := range p.CacheDTypeResolutions[architecture] {
+		if r.CapabilityFamily != family || (r.TPDivides > 0 && r.TPDivides%tp != 0) {
+			continue
+		}
+		for _, q := range r.Requested {
+			if q == requested {
+				return r.ResolvesTo
+			}
+		}
+	}
+	return requested
+}
+
+// WindowPagesPerRequest is how many pages of a window cache vLLM lets one request hold:
+// cdiv(min(window - 1 + extraRetained + inFlight, maxModelLen), block) + 1, the same in
+// both registered releases (vllm/v1/kv_cache_interface.py
+// max_admission_blocks_per_request). The block is the cache's own page size where it
+// states one, else engineBlock. inFlight is the request's scheduled-but-unsettled tokens --
+// 1 + num_spec_tokens in a decode step -- or, for the engine's startup sizing, its
+// max_in_flight_tokens; extraRetained is max(0, num_prefill_lookahead_tokens - 1), zero
+// for every drafter but multi-module MTP. A cache that is not a window cache, or a
+// non-positive block, gives zero.
+func (p *Pack) WindowPagesPerRequest(c model.Cache, engineBlock, inFlight, extraRetained, maxModelLen int) int {
+	block := c.BlockSize
+	if block < 1 {
+		block = engineBlock
+	}
+	if c.Kind != model.CacheWindow || block < 1 {
+		return 0
+	}
+	tokens := c.Window - 1 + extraRetained + inFlight
+	if maxModelLen > 0 && tokens > maxModelLen {
+		tokens = maxModelLen
+	}
+	return (tokens+block-1)/block + 1
 }
 
 // ModelSequenceParallel reports whether a model's own sequence parallelism is on, for the
 // architecture its graph names, one pool's layout and its MoE backend, by the condition
-// this release declares for that architecture in ModelSequenceParallelRules. It decides
+// this release declares for that architecture in ModelSequenceParallelRules. The
+// condition is the CUDA model path's: on ROCm the same architectures load a module whose
+// sequence parallelism is always off (see SequenceParallelCondition), so a consumer
+// pricing a ROCm pool takes this as false. It decides
 // the sequence_parallel emit conditions. An architecture with no rule in this release
 // answers false. An unstated width counts as one, and an unstated MoE backend is the
 // engine's "auto", which is not a mega-MoE backend.
@@ -273,7 +385,7 @@ func (p *Pack) ModelSequenceParallel(architecture string, pl deployment.Parallel
 	if !c.MegaMoEOrDataParallelAboveOne {
 		return true
 	}
-	return p.MegaMoEBackends[moeBackend] || dp > 1
+	return p.MegaMoEBackends[NormalizeMoEBackend(moeBackend)] || dp > 1
 }
 
 // SequenceParallelCondition is one architecture's sequence-parallelism condition, as
@@ -316,9 +428,12 @@ func (c SequenceParallelCondition) String() string {
 	return strings.Join(parts, ", ")
 }
 
-// ArchDeepseekV41 is DeepSeek-V4.1's architecture name, the value of its configuration's
-// architectures[0].
-const ArchDeepseekV41 = "DeepseekV41ForCausalLM"
+// ArchDeepseekV41 and ArchDeepseekV4 are DeepSeek-V4.1's and DeepSeek-V4's architecture
+// names, the values of their configurations' architectures[0].
+const (
+	ArchDeepseekV41 = "DeepseekV41ForCausalLM"
+	ArchDeepseekV4  = "DeepseekV4ForCausalLM"
+)
 
 // CustomAllReduceSupportsWidth reports whether the SM-consuming reduction kernel handles
 // a given rank count.

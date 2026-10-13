@@ -23,9 +23,12 @@ global:
   context_window: 1048576
 
 # BF16, not FP8: the quant config has no method for an embedding.
+# Each rank looks up the rows it holds and the partial results are all-reduced, before the
+# residual stream is sharded for sequence parallelism.
 embedding:
 - {op: Gather, role: embed_tokens, rows: 129280, row_bytes: 10240, rows_per_token: 1,
    out_bytes_per_token: 10240, shard: rows}
+- {op: AllReduce, role: embed_out, emit: tensor_parallel}
 
 layer_kinds:
 # Layers 0 and 1: sliding window only, compress ratio 0. Layer 1 also looks up Engram.
@@ -37,7 +40,7 @@ layer_kinds:
   - {op: GEMM, role: fused_wqa_wkv, n: 1792, k: 5120, tp: replicated}
   - {op: GEMM, role: wq_b, n: 32768, k: 1280, tp: column}
   - op: Attention
-    kind: mla
+    kind: sparse_mla
     n_q: 64
     n_kv: 1
     d_h: 512
@@ -72,7 +75,7 @@ layer_kinds:
      bytes_per_token: 12288}
   - {op: GEMM, role: fused_wqa_wkv, n: 1792, k: 5120, tp: replicated}
   - op: Attention
-    kind: mla
+    kind: sparse_mla
     n_q: 64
     n_kv: 1
     d_h: 512
@@ -90,8 +93,10 @@ layer_kinds:
   - {op: GEMM, role: fused_wqa_wkv, n: 1792, k: 5120, tp: replicated}
   - {op: GEMM, role: compressor_fused_wkv_wgate, n: 1024, k: 5120, tp: replicated,
      weight_dtype: bf16}
-  # Launched per token, but only the last token of each ratio-2 group writes.
-  - {op: Elementwise, role: index_k_norm_rope_store, per_tokens: 2, tp: replicated}
+  # Launched per token, but only the last token of each ratio-2 group writes an entry of
+  # the index cache.
+  - {op: Elementwise, role: index_k_norm_rope_store, per_tokens: 2, writes_cache: index,
+     tp: replicated}
   - {op: GEMM, role: index_weights_proj, n: 32, k: 5120, tp: replicated, weight_dtype: bf16}
   - op: Attention
     role: block_index_scores
@@ -120,11 +125,12 @@ layer_kinds:
        page_alignment: 576}
     - {name: compressor_ring, kind: state, owned: true, bytes_per_entry: 4096, entries: 8}
   # The prefill path dequantizes the whole compressed stream into a BF16 workspace once
-  # per step: read the 584 B record, write 512 BF16 values. Every compressed layer runs
-  # it, readers included; this abridgement shows it once.
+  # per step: read each record, whatever size it is on the chip and cache dtype, and
+  # write 512 BF16 values. Every compressed layer runs it, readers included; this
+  # abridgement shows it once.
   - op: Elementwise
     role: prefill_dequant_gather
-    context: {bytes_per_entry: 1608, tokens_per_entry: 2, per: request, phase: prefill}
+    context: {reads_cache: compressed, bytes_per_entry: 1024, per: request, phase: prefill}
   edges: [[0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [5, 6]]
 - id: csa2_source_engram
   nodes:
@@ -252,17 +258,18 @@ layer_kinds:
     - {name: compressed, kind: kv, owned: false, bytes_per_entry: 584}
   edges: [[0, 1], [1, 2]]
 
-# DSpark's three draft layers: sliding window only, 128 experts, top 3.
+# DSpark's three draft layers: sliding window only, 128 experts, top 3. A draft query
+# reads the 128-token window plus all 5 positions of its block, non-causally.
 - id: dspark_0
   nodes: &dspark_nodes
   - {op: GEMM, role: fused_wqa_wkv, n: 1792, k: 5120, tp: replicated}
   - op: Attention
-    kind: mla
+    kind: sparse_mla
     n_q: 64
     n_kv: 1
     d_h: 512
     qk_rope_head_dim: 64
-    window: 128
+    window: 133
     caches:
     - {name: swa, kind: window, owned: true, bytes_per_entry: 584, window: 128,
        block_size: 32, page_alignment: 576}
@@ -322,6 +329,7 @@ speculator:
 # nvfp4_ds_mla the compressed cache becomes a 288 B NVFP4 record. Mega attention, SM100's
 # default where the layout allows it, resolves an unstated cache dtype to nvfp4_ds_mla;
 # which dtype runs is the cost model's to resolve.
+base_capability_families: [9]
 arch_overrides:
 - capability_family: 10
   nodes:

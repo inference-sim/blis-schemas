@@ -150,8 +150,12 @@ func TestPDTransferLaw(t *testing.T) {
 131,072. `CheckPDTransfer` checks one case and returns an error, for a caller with cases
 of its own; `TestPDTransfer` fails when given no cases, since it would then check nothing.
 `CheckLinksAgree` checks that two kernels of one deployment name the same links at the same
-rates for one handoff. Each check requires a well-formed demand (`TransferDemand.Check`), the same
-demand from two calls, and an exact match with `PDTransferTime`.
+rates for one handoff, and that both demands are well formed. `CheckPDTransfer` requires
+a well-formed demand (`TransferDemand.Check`, which also refuses a payload that crosses no
+link, since an arbiter would then have nothing to share), the same demand from two calls,
+and an exact match with `PDTransferTime`. `TestPDTransfer` also requires that more tokens
+never move fewer bytes between one pair of placements; it does not require the floor to
+stay fixed, since per-transfer overhead can grow with the pages a transfer moves.
 
 Adding a method to `Kernel` breaks every other implementation, fakes included, until it
 adds the method.

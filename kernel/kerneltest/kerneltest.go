@@ -9,6 +9,7 @@ package kerneltest
 import (
 	"fmt"
 	"reflect"
+	"sort"
 	"testing"
 
 	"github.com/inference-sim/blis-schemas/kernel"
@@ -64,13 +65,20 @@ func CheckPDTransfer(k kernel.Kernel, c PDCase) error {
 	return nil
 }
 
-// CheckLinksAgree checks the comparability TransferDemand promises: two kernels built from
-// one deployment, such as its prefill and decode kernels, name the same links at the same
-// rates for the same handoff. Without it a simulator could not tell that a transfer one
-// kernel priced shares a link with one the other priced.
+// CheckLinksAgree checks that two kernels built from one deployment, such as its prefill
+// and decode kernels, describe one handoff alike: both demands are well formed and name
+// the same links at the same rates. Without it a simulator could not tell that a
+// transfer one kernel priced shares a link with one the other priced. It checks one
+// handoff; that a physical link keeps its ID across different handoffs is the kernel's to
+// honour, since only it knows which handoffs cross which links.
 func CheckLinksAgree(a, b kernel.Kernel, c PDCase) error {
-	la := a.PDTransferDemand(c.Tokens, c.From, c.To).Links
-	lb := b.PDTransferDemand(c.Tokens, c.From, c.To).Links
+	da := a.PDTransferDemand(c.Tokens, c.From, c.To)
+	db := b.PDTransferDemand(c.Tokens, c.From, c.To)
+	for i, d := range []kernel.TransferDemand{da, db} {
+		if err := d.Check(); err != nil {
+			return fmt.Errorf("%v: kernel %d's demand is malformed: %w", c, i+1, err)
+		}
+	}
 	key := func(ls []kernel.LinkUse) map[kernel.LinkID]float64 {
 		m := make(map[kernel.LinkID]float64, len(ls))
 		for _, l := range ls {
@@ -78,8 +86,8 @@ func CheckLinksAgree(a, b kernel.Kernel, c PDCase) error {
 		}
 		return m
 	}
-	if !reflect.DeepEqual(key(la), key(lb)) {
-		return fmt.Errorf("%v: the two kernels name different links, %v and %v", c, la, lb)
+	if !reflect.DeepEqual(key(da.Links), key(db.Links)) {
+		return fmt.Errorf("%v: the two kernels name different links, %v and %v", c, da.Links, db.Links)
 	}
 	return nil
 }
@@ -96,4 +104,30 @@ func TestPDTransfer(t testing.TB, k kernel.Kernel, cases []PDCase) {
 			t.Error(err)
 		}
 	}
+	if err := CheckPayloadGrows(k, cases); err != nil {
+		t.Error(err)
+	}
+}
+
+// CheckPayloadGrows checks that, between one pair of placements, moving more tokens never
+// moves fewer bytes: KV grows with the tokens it holds. It deliberately does not require
+// the floor to stay fixed as tokens grow, because per-transfer overheads can grow with
+// the number of pages a transfer moves.
+func CheckPayloadGrows(k kernel.Kernel, cases []PDCase) error {
+	type pair struct{ from, to kernel.Placement }
+	byPair := map[pair][]PDCase{}
+	for _, c := range cases {
+		byPair[pair{c.From, c.To}] = append(byPair[pair{c.From, c.To}], c)
+	}
+	for _, cs := range byPair {
+		sort.Slice(cs, func(i, j int) bool { return cs[i].Tokens < cs[j].Tokens })
+		for i := 1; i < len(cs); i++ {
+			lo := k.PDTransferDemand(cs[i-1].Tokens, cs[i-1].From, cs[i-1].To).Bytes
+			hi := k.PDTransferDemand(cs[i].Tokens, cs[i].From, cs[i].To).Bytes
+			if hi < lo {
+				return fmt.Errorf("%v moves %d bytes, fewer than the %d of %v", cs[i], hi, lo, cs[i-1])
+			}
+		}
+	}
+	return nil
 }
