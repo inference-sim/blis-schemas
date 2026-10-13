@@ -649,6 +649,31 @@ func TestModelSequenceParallelCollectivesMatchSource(t *testing.T) {
 		!strings.Contains(v4, "replicated and no collective ops are needed") {
 		t.Error("the shared expert is no longer replicated under sequence parallelism")
 	}
+	// The mega-MoE path keeps the same reduction outside sequence parallelism, which it
+	// leaves only at pp above 1 (it requires expert parallelism, and the model's rule
+	// turns sequence parallelism on for a mega backend at pp 1 and tp above 1): the routed
+	// experts combine over the expert-parallel group with no tensor-parallel all-reduce,
+	// and the shared expert, unfused there, all-reduces its own hidden-width output.
+	for _, c := range []struct{ what, text string }{
+		{"mega-MoE requiring expert parallelism", "MegaMoE currently requires expert parallel."},
+		{"the shared expert reducing itself under mega-MoE", "reduce_results=self.use_mega_moe,"},
+		{"the shared expert fusing only under sequence parallelism or tp 1", "and (self.use_sequence_parallel or self.tp_size == 1)"},
+		{"the unfused shared expert added to the routed output", "and not self.experts.has_fused_shared_experts"},
+	} {
+		if !strings.Contains(v4, c.text) {
+			t.Errorf("%s changed: %q is gone", c.what, c.text)
+		}
+	}
+	mega := "final_hidden_states = self.experts(\n            hidden_states,\n            topk_weights,"
+	at := strings.Index(v4, mega)
+	if at < 0 {
+		t.Fatal("the mega-MoE forward path was not found; it may have moved")
+	}
+	block := v4[at:]
+	block = block[:strings.Index(block, "return final_hidden_states.view(org_shape)")]
+	if strings.Contains(block, "all_reduce") {
+		t.Error("the mega-MoE forward path now all-reduces its routed output")
+	}
 	runner := readSource(t, root, "vllm", "model_executor", "layers", "fused_moe", "runner", "moe_runner.py")
 	i := strings.Index(runner, "def _maybe_reduce_final_output(")
 	if i < 0 {

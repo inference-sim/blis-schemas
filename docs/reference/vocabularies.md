@@ -135,11 +135,15 @@ A model that decides its own sequence parallelism never consults the engine-wide
 `tensor_parallel_unless_sp_moe` names, so its decoder-layer reductions, the MoE's
 included, use `tensor_parallel_unless_sequence_parallel`. DeepSeek-V4.1 passes its own flag
 to its MoE, and vLLM's FusedMoE then skips the final tensor-parallel all-reduce. The
-0.31.0 rules pack reports the engine-wide condition on such a model as an error. One case
-is unverified: under DeepSeek-V4's and V4.1's mega-MoE backend with sequence parallelism off (at
-pipeline parallelism above one), the experts run in DeepGEMM's fused kernel rather than
-FusedMoE, and whether that path performs the final tensor-parallel reduction is not traced
-here; its shared expert reduces its own output.
+0.31.0 rules pack reports the engine-wide condition on such a model as an error.
+
+The condition holds on DeepSeek-V4's and V4.1's mega-MoE backend too. That backend requires
+expert parallelism, so it runs without the model's sequence parallelism only at tensor
+parallelism one or pipeline parallelism above one. There its routed experts combine over
+the expert-parallel group with no tensor-parallel all-reduce, and its shared expert, which
+fuses into the kernel only under sequence parallelism or tensor parallelism one, runs
+tensor-parallel and all-reduces its own output. So the layer still reduces one
+hidden-width tensor across tensor-parallel ranks, as on the default backend.
 
 ### Modalities
 
