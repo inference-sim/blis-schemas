@@ -1640,36 +1640,39 @@
 rules pack: the release's accepted values and the rules that read them, registered under
 the release's version string.</p>
 
-<p>A pack is found by exact match on the scenario's <code>engine_version</code>. A scenario that names
+<p>A pack is found by exact match on the scenario's <code>engine_version</code>. Packs exist for
+<code>0.29.0</code> and <code>0.31.0</code>. A scenario that names
 <code>0.29.1</code> gets no rules until a pack is registered under <code>0.29.1</code>, even though a <code>0.29.0</code>
 pack exists.</p>
 <h2 id="steps">Steps<a class="headerlink" href="#steps" title="Permanent link">&para;</a></h2>
 <ol>
-<li><strong>Copy the latest pack.</strong> Create a package under <code>rules/</code>, such as <code>rules/v0_31/</code>, from
+<li><strong>Copy the latest pack.</strong> Create a package under <code>rules/</code>, such as <code>rules/v0_33/</code>, from
    the newest existing pack, and set its <code>Version</code> constant to the release's exact version
-   string, such as <code>"0.31.0"</code>.</li>
+   string, such as <code>"0.33.0"</code>.</li>
 <li><strong>Change what moved.</strong> Update each constant that differs in the new release: backend
    names, cache dtypes, graph modes, speculative methods, connectors, quantization methods,
    thresholds. Change a rule's body only if the engine's behavior changed. Add or remove a
    rule if a check appeared or went away. Every rule states, in its <code>Because</code> text, what
    breaks without it.</li>
-<li><strong>Register it.</strong> Add <code>rules.Register(v0_31.Pack())</code> to the <code>init</code> function in the root
+<li><strong>Register it.</strong> Add <code>rules.Register(v0_33.Pack())</code> to the <code>init</code> function in the root
    package's <code>register.go</code>. Packs are registered in that one file rather than from each
    pack's own <code>init</code>, so the set of known versions does not depend on which pack packages a
    build happens to import.</li>
 <li>
 <p><strong>Check it against the source.</strong> Carry over <code>source_test.go</code> and adjust it to the new
    release's file layout. Run it against a checkout of the release:</p>
-<div class="language-sh highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nv">VLLM_SOURCE</span><span class="o">=</span>/path/to/vllm-0.31.0<span class="w"> </span>go<span class="w"> </span><span class="nb">test</span><span class="w"> </span>-run<span class="w"> </span>MatchSource<span class="w"> </span>./rules/v0_31/
+<div class="language-sh highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nv">VLLM_SOURCE</span><span class="o">=</span>/path/to/vllm-0.33.0<span class="w"> </span>go<span class="w"> </span><span class="nb">test</span><span class="w"> </span>-run<span class="w"> </span>MatchSource<span class="w"> </span>./rules/v0_33/
 </code></pre></div>
 <p>It fails on any difference in either direction: a value the pack accepts that the engine
-does not, or one the engine accepts that the pack does not. It does not cover the
-speculative-method lists, which need review by hand.</p>
+does not, or one the engine accepts that the pack does not. From the 0.31.0 pack on it
+also re-derives the speculative-method lists, and pins the message of each startup
+refusal a rule encodes, so a release that drops one fails the test.</p>
 </li>
 <li>
 <p><strong>Add its CI job.</strong> Copy the <code>constants-against-engine</code> job in
-   <code>.github/workflows/ci.yaml</code>, pinned to the new release's tag. Leave the existing job's tag
-   alone: the old pack still needs checking against its own release.</p>
+   <code>.github/workflows/ci.yaml</code>, pinned to the new release's tag, and point it at the new
+   pack's package only. Leave the existing jobs alone: each pack is checked against its own
+   release, and a job running every pack against one tag fails on the others.</p>
 </li>
 <li><strong>Regenerate the documentation.</strong> Run <code>go run ./internal/docgen</code> from the repository
    root. The new pack appears in <a href="../../reference/rules/">Rules packs</a>. If the pack adds a

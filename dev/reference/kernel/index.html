@@ -1187,6 +1187,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#transfer-demand" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Transfer demand
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#other-types" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1666,6 +1677,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#transfer-demand" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Transfer demand
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#other-types" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1756,6 +1778,10 @@ subject of <a href="../../design/kernel-boundary/">Where the kernel stops</a>.</
 <tr>
 <td><code>PDTransferTime(tokens, from, to Placement) time.Duration</code></td>
 <td>Moving one request's KV between pools.</td>
+</tr>
+<tr>
+<td><code>PDTransferDemand(tokens, from, to Placement) TransferDemand</code></td>
+<td>The same handoff as payload, floor and links, for a caller arbitrating concurrent transfers.</td>
 </tr>
 <tr>
 <td><strong>Host work</strong></td>
@@ -1914,6 +1940,60 @@ overlap engages, uses one threshold for such a batch and another for any other.<
 <p>A width of zero means unset, not "no parallelism". <code>TensorParallel()</code>, <code>DataParallel()</code>
 and <code>ExpertParallel()</code> return the widths with a floor of one, for a reader that may see a
 zero value.</p>
+<h2 id="transfer-demand">Transfer demand<a class="headerlink" href="#transfer-demand" title="Permanent link">&para;</a></h2>
+<p><code>PDTransferTime</code> prices a handoff as if it ran alone. A simulator running several at once
+needs to know which links they share, and which part of each price sharing stretches.
+<code>PDTransferDemand</code> answers both:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Bytes int64</code></td>
+<td>The payload.</td>
+</tr>
+<tr>
+<td><code>Floor time.Duration</code></td>
+<td>Time the transfer takes however much bandwidth it gets. Sharing a link does not lengthen it.</td>
+</tr>
+<tr>
+<td><code>Links []LinkUse</code></td>
+<td>Every link the payload crosses, each named once: a <code>LinkID</code> and the rate the link offers to a transfer alone on it.</td>
+</tr>
+</tbody>
+</table>
+<p>A <code>LinkID</code> is opaque. Two demands naming the same ID share that link while both are in
+flight, and IDs are comparable across the kernels of one deployment.</p>
+<p>The law is part of the contract: alone, a demand costs exactly what <code>PDTransferTime</code>
+charges, <code>max(Floor, Bytes / slowest link rate)</code>, or <code>Floor</code> with no links.
+<code>TransferDemand.AloneTime()</code> is that definition, including its conversion to a duration,
+so an implementation that computes <code>PDTransferTime</code> from its own demand satisfies the law
+by construction.</p>
+<p>The kernel states the links; it never sees other transfers. How a shared link's bandwidth
+is divided is the simulator's to decide, and the schema does not prescribe it.</p>
+<p>Package <code>kernel/kerneltest</code> checks the law against any implementation, the way
+<code>testing/fstest</code> checks a file system:</p>
+<div class="language-go highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kd">func</span><span class="w"> </span><span class="nx">TestPDTransferLaw</span><span class="p">(</span><span class="nx">t</span><span class="w"> </span><span class="o">*</span><span class="nx">testing</span><span class="p">.</span><span class="nx">T</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">    </span><span class="nx">k</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">newKernel</span><span class="p">(</span><span class="nx">t</span><span class="p">)</span><span class="w"> </span><span class="c1">// the implementation under test</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="nx">kerneltest</span><span class="p">.</span><span class="nx">TestPDTransfer</span><span class="p">(</span><span class="nx">t</span><span class="p">,</span><span class="w"> </span><span class="nx">k</span><span class="p">,</span><span class="w"> </span><span class="nx">kerneltest</span><span class="p">.</span><span class="nx">PDCases</span><span class="p">())</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="p">}</span>
+</code></pre></div>
+<p><code>PDCases</code> covers a same-node, a same-rack and a cross-rack handoff at token counts from 0 to
+131,072. <code>CheckPDTransfer</code> checks one case and returns an error, for a caller with cases
+of its own; <code>TestPDTransfer</code> fails when given no cases, since it would then check nothing.
+<code>CheckLinksAgree</code> checks that two kernels of one deployment name the same links at the same
+rates for one handoff, and that both demands are well formed. <code>CheckPDTransfer</code> requires
+a well-formed demand (<code>TransferDemand.Check</code>, which also refuses a payload that crosses no
+link, since an arbiter would then have nothing to share), the same demand from two calls,
+and an exact match with <code>PDTransferTime</code>. <code>TestPDTransfer</code> also requires that more tokens
+never move fewer bytes between one pair of placements; it does not require the floor to
+stay fixed, since per-transfer overhead can grow with the pages a transfer moves.</p>
+<p>Adding a method to <code>Kernel</code> breaks every other implementation, fakes included, until it
+adds the method.</p>
 <h2 id="other-types">Other types<a class="headerlink" href="#other-types" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
