@@ -1,7 +1,6 @@
 # DeepSeek-V4.1-Flash, abridged to show the keys a V4.1 graph needs. The catalog's
 # derived graph carries every node; this one keeps the nodes whose keys are new and drops
-# norms, RoPE launches, mHC, the router and similar work, the draft's embedding alias and
-# confidence head, and the SM100 attention path's different launches. Its collectives are
+# norms, RoPE launches, mHC, the router and similar work, the draft's confidence head, and the SM100 attention path's different launches. Its collectives are
 # shown in full on the first layer kind only. Each figure here is from the
 # model's config.json or from vLLM v0.31.0's source, as the schema's doc comments cite.
 kind: ModelGraph
@@ -56,8 +55,11 @@ layer_kinds:
   - {op: GEMM, role: wo_b, n: 5120, k: 8192, tp: row}
   - {op: AllReduce, role: attn_out, emit: tensor_parallel_unless_sequence_parallel}
   - {op: ReduceScatter, role: attn_out, emit: sequence_parallel}
+  # The MoE runs on the residual stream, so under the mode each rank routes only its own
+  # token shard. The nodes above, between the all-gather and the reduce-scatter, see every
+  # token, and state no split.
   - {op: GroupedGEMM, role: experts, n: 2304, k: 5120, experts: 384, top_k: 6,
-     weight_dtype: mxfp4}
+     weight_dtype: mxfp4, under_sequence_parallel: token_sharded}
   - {op: All2All, role: moe_dispatch_combine, emit: expert_parallel}
   # The MoE's tensor-parallel reduction follows the model's own sequence parallelism, not
   # the engine-wide sequence-parallel-MoE rule, which V4.1 never consults: FusedMoE skips
@@ -274,7 +276,7 @@ layer_kinds:
     - {name: swa, kind: window, owned: true, bytes_per_entry: 584, window: 128,
        block_size: 32, page_alignment: 576}
   - {op: GroupedGEMM, role: experts, n: 2304, k: 5120, experts: 128, top_k: 3,
-     weight_dtype: mxfp4}
+     weight_dtype: mxfp4, under_sequence_parallel: token_sharded}
   - {op: All2All, role: moe_dispatch_combine, emit: expert_parallel}
   edges: &edges4 [[0, 1], [1, 2], [2, 3]]
 - {id: dspark_1, nodes: *dspark_nodes, edges: *edges4}
@@ -310,6 +312,12 @@ speculator:
   method: dspark
   num_spec_tokens: 5
   drafting: parallel_block
+  # The draft's own lookup, into the target's table, before each pass. It reduces before
+  # the draft shards its stream, so the all-reduce runs under the mode too.
+  embedding:
+  - {op: Gather, role: dspark_embed_tokens, rows: 129280, row_bytes: 10240, rows_per_token: 1,
+     out_bytes_per_token: 10240, shard: rows, aliases: embedding.embed_tokens}
+  - {op: AllReduce, role: dspark_embed_out, emit: tensor_parallel}
   stack:
     pattern: [dspark_0, dspark_1, dspark_2]
     repeat: 1

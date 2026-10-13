@@ -51,7 +51,12 @@ func v41Graph() *Graph {
 	g.Speculator = &Speculator{Method: "dspark", NumSpec: 5, Drafting: DraftingParallelBlock,
 		Stack:        Stack{Pattern: []string{"draft"}, Repeat: 1},
 		ContextStack: &Stack{Pattern: []string{"draft_context"}, Repeat: 1},
-		Head:         []Node{{Op: OpGEMM, Role: "draft_lm_head", N: 100352, K: 3072, Aliases: "head.lm_head"}},
+		Embedding: []Node{
+			{Op: OpGather, Role: "draft_embed_tokens", Rows: 100352, RowBytes: 6144, RowsPerToken: 1,
+				OutBytesPerToken: 6144, Shard: ShardRows, Aliases: "embedding.embed_tokens"},
+			{Op: OpAllReduce, Role: "draft_embed_out", Emit: EmitTensorParallel},
+		},
+		Head: []Node{{Op: OpGEMM, Role: "draft_lm_head", N: 100352, K: 3072, Aliases: "head.lm_head"}},
 		SequentialHead: []Node{{Op: OpGather, Role: "markov_w1", Rows: 100352, RowBytes: 512,
 			RowsPerToken: 1, OutBytesPerToken: 512}},
 	}
@@ -62,16 +67,36 @@ func v41Graph() *Graph {
 	return g
 }
 
-// A node stated twice for the two sequence-parallel layouts may carry the conditions
-// without the warning a deployment condition on a non-collective node draws.
-func TestSequenceParallelPairOnAGEMM(t *testing.T) {
-	g := v41Graph()
-	g.Global.Architecture = "DeepseekV41ForCausalLM"
-	g.LayerKinds[1].Nodes = append(g.LayerKinds[1].Nodes,
+// Engram's wkv is column-split without the model's sequence parallelism and replicated
+// over a token shard with it, and it runs at tp 1 too. Stated once, with the mode's split,
+// it draws nothing. Stated twice under the two sequence-parallel conditions, it would be
+// absent at tp 1, where neither holds, so the pair draws a warning naming that layout.
+func TestWorkUnderSequenceParallelIsStatedOnce(t *testing.T) {
+	once := v41Graph()
+	once.Global.Architecture = "DeepseekV41ForCausalLM"
+	once.LayerKinds[1].Nodes = append(once.LayerKinds[1].Nodes,
+		Node{Op: OpGEMM, Role: "wkv", N: 25600, K: 6144, TP: TPColumn, UnderSequenceParallel: SPTokenSharded})
+	if p := once.Validate(); len(p.All()) != 0 {
+		t.Fatalf("work stated once drew findings:\n%s", p.Error())
+	}
+
+	pair := v41Graph()
+	pair.Global.Architecture = "DeepseekV41ForCausalLM"
+	pair.LayerKinds[1].Nodes = append(pair.LayerKinds[1].Nodes,
 		Node{Op: OpGEMM, Role: "wkv", N: 25600, K: 6144, TP: TPColumn, Emit: EmitTensorParallelUnlessSequenceParallel},
 		Node{Op: OpGEMM, Role: "wkv_sp", N: 25600, K: 6144, TP: TPReplicated, Emit: EmitSequenceParallel})
-	if p := g.Validate(); len(p.All()) != 0 {
-		t.Fatalf("the pair drew findings:\n%s", p.Error())
+	p := pair.Validate()
+	if !p.OK() {
+		t.Fatalf("the pair is a warning, not an error:\n%s", p.Error())
+	}
+	warned := 0
+	for _, pr := range p.All() {
+		if strings.Contains(pr.Message, "at tp 1 neither sequence-parallel condition holds") {
+			warned++
+		}
+	}
+	if warned != 2 {
+		t.Fatalf("each half of the pair should be warned about, got %d:\n%s", warned, p.Error())
 	}
 }
 
@@ -216,6 +241,27 @@ func TestV41FieldRejects(t *testing.T) {
 		// Sequence parallelism is the model's code, so its conditions need the architecture.
 		{"sequence-parallel condition without an architecture", "needs global.architecture", func(g *Graph) {
 			g.LayerKinds[1].Nodes = append(g.LayerKinds[1].Nodes, Node{Op: OpAllGather, Emit: EmitSequenceParallel})
+		}},
+		{"sequence-parallel split without an architecture", "under_sequence_parallel: \"token_sharded\" needs global.architecture", func(g *Graph) {
+			g.LayerKinds[0].Nodes[0].UnderSequenceParallel = SPTokenSharded
+		}},
+		{"unknown sequence-parallel split", "not a recognized split", func(g *Graph) {
+			g.Global.Architecture = "DeepseekV41ForCausalLM"
+			g.LayerKinds[0].Nodes[0].UnderSequenceParallel = "rows"
+		}},
+		{"token-sharded collective", "only work is token-sharded", func(g *Graph) {
+			g.Global.Architecture = "DeepseekV41ForCausalLM"
+			g.LayerKinds[0].Nodes[3].UnderSequenceParallel = SPTokenSharded
+		}},
+		// The draft's embedding is outside every layer.
+		{"cache insert in the draft's embedding", "speculator.embedding[0].writes_cache", func(g *Graph) {
+			g.Speculator.Embedding[0] = Node{Op: OpElementwise, WritesCache: "swa"}
+		}},
+		{"draft embedding aliasing a different table", "cannot be the weights", func(g *Graph) {
+			g.Speculator.Embedding[0].Rows = 1000
+		}},
+		{"unconditional collective in the draft's embedding", "speculator.embedding[1].emit", func(g *Graph) {
+			g.Speculator.Embedding[1].Emit = EmitAlways
 		}},
 		// Context window.
 		{"default window above the window", "exceeds context_window", func(g *Graph) { g.Global.DefaultContextWindow = 1 << 21 }},

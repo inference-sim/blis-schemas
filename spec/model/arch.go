@@ -212,6 +212,7 @@ func (g *Graph) clone() *Graph {
 			c := cloneStack(*s.ContextStack)
 			s.ContextStack = &c
 		}
+		s.Embedding = cloneNodes(s.Embedding)
 		s.Head = cloneNodes(s.Head)
 		s.SequentialHead = cloneNodes(s.SequentialHead)
 		out.Speculator = &s

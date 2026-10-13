@@ -275,6 +275,17 @@ type Speculator struct {
 	NumSpec int `yaml:"num_spec_tokens"`
 	// Drafting is how Stack runs. See Drafting.
 	Drafting Drafting `yaml:"drafting,omitempty"`
+	// Embedding is the nodes that run before each pass of Stack, over the same rows: the
+	// draft's own token lookup and the reduction that completes it. DSpark's drafter
+	// holds its own VocabParallelEmbedding, with the target's weights ("Shared with the
+	// target", v0.31.0 vllm/models/deepseek_v41/nvidia/dspark.py), so its Gather aliases
+	// embedding.<role>. Like every vocab-parallel lookup it ends in a tensor-parallel
+	// all-reduce (vocab_parallel_embedding.py), and the draft embeds before it shards its
+	// stream for sequence parallelism (dspark.py forward), so that reduction runs in both
+	// modes. Stated at the head of a draft layer kind instead, it would read as a
+	// decoder-layer reduction, which the mode replaces. Absent means the draft does no
+	// lookup of its own.
+	Embedding []Node `yaml:"embedding,omitempty"`
 	// Stack is the draft layers. Under autoregressive drafting it runs once per drafted
 	// token; under parallel_block drafting it runs once per step over NumSpec positions
 	// per request.
@@ -358,15 +369,28 @@ var emitConditions = map[EmitCondition]bool{
 }
 
 // SequenceParallelOnly reports whether c is one of the two conditions decided by the
-// model's own sequence parallelism. A node whose layout that mode changes -- a projection
-// replicated under it and column-split otherwise -- is stated twice, once under each, so
-// these two may sit on a non-collective node.
+// model's own sequence parallelism. They belong on the collectives the mode adds or
+// replaces. Work belongs on a node stated once, with UnderSequenceParallel for how the
+// mode divides it: at tp 1 neither condition holds, so work stated twice, once under
+// each, would vanish there.
 func (c EmitCondition) SequenceParallelOnly() bool {
 	return c == EmitSequenceParallel || c == EmitTensorParallelUnlessSequenceParallel
 }
 
 // Valid reports whether c is a recognized condition.
 func (c EmitCondition) Valid() bool { return emitConditions[c] }
+
+// SequenceParallelField names the field of n that the model's own sequence parallelism
+// decides -- "emit" or "under_sequence_parallel" -- or returns "" when it decides none.
+func (n Node) SequenceParallelField() string {
+	switch {
+	case n.Emit.SequenceParallelOnly():
+		return "emit"
+	case n.UnderSequenceParallel != SPAsTP:
+		return "under_sequence_parallel"
+	}
+	return ""
+}
 
 // Node is one primitive with the shape parameters it prices. The fields are a
 // union across ops: a GEMM reads N and K, an Attention reads the head counts, a
@@ -392,6 +416,11 @@ type Node struct {
 	// consumer's inference, the meaning every graph had before the field existed. See
 	// TPLayout.
 	TP TPLayout `yaml:"tp,omitempty"`
+
+	// UnderSequenceParallel is how the node divides when the model's own sequence
+	// parallelism is on. Empty means as TP states, over every token the step schedules.
+	// See SequenceParallelSplit.
+	UnderSequenceParallel SequenceParallelSplit `yaml:"under_sequence_parallel,omitempty"`
 
 	// Aliases, on a GEMM or Gather, names the node whose weights this one reads, as
 	// "<layer kind id>.<role>", "head.<role>" or "embedding.<role>". The node is priced

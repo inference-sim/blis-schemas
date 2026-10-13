@@ -145,6 +145,7 @@ func TestForCapabilityIsAPureOverlay(t *testing.T) {
 		r.Global.WeightScale.Bytes = 99
 		r.Head[0].WeightDType = DTypeFP32
 		r.Speculator.Head[0].WeightDType = DTypeFP32
+		r.Speculator.Embedding[0].RowBytes = 1
 		r.Speculator.SequentialHead[0].RowBytes = 1
 		r.Embedding[0].RowBytes = 1
 		r.LayerKinds[0].Nodes[1].Caches[1].BytesByCacheDType["nvfp4_ds_mla"] = 1

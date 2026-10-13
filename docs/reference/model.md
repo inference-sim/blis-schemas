@@ -76,7 +76,7 @@ head:
 
 | Key | Type | Required | Meaning |
 |---|---|---|---|
-| `architecture` | string | no | The model class the engine serves the checkpoint with, the configuration's `architectures[0]`, such as `DeepseekV41ForCausalLM`. Rules packs key model-specific engine behavior on it. Required by the `sequence_parallel` emit conditions. |
+| `architecture` | string | no | The model class the engine serves the checkpoint with, the configuration's `architectures[0]`, such as `DeepseekV41ForCausalLM`. Rules packs key model-specific engine behavior on it. Required by the `sequence_parallel` emit conditions and by `under_sequence_parallel`. |
 | `hidden_size` | integer | yes | Model width, positive. |
 | `vocab_size` | integer | yes | Vocabulary size, positive. |
 | `tie_word_embeddings` | boolean | no | Whether the LM head shares the embedding weights. |
@@ -121,6 +121,7 @@ least one layer.
 | `method` | string | yes | The engine's name for the speculative method. The rules pack checks it. |
 | `num_spec_tokens` | integer | yes | Draft tokens per request per step, at least 1. Not the draft layer count. |
 | `drafting` | string | no | How `stack` runs. Omitted means once per drafted token; `parallel_block` means once per step over `num_spec_tokens` positions per request. See [drafting modes](vocabularies.md#drafting-modes). |
+| `embedding` | list of nodes | no | The draft's own token lookup and its reduction, before each pass of `stack`, over the same rows. A lookup into the target's table aliases `embedding.<role>`. Outside every layer, like the top-level `embedding`. |
 | `stack` | mapping | yes | The draft module's own stack over the graph's layer kinds. Needs a `pattern` and a `repeat` of at least 1. |
 | `context_stack` | mapping | no | Draft work that runs once per step over the target's scheduled tokens, prefill tokens included. |
 | `head` | list of nodes | no | Nodes after each pass of `stack`, over the same rows. |
@@ -129,8 +130,10 @@ least one layer.
 The draft module is a stack and not a token count because, for an MoE target, the draft
 pass is itself an MoE pass with its own cost. DeepSeek-V4.1's DSpark shows why the other
 keys exist. It drafts 5 tokens through 3 layers in one pass over 5 positions per request.
-Before that pass it projects the target's hidden states over every token the target
-scheduled. After it, it runs a Markov head once per position, one position at a time.
+Before that pass it looks up its positions' tokens in the target's table and all-reduces
+the result, before it shards its stream for sequence parallelism. In a layer kind, that
+all-reduce would read as a decoder-layer reduction, which sequence parallelism replaces.
+It also projects the target's hidden states over every token the target scheduled. After it, it runs a Markov head once per position, one position at a time.
 
 ## Nodes
 
@@ -155,6 +158,7 @@ Common to every node:
 | `role` | string | no | A label for readers, such as `qkv_proj`. |
 | `emit` | string | for collectives | When the node exists. One of the [emit conditions](vocabularies.md#emit-conditions); omitted means always. |
 | `tp` | string | no | How the node divides across tensor-parallel ranks, on a `GEMM`, `Elementwise` or `Attention` node. One of the [layouts](vocabularies.md#tensor-parallel-layouts); omitted leaves it to the cost model's inference. |
+| `under_sequence_parallel` | string | no | How the node divides when the model's own sequence parallelism is on. One of the [splits](vocabularies.md#sequence-parallel-splits); omitted means as `tp` states, over every token the step schedules. Not on a collective. Needs `global.architecture`. |
 | `aliases` | string | no | On a `GEMM` or `Gather`: the node whose weights this one reads, as `<layer kind>.<role>`, `head.<role>` or `embedding.<role>`. The node is priced for its compute and weight reads, at its target's format, but adds no resident bytes. It states no `weight_dtype` or `weight_scale` of its own. |
 
 `GEMM` and `GroupedGEMM`:

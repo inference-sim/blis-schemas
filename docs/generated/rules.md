@@ -74,7 +74,7 @@
 :   *warning.* This release refuses a stated max_model_len above the window it derives from the model configuration, unless the configuration's model_max_length admits it or VLLM_ALLOW_LONG_MAX_MODEL_LEN is set (vllm/config/model.py); a warning because the schema sees neither.
 
 `sequence-parallel-architecture-known`
-:   *warning.* A graph's sequence_parallel emit conditions are decided by its architecture's own code, so on an architecture this release has no such rule for they never fire and the graph prices tensor parallelism alone.
+:   *warning.* A graph's sequence_parallel emit conditions and under_sequence_parallel splits are decided by its architecture's own code, so on an architecture this release has no such rule for they never apply and the graph prices tensor parallelism alone.
 
 `model-sequence-parallel-collectives`
 :   *error or warning.* An architecture that decides its own sequence parallelism never consults the engine-wide sequence-parallel-MoE rule -- DeepSeek-V4.1 passes its own _use_sequence_parallel to its MoE and shared expert, and FusedMoE then skips the final tensor-parallel all-reduce (vllm/model_executor/layers/fused_moe/runner/moe_runner.py, "Skipped when sequence-parallel is active") -- so a decoder-layer reduction conditioned on that rule fires or not on the wrong layouts; and a plain tensor-parallel all-reduce inside a decoder layer is replaced under the model's sequence parallelism, which shards the residual stream by token.
@@ -181,7 +181,7 @@
 :   *error.* This release has no Engram config (no vllm/config/engram.py, no --engram-config), so a launch line carrying one does not parse.
 
 `sequence-parallel-architecture-known`
-:   *warning.* A graph's sequence_parallel emit conditions are decided by its architecture's own code, so on an architecture this release has no such rule for they never fire and the graph prices tensor parallelism alone.
+:   *warning.* A graph's sequence_parallel emit conditions and under_sequence_parallel splits are decided by its architecture's own code, so on an architecture this release has no such rule for they never apply and the graph prices tensor parallelism alone.
 
 `model-sequence-parallel-collectives`
 :   *error or warning.* An architecture that decides its own sequence parallelism never consults the engine-wide sequence-parallel-MoE rule -- DeepSeek-V4 passes its own _use_sequence_parallel to its MoE and shared expert, and FusedMoE then skips the final tensor-parallel all-reduce (vllm/model_executor/layers/fused_moe/runner/moe_runner.py, "Skipped when sequence-parallel is active") -- so a decoder-layer reduction conditioned on that rule fires or not on the wrong layouts; and a plain tensor-parallel all-reduce inside a decoder layer is replaced under the model's sequence parallelism, which shards the residual stream by token.

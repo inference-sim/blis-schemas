@@ -689,6 +689,52 @@ func TestModelSequenceParallelCollectivesMatchSource(t *testing.T) {
 	}
 }
 
+// The facts the schema's sequence-parallel split and draft embedding rest on: sp_shard
+// pads the token count to a multiple of tp before slicing, so a rank holds ceil(tokens /
+// tp) rows; Engram's wkv is column-split without the mode and replicated with it; and
+// V4.1's DSpark drafter embeds, through a vocab-parallel lookup whose forward ends in a
+// tensor-parallel all-reduce, before it shards its stream.
+func TestSequenceParallelSplitsMatchSource(t *testing.T) {
+	root := vllmSource(t)
+	sp := readSource(t, root, "vllm", "models", "common", "ops", "sequence_parallel.py")
+	for _, want := range []string{
+		"sp_pad = (-x.shape[0]) % tp_size",
+		"chunk = x.shape[0] // tp_size",
+		"return x[tp_rank * chunk : (tp_rank + 1) * chunk]",
+	} {
+		if !strings.Contains(sp, want) {
+			t.Errorf("sp_shard changed: %q is gone", want)
+		}
+	}
+	engram := readSource(t, root, "vllm", "models", "deepseek_v41", "common", "engram.py")
+	at := strings.Index(engram, "self.wkv = ColumnParallelLinear(")
+	if at < 0 {
+		t.Fatal("Engram's wkv is no longer a ColumnParallelLinear")
+	}
+	if end := strings.Index(engram[at:], "\n        )"); end < 0 ||
+		!strings.Contains(engram[at:at+end], "disable_tp=use_sequence_parallel,") {
+		t.Error("Engram's wkv no longer turns its split off under sequence parallelism")
+	}
+	dspark := readSource(t, root, "vllm", "models", "deepseek_v41", "nvidia", "dspark.py")
+	if !strings.Contains(dspark, "self.embed_tokens = VocabParallelEmbedding(") {
+		t.Error("the DSpark drafter no longer holds a vocab-parallel embedding")
+	}
+	fwd := strings.Index(dspark, "def forward(")
+	if fwd < 0 {
+		t.Fatal("the DSpark drafter's forward was not found")
+	}
+	embed := strings.Index(dspark[fwd:], "inputs_embeds = self.embed_input_ids(input_ids)")
+	shard := strings.Index(dspark[fwd:], "inputs_embeds = sp_shard(inputs_embeds)")
+	if embed < 0 || shard < 0 || embed > shard {
+		t.Error("the DSpark drafter no longer embeds before it shards its stream")
+	}
+	vocab := readSource(t, root, "vllm", "model_executor", "layers", "vocab_parallel_embedding.py")
+	if !strings.Contains(vocab, "        # Reduce across all the model parallel GPUs.\n") ||
+		!strings.Contains(vocab, "return tensor_model_parallel_all_reduce(output_parallel)") {
+		t.Error("the vocab-parallel lookup no longer ends in a tensor-parallel all-reduce")
+	}
+}
+
 // pplx and naive run as allgather_reducescatter.
 func TestAll2AllBackendRenamesMatchSource(t *testing.T) {
 	root := vllmSource(t)

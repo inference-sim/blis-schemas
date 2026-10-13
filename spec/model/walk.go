@@ -3,7 +3,8 @@ package model
 import "fmt"
 
 // EachNode calls fn for every node the graph declares, with its path in the document:
-// the embedding, every layer kind's nodes, the head, and the speculator's heads. A layer
+// the embedding, every layer kind's nodes, the head, and the speculator's embedding and
+// heads. A layer
 // kind is visited once however many times the stack uses it.
 func (g *Graph) EachNode(fn func(at string, n Node)) {
 	g.eachNode(func(at string, n *Node) { fn(at, *n) })
@@ -25,6 +26,7 @@ func (g *Graph) eachNode(fn func(at string, n *Node)) {
 	}
 	list("head", g.Head)
 	if g.Speculator != nil {
+		list("speculator.embedding", g.Speculator.Embedding)
 		list("speculator.head", g.Speculator.Head)
 		list("speculator.sequential_head", g.Speculator.SequentialHead)
 	}

@@ -128,8 +128,11 @@ omitted `emit` reads as.
 :   Present when the tensor-parallel width exceeds 1 and the model's own sequence
     parallelism is off: the all-reduces sequence parallelism replaces.
 
-The last two may also sit on a non-collective node, for a node whose layout sequence
-parallelism changes and which the graph therefore states once for each mode.
+The last two belong on collectives. Work runs in every layout, including tensor
+parallelism one, where neither condition holds, so a node stated twice, once under each,
+would vanish there. Work is stated once, with
+[`under_sequence_parallel`](#sequence-parallel-splits) for how the mode divides it. A
+non-collective node carrying either condition draws a warning.
 
 A model that decides its own sequence parallelism never consults the engine-wide rule
 `tensor_parallel_unless_sp_moe` names, so its decoder-layer reductions, the MoE's
@@ -171,6 +174,30 @@ accepts `column`, `row` and `replicated`; an `Elementwise` or `Attention` node a
 
 `replicated`
 :   Every rank holds the whole weight and does the whole node for every token it holds.
+
+### Sequence-parallel splits
+
+A node's `under_sequence_parallel`: how it divides when the model's own sequence
+parallelism is on. An omitted value means the node runs as `tp` states, over every token
+the step schedules. It needs `global.architecture`, and a collective cannot carry it.
+
+--8<-- "docs/generated/enum/model.SequenceParallelSplit.md"
+
+`token_sharded`
+:   The node runs on its rank's shard of the step's tokens, `ceil(tokens / tp)` rows,
+    because vLLM's `sp_shard` pads the count to a multiple of `tp`. A `GEMM`,
+    `Elementwise` or `Attention` node then holds its whole weight, whatever `tp` states:
+    a column or row split needs every rank to hold the same rows. A `GroupedGEMM`'s
+    experts stay divided as expert parallelism decides, and a `Gather`'s table as its
+    `shard` states.
+
+`tp` alone can't say this. Under DeepSeek-V4.1's sequence parallelism the residual stream
+is sharded by token, and only attention runs on the gathered stream, between its
+all-gather and its reduce-scatter. mHC, before the gather, and the fused q/kv
+A-projection, after it, are both `replicated`, yet the first sees `1/tp` of the tokens and
+the second all of them. Engram's `wkv` is column-split without the mode and replicated with
+it, and runs at tensor parallelism one too. It is one node, `tp: column` with
+`under_sequence_parallel: token_sharded`.
 
 ### Cache kinds
 

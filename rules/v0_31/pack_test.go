@@ -554,18 +554,26 @@ func TestModelSequenceParallel(t *testing.T) {
 	}
 }
 
+// A graph asks about the model's sequence parallelism through a collective's emit
+// condition or a node's split under the mode. Either one, on an architecture with no rule,
+// is a question nothing answers.
 func TestSequenceParallelArchitectureKnown(t *testing.T) {
-	g := graniteGraph()
-	g.LayerKinds[0].Nodes = append(g.LayerKinds[0].Nodes,
-		model.Node{Op: model.OpAllGather, Emit: model.EmitSequenceParallel})
 	pl := deployment.Parallelism{TP: 8, PP: 1, DP: 1}
-	g.Global.Architecture = "GraniteMoeForCausalLM"
-	if p := run(t, dep(colocated(pl, deployment.Engine{})), g); !fired(p, "sequence-parallel-architecture-known") {
-		t.Errorf("an architecture with no rule should warn:\n%s", p.Error())
-	}
-	g.Global.Architecture = rules.ArchDeepseekV41
-	if p := run(t, dep(colocated(pl, deployment.Engine{})), g); fired(p, "sequence-parallel-architecture-known") {
-		t.Errorf("V4.1 has a rule in this release:\n%s", p.Error())
+	for name, n := range map[string]model.Node{
+		"emit":                    {Op: model.OpAllGather, Emit: model.EmitSequenceParallel},
+		"under_sequence_parallel": {Op: model.OpElementwise, Role: "mhc_pre", TP: model.TPReplicated, UnderSequenceParallel: model.SPTokenSharded},
+	} {
+		g := graniteGraph()
+		g.LayerKinds[0].Nodes = append(g.LayerKinds[0].Nodes, n)
+		g.Global.Architecture = "GraniteMoeForCausalLM"
+		p := run(t, dep(colocated(pl, deployment.Engine{})), g)
+		if !fired(p, "sequence-parallel-architecture-known") || !strings.Contains(p.Error(), "."+name+": ") {
+			t.Errorf("%s: an architecture with no rule should warn, naming the field:\n%s", name, p.Error())
+		}
+		g.Global.Architecture = rules.ArchDeepseekV41
+		if p := run(t, dep(colocated(pl, deployment.Engine{})), g); fired(p, "sequence-parallel-architecture-known") {
+			t.Errorf("%s: V4.1 has a rule in this release:\n%s", name, p.Error())
+		}
 	}
 }
 
@@ -918,6 +926,46 @@ func TestModelSequenceParallelCollectives(t *testing.T) {
 	} {
 		if got := severity(graph(c.arch, c.emit, c.inHead)); got != c.want {
 			t.Errorf("%s %q (head %v): got %q, want %q", c.arch, c.emit, c.inHead, got, c.want)
+		}
+	}
+}
+
+// The draft's vocab-parallel lookup reduces before the draft shards its stream, as the
+// target's does. Stated in the speculator's embedding it draws nothing; the same nodes at
+// the head of the draft's layer kind read as a decoder-layer reduction and draw the
+// warning, so the slot, not an exemption, is what tells the two apart.
+func TestDraftEmbeddingReductionIsNotADecoderLayerOne(t *testing.T) {
+	pl := deployment.Parallelism{TP: 8, PP: 1, DP: 1}
+	lookup := []model.Node{
+		{Op: model.OpGather, Role: "draft_embed_tokens", Rows: 49155, RowBytes: 3072, RowsPerToken: 1,
+			OutBytesPerToken: 3072, Shard: model.ShardRows, Aliases: "embedding.embed_tokens"},
+		{Op: model.OpAllReduce, Role: "draft_embed_out", Emit: model.EmitTensorParallel},
+	}
+	graph := func(inSlot bool) *model.Graph {
+		g := graniteGraph()
+		g.Global.Architecture = rules.ArchDeepseekV41
+		g.Embedding = []model.Node{{Op: model.OpGather, Role: "embed_tokens", Rows: 49155,
+			RowBytes: 3072, RowsPerToken: 1, OutBytesPerToken: 3072, Shard: model.ShardRows}}
+		draft := model.LayerKind{ID: "draft", Nodes: []model.Node{
+			{Op: model.OpGEMM, Role: "draft_proj", N: 3072, K: 3072, TP: model.TPReplicated}}}
+		g.Speculator = &model.Speculator{Method: "dspark", NumSpec: 5, Drafting: model.DraftingParallelBlock,
+			Stack: model.Stack{Pattern: []string{"draft"}, Repeat: 1}}
+		if inSlot {
+			g.Speculator.Embedding = append([]model.Node(nil), lookup...)
+		} else {
+			draft.Nodes = append(append([]model.Node(nil), lookup...), draft.Nodes...)
+		}
+		g.LayerKinds = append(g.LayerKinds, draft)
+		return g
+	}
+	for _, inSlot := range []bool{true, false} {
+		g := graph(inSlot)
+		if p := g.Validate(); !p.OK() {
+			t.Fatalf("in slot %v: invalid graph:\n%s", inSlot, p.Error())
+		}
+		p := run(t, dep(colocated(pl, deployment.Engine{})), g)
+		if got := fired(p, "model-sequence-parallel-collectives"); got == inSlot {
+			t.Errorf("in slot %v: rule fired %v:\n%s", inSlot, got, p.Error())
 		}
 	}
 }
