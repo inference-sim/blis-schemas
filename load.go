@@ -9,6 +9,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/inference-sim/blis-schemas/spec/acceptance"
 	"github.com/inference-sim/blis-schemas/spec/coefficient"
 	"github.com/inference-sim/blis-schemas/spec/deployment"
 	"github.com/inference-sim/blis-schemas/spec/evaluation"
@@ -98,6 +99,16 @@ func LoadFabric(path string) (*hardware.Fabric, error) {
 // LoadCoefficientSet reads a coefficient set from blis-registry.
 func LoadCoefficientSet(path string) (*coefficient.Set, error) {
 	var s coefficient.Set
+	if err := decodeStrict(path, &s); err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
+// LoadAcceptanceProfileSet reads an acceptance-profile set from blis-registry's
+// acceptance namespace. It does not validate; call Validate.
+func LoadAcceptanceProfileSet(path string) (*acceptance.ProfileSet, error) {
+	var s acceptance.ProfileSet
 	if err := decodeStrict(path, &s); err != nil {
 		return nil, err
 	}

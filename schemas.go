@@ -15,6 +15,7 @@ package blisschemas
 import (
 	"github.com/inference-sim/blis-schemas/internal/validate"
 	"github.com/inference-sim/blis-schemas/rules"
+	"github.com/inference-sim/blis-schemas/spec/acceptance"
 	"github.com/inference-sim/blis-schemas/spec/coefficient"
 	"github.com/inference-sim/blis-schemas/spec/deployment"
 	"github.com/inference-sim/blis-schemas/spec/evaluation"
@@ -37,8 +38,10 @@ type Bundle struct {
 	Fabric       *hardware.Fabric
 	Devices      []*hardware.StorageDevice
 	Coefficients []*coefficient.Set
-	Workload     *workload.Shape
-	Evaluation   *evaluation.Run
+	// AcceptanceProfiles are registry acceptance-profile sets, validated field by field.
+	AcceptanceProfiles []*acceptance.ProfileSet
+	Workload           *workload.Shape
+	Evaluation         *evaluation.Run
 }
 
 // Report is the outcome of validating a bundle, with the two layers kept apart.
@@ -95,6 +98,9 @@ func Validate(b Bundle) Report {
 				Storage:     b.Scenario.Cluster.Storage,
 			}))
 	}
+	if b.Deployment != nil {
+		checkAcceptanceK(field, b)
+	}
 	if b.Model != nil {
 		field.Merge("model", b.Model.Validate())
 	}
@@ -112,6 +118,11 @@ func Validate(b Bundle) Report {
 	for _, c := range b.Coefficients {
 		if c != nil {
 			field.Merge("coefficients:"+c.Name, c.Validate())
+		}
+	}
+	for _, a := range b.AcceptanceProfiles {
+		if a != nil {
+			field.Merge("acceptance:"+a.Name, a.Validate())
 		}
 	}
 	if b.Workload != nil {
@@ -136,4 +147,51 @@ func Validate(b Bundle) Report {
 		}
 	}
 	return rep
+}
+
+// checkAcceptanceK refuses an inline acceptance stated for a K other than one the
+// deployment speculates with: the scenario's pinned value, its trace's, and the workload
+// shape's. Acceptance at one K says nothing exact about another, so a value is never
+// rescaled. A value with no speculating pool to apply to is a warning, since it is inert
+// rather than wrong.
+func checkAcceptanceK(p *validate.Problems, b Bundle) {
+	type stated struct {
+		path string
+		v    *acceptance.Value
+	}
+	var values []stated
+	if s := b.Scenario; s != nil {
+		if s.Acceptance != nil && s.Acceptance.Value != nil {
+			values = append(values, stated{"scenario.acceptance.value.num_spec_tokens", s.Acceptance.Value})
+		}
+		if s.Workload != nil && s.Workload.Trace != nil && s.Workload.Trace.Acceptance != nil {
+			values = append(values, stated{"scenario.workload.trace.acceptance.num_spec_tokens", s.Workload.Trace.Acceptance})
+		}
+	}
+	if b.Workload != nil && b.Workload.Acceptance != nil {
+		values = append(values, stated{"workload.acceptance.num_spec_tokens", b.Workload.Acceptance})
+	}
+	if len(values) == 0 {
+		return
+	}
+	speculates := false
+	for i, pool := range b.Deployment.Pools {
+		spec := pool.Engine.Speculative
+		if spec == nil || spec.NumSpecTokens < 1 {
+			continue
+		}
+		speculates = true
+		for _, s := range values {
+			if err := acceptance.CheckK(s.v, spec.NumSpecTokens); err != nil {
+				p.Field(s.path, "deployment pools[%d]: %v", i, err)
+			}
+		}
+	}
+	if !speculates {
+		for _, s := range values {
+			w := &validate.Problems{}
+			w.Warnf("an acceptance is stated, but no deployment pool speculates, so it applies to nothing")
+			p.Merge(s.path, w)
+		}
+	}
 }

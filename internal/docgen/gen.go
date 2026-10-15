@@ -31,6 +31,7 @@ var enumDirs = []string{
 	"spec/model",
 	"spec/deployment",
 	"spec/workload",
+	"spec/acceptance",
 }
 
 type file struct {

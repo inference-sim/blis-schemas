@@ -303,6 +303,15 @@ write traces spell it differently.
 
 --8<-- "docs/generated/enum/workload.TimeUnit.md"
 
+## Acceptance
+
+### Thinking modes
+
+A profile's and a workload's `thinking`: whether the target model ran with its reasoning
+mode on.
+
+--8<-- "docs/generated/enum/acceptance.Thinking.md"
+
 ## Kernel
 
 ### Resources

@@ -130,6 +130,7 @@ nav:
       - Model graph: reference/model.md
       - Hardware: reference/hardware.md
       - Coefficient set: reference/coefficients.md
+      - Acceptance profiles: reference/acceptance.md
       - Evaluation run: reference/evaluation.md
       - Kernel interface: reference/kernel.md
       - Vocabularies: reference/vocabularies.md

@@ -18,6 +18,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/inference-sim/blis-schemas/internal/validate"
+	"github.com/inference-sim/blis-schemas/spec/acceptance"
 )
 
 // Shape is one traffic class. Token counts are per request.
@@ -45,6 +46,16 @@ type Shape struct {
 
 	Prompt Distribution `yaml:"prompt"`
 	Output Distribution `yaml:"output"`
+
+	// Category and Thinking select the registry's acceptance profile for this traffic
+	// when the deployment speculates: Category names the kind of prompts (SPEED-Bench's
+	// "coding", for one), Thinking whether the model reasons. Acceptance, when set, is
+	// the traffic's own measured acceptance, which outranks the registry's. All three are
+	// optional; a speculative run that needs a profile and finds no category is refused
+	// rather than guessed (see acceptance.Resolve).
+	Category   string              `yaml:"category,omitempty"`
+	Thinking   acceptance.Thinking `yaml:"thinking,omitempty"`
+	Acceptance *acceptance.Value   `yaml:"acceptance,omitempty"`
 }
 
 // UnmarshalYAML accepts the catalog's `_comment`-prefixed provenance keys and strips them
@@ -157,6 +168,12 @@ type TraceRef struct {
 	// Header is the small trace header metadata: the few structured fields that describe
 	// the trace as a whole, as distinct from its per-request rows.
 	Header TraceHeader `yaml:"header"`
+
+	// Category, Thinking and Acceptance state the trace's acceptance terms, as a Shape's
+	// do. A trace whose server log recorded its acceptance carries it here.
+	Category   string              `yaml:"category,omitempty"`
+	Thinking   acceptance.Thinking `yaml:"thinking,omitempty"`
+	Acceptance *acceptance.Value   `yaml:"acceptance,omitempty"`
 }
 
 // TraceHeader is the metadata a TraceV2 carries alongside its data CSV: what produced the
@@ -313,4 +330,14 @@ type SLODimTargets struct {
 	TTFTMs float64 `yaml:"ttft_ms,omitempty"`
 	ITLMs  float64 `yaml:"itl_ms,omitempty"`
 	E2EMs  float64 `yaml:"e2e_ms,omitempty"`
+}
+
+// AcceptanceTerms returns what the shape states about acceptance, for acceptance.Resolve.
+func (s *Shape) AcceptanceTerms() acceptance.Workload {
+	return acceptance.Workload{Category: s.Category, Thinking: s.Thinking, Value: s.Acceptance}
+}
+
+// AcceptanceTerms returns what the trace states about acceptance, for acceptance.Resolve.
+func (t *TraceRef) AcceptanceTerms() acceptance.Workload {
+	return acceptance.Workload{Category: t.Category, Thinking: t.Thinking, Value: t.Acceptance}
 }

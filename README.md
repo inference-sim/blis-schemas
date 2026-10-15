@@ -1,14 +1,16 @@
 # blis-schemas
 
 Go schemas and validators for the BLIS cost model: what a model is, what hardware can do,
-what a coefficient claims, what a deployment specifies, what a measured run recorded, and
+what a coefficient claims, how far speculative decoding advances a request, what a
+deployment specifies, what a measured run recorded, and
 the interface a cost model implements.
 
 **Documentation: <https://inference-sim.github.io/blis-schemas/>**
 
 This repository holds the shapes of documents and the checks on them, and no data. The data
 lives in [blis-catalog](https://github.com/inference-sim/blis-catalog) (declared facts) and
-[blis-registry](https://github.com/inference-sim/blis-registry) (coefficient sets), which run
+[blis-registry](https://github.com/inference-sim/blis-registry) (coefficient sets and
+acceptance profiles), which run
 this module's validators in CI.
 [blis-latency-kernel](https://github.com/inference-sim/blis-latency-kernel) implements the
 `Kernel` interface defined here, and [inference-sim](https://github.com/inference-sim/inference-sim)

@@ -40,13 +40,17 @@ and at any depth, is validated as a [coefficient set](coefficients.md). Symbolic
 not followed. A scenario can refer only to a set at the top level of `coefficients/` with a
 `.yaml` extension, by its file name; a set elsewhere validates but cannot be named.
 
+Files under `acceptance/`, found the same way, are validated as
+[acceptance-profile sets](acceptance.md#profile-set), each reported as
+`acceptance/<file>`. The directory is optional.
+
 ## Exit codes
 
 | Code | validate-catalog | validate-registry |
 |---|---|---|
 | `0` | every artifact validated | every set validated |
-| `1` | an artifact failed to load or validate | a set failed to load or validate |
-| `2` | wrong arguments; the root does not exist; none of the five directories is present; or nothing was found to validate | wrong arguments; the root does not exist; `coefficients/` could not be read; or it holds no sets |
+| `1` | an artifact failed to load or validate | a coefficient or acceptance set failed to load or validate |
+| `2` | wrong arguments; the root does not exist; none of the five directories is present; or nothing was found to validate | wrong arguments; the root does not exist; `coefficients/` could not be read; or it holds no coefficient sets |
 
 Source: [`cmd/validate-catalog`](https://github.com/inference-sim/blis-schemas/tree/main/cmd/validate-catalog),
 [`cmd/validate-registry`](https://github.com/inference-sim/blis-schemas/tree/main/cmd/validate-registry).

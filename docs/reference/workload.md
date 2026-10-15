@@ -41,6 +41,9 @@ and row count, and the small header that says how to read the file.
 | `sha256` | string | no | Hex digest of the data file, 64 characters. |
 | `rows` | integer | no | Expected number of rows in the data file. Not negative. |
 | `header` | mapping | yes | The trace header, below. |
+| `category` | string | no | The workload category that selects an [acceptance profile](acceptance.md), such as `coding`. |
+| `thinking` | string | no | Whether the model reasons: `on` or `off`. Selects the profile with `category`. |
+| `acceptance` | mapping | no | The trace's own measured acceptance, an [inline value](acceptance.md#inline-values). Outranks the registry's. |
 
 ### `header`
 
@@ -101,6 +104,9 @@ the catalog's `chatbot`:
 | `prefix_tokens` | integer | no | Prefix length shared across requests. Zero means none. |
 | `prompt` | mapping | yes | Prompt length distribution, below. |
 | `output` | mapping | yes | Output length distribution, below. |
+| `category` | string | no | The workload category that selects an [acceptance profile](acceptance.md), such as `coding`. |
+| `thinking` | string | no | Whether the model reasons: `on` or `off`. Selects the profile with `category`. |
+| `acceptance` | mapping | no | The traffic's own measured acceptance, an [inline value](acceptance.md#inline-values). Outranks the registry's. |
 
 ### `prompt` and `output`
 
@@ -127,6 +133,10 @@ invalid if
 - a server count is negative, or `gpu_memory_utilization` is not finite or lies outside
   [0, 1];
 - an SLO class name is empty, a target is negative or not finite, or a class sets no target.
+
+A trace reference or a shape is also invalid if a stated `category` is malformed,
+`thinking` is not `on` or `off`, or `acceptance` is not a valid
+[inline value](acceptance.md#inline-values).
 
 A shape is invalid if
 

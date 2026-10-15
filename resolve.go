@@ -20,9 +20,9 @@ import (
 // than inside Validate.
 //
 // It checks presence, not validity: that model names a directory the catalog has, that
-// hardware, fabric and a workload shape name files it has, and that every storage tier and
-// coefficient set a scenario names exists. The workload's Trace arm is excluded on purpose —
-// it references an external capture by file path, not a catalog identity. Validating the
+// hardware, fabric and a workload shape name files it has, and that every storage tier,
+// coefficient set and acceptance-profile set a scenario names exists. The workload's
+// Trace arm is excluded on purpose — it references an external capture by file path, not a catalog identity. Validating the
 // resolved documents is Validate's job, reached by loading them into a Bundle; this answers
 // the prior question of whether the names resolve at all, which nothing else does —
 // `hardware: nvidia-h200` validates clean today and fails later, elsewhere, as a missing file
@@ -87,6 +87,13 @@ func ValidateAgainstCatalog(b Bundle, catalogRoot, registryRoot string) Report {
 		}
 		resolveFile(field, fmt.Sprintf("references.coefficients[%d]", i),
 			registryRoot, "coefficients", name)
+	}
+
+	// acceptance.profiles -> acceptance/<name>.yaml under the registry, the acceptance
+	// counterpart of a coefficient set.
+	if s.Acceptance != nil && s.Acceptance.Profiles != "" {
+		resolveFile(field, "references.acceptance.profiles", registryRoot, "acceptance",
+			s.Acceptance.Profiles)
 	}
 
 	return Report{Field: field, Rule: &validate.Problems{}}
@@ -226,7 +233,7 @@ func dirEntries(root, dir string, wantDirs bool) []string {
 // rootKind names which root a namespace lives under, so an error says "the catalog has" for
 // a chip and "the registry has" for a coefficient set rather than a generic "it has".
 func rootKind(dir string) string {
-	if dir == "coefficients" {
+	if dir == "coefficients" || dir == "acceptance" {
 		return "the registry"
 	}
 	return "the catalog"

@@ -16,6 +16,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/inference-sim/blis-schemas/spec/acceptance"
 	"github.com/inference-sim/blis-schemas/spec/coefficient"
 	"github.com/inference-sim/blis-schemas/spec/deployment"
 	"github.com/inference-sim/blis-schemas/spec/evaluation"
@@ -67,6 +68,16 @@ func TestDocExamplesValidate(t *testing.T) {
 			Coefficients: []*coefficient.Set{fixture(LoadCoefficientSet(ex("coefficient-set.yaml")))},
 		}))
 	})
+	t.Run("acceptance profile set", func(t *testing.T) {
+		requireSilent(t, "acceptance profile set", Validate(Bundle{
+			AcceptanceProfiles: []*acceptance.ProfileSet{fixture(LoadAcceptanceProfileSet(ex("acceptance-profile-set.yaml")))},
+		}))
+	})
+	t.Run("acceptance pin", func(t *testing.T) {
+		requireSilent(t, "acceptance pin", Validate(Bundle{
+			Scenario: fixture(LoadScenario(ex("scenario-acceptance.yaml"))),
+		}))
+	})
 	t.Run("evaluation run", func(t *testing.T) {
 		requireSilent(t, "evaluation run", Validate(Bundle{
 			Evaluation: fixture(LoadEvaluationRun(ex("evaluation-run.yaml"))),
@@ -89,6 +100,7 @@ func TestDocExamplesValidate(t *testing.T) {
 		"scenario-disaggregated.yaml": true, "deployment-disaggregated.yaml": true,
 		"coefficient-set.yaml": true, "evaluation-run.yaml": true, "trace-binding.yaml": true,
 		"model-graph-deepseek-v4.1.yaml": true,
+		"acceptance-profile-set.yaml":    true, "scenario-acceptance.yaml": true,
 	}
 	all, err := filepath.Glob(ex("*"))
 	if err != nil {
@@ -102,7 +114,8 @@ func TestDocExamplesValidate(t *testing.T) {
 
 	// The by-name references the examples make must resolve against the vendored catalog,
 	// or an example would name a chip or a workload the reader cannot find.
-	for _, name := range []string{"scenario.yaml", "scenario-disaggregated.yaml", "trace-binding.yaml"} {
+	for _, name := range []string{"scenario.yaml", "scenario-disaggregated.yaml", "trace-binding.yaml",
+		"scenario-acceptance.yaml"} {
 		s := fixture(LoadScenario(ex(name)))
 		rep := ValidateAgainstCatalog(Bundle{Scenario: s}, catalogFixtures, "")
 		for _, p := range rep.Problems() {
@@ -165,6 +178,12 @@ var documented = map[string]struct {
 	"coefficient.Scope":       {typ: reflect.TypeOf(coefficient.Scope{})},
 	"evaluation.Run":          {typ: reflect.TypeOf(evaluation.Run{})},
 	"evaluation.Point":        {typ: reflect.TypeOf(evaluation.Point{})},
+	"acceptance.ProfileSet":   {typ: reflect.TypeOf(acceptance.ProfileSet{})},
+	"acceptance.Profile":      {typ: reflect.TypeOf(acceptance.Profile{})},
+	"acceptance.Provenance":   {typ: reflect.TypeOf(acceptance.Provenance{})},
+	"acceptance.Sampling":     {typ: reflect.TypeOf(acceptance.Sampling{})},
+	"acceptance.Value":        {typ: reflect.TypeOf(acceptance.Value{})},
+	"acceptance.Pin":          {typ: reflect.TypeOf(acceptance.Pin{})},
 }
 
 var (
@@ -287,6 +306,7 @@ func TestDocEveryDocumentTypeHasATable(t *testing.T) {
 		reflect.TypeOf(model.Graph{}), reflect.TypeOf(model.Identity{}),
 		reflect.TypeOf(hardware.Chip{}), reflect.TypeOf(hardware.Fabric{}),
 		reflect.TypeOf(hardware.StorageDevice{}), reflect.TypeOf(coefficient.Set{}),
+		reflect.TypeOf(acceptance.ProfileSet{}),
 		reflect.TypeOf(workload.Shape{}), reflect.TypeOf(evaluation.Run{}),
 	}
 	// Types whose wire form is not a mapping, so they have no key table.

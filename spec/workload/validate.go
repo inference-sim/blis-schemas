@@ -1,6 +1,9 @@
 package workload
 
-import "github.com/inference-sim/blis-schemas/internal/validate"
+import (
+	"github.com/inference-sim/blis-schemas/internal/validate"
+	"github.com/inference-sim/blis-schemas/spec/acceptance"
+)
 
 // isHex reports whether every character of s is a hex digit. Used to reject a sha256 of
 // the right length but the wrong alphabet — a digest that could never match a file.
@@ -56,6 +59,7 @@ func (t *TraceRef) Validate() *validate.Problems {
 		p.Field("rows", "must not be negative")
 	}
 	p.Merge("header", t.Header.Validate())
+	acceptance.ValidateWorkloadTerms(p, t.Category, t.Thinking, t.Acceptance)
 	return p
 }
 
@@ -150,6 +154,7 @@ func (s *Shape) Validate() *validate.Problems {
 	}
 	s.Prompt.validate(p, "prompt")
 	s.Output.validate(p, "output")
+	acceptance.ValidateWorkloadTerms(p, s.Category, s.Thinking, s.Acceptance)
 	// A shared prefix longer than the prompt it is a prefix of describes no request.
 	if s.Prompt.Mean > 0 && s.PrefixTokens > s.Prompt.Mean {
 		p.Field("prefix_tokens",

@@ -1,6 +1,6 @@
 # Documents
 
-<p class="lede">blis-schemas defines ten kinds of YAML document. A run needs two that its
+<p class="lede">blis-schemas defines eleven kinds of YAML document. A run needs two that its
 user writes, a scenario and a deployment. They refer by name to documents committed in the
 catalog and the registry.</p>
 
@@ -29,7 +29,7 @@ and recorded with its results.
 --8<-- "docs/examples/deployment.yaml"
 ```
 
-## The ten kinds
+## The eleven kinds
 
 | Document | Lives in | Its name comes from | Reference |
 |---|---|---|---|
@@ -42,6 +42,7 @@ and recorded with its results.
 | Storage classes | catalog, `devices/storage.yaml` | each class's key in the file | [Hardware](../reference/hardware.md#storage-classes) |
 | Workload shape | catalog, `workloads/<name>.yaml` | the file name | [Workload](../reference/workload.md#shape) |
 | Coefficient set | registry, `coefficients/<name>.yaml` | the file name, which a scenario uses; its `name` key matches by convention | [Coefficient set](../reference/coefficients.md) |
+| Acceptance-profile set | registry, `acceptance/<name>.yaml` | the file name, which a scenario's `acceptance.profiles` uses; its `name` key matches by convention | [Acceptance profiles](../reference/acceptance.md) |
 | Evaluation run | wherever its user keeps it | its `name` key | [Evaluation run](../reference/evaluation.md) |
 
 A model entry in the catalog is a directory. It holds an identity manifest recording where
