@@ -5,6 +5,7 @@ import (
 	"math/big"
 	"math/bits"
 	"sort"
+	"strings"
 
 	"github.com/inference-sim/blis-schemas/internal/validate"
 )
@@ -32,8 +33,72 @@ func (d *Deployment) Validate() *validate.Problems {
 
 	d.validatePools(p)
 	d.validateOffload(p)
+	d.validateRouter(p)
 	return p
 }
+
+// validateRouter checks that the router inputs are well formed: named files are non-empty
+// paths, flags are flags, and the configuration is named once.
+func (d *Deployment) validateRouter(p *validate.Problems) {
+	for i, pool := range d.Pools {
+		for k, v := range pool.Labels {
+			if !validLabelKey(k) {
+				p.Field(fmt.Sprintf("pools[%d].labels", i), "%q is not a valid Kubernetes label key", k)
+			}
+			if !validLabelValue(v) {
+				p.Field(fmt.Sprintf("pools[%d].labels.%s", i, k), "%q is not a valid Kubernetes label value", v)
+			}
+		}
+	}
+	r := d.Router
+	if r == nil {
+		return
+	}
+	for i, f := range r.EPPFlags {
+		if !strings.HasPrefix(f, "-") {
+			p.Field(fmt.Sprintf("router.epp_flags[%d]", i), "%q is not a flag; give each flag as --name=value", f)
+		}
+		if r.EndpointPickerConfig != "" && (strings.HasPrefix(f, "--config-file") || strings.HasPrefix(f, "--config-text")) {
+			p.Field("router.endpoint_picker_config", "the configuration is also named by the EPP flag %q; name it once", f)
+		}
+	}
+	for i, m := range r.Manifests {
+		if strings.TrimSpace(m) == "" {
+			p.Field(fmt.Sprintf("router.manifests[%d]", i), "must name a file")
+		}
+	}
+}
+
+// validLabelKey reports whether k is a Kubernetes label key: an optional DNS-subdomain prefix
+// and a slash, then a name of at most 63 characters.
+func validLabelKey(k string) bool {
+	name := k
+	if i := strings.LastIndexByte(k, '/'); i >= 0 {
+		prefix := k[:i]
+		name = k[i+1:]
+		if prefix == "" || len(prefix) > 253 || !labelChars(prefix, ".-") {
+			return false
+		}
+	}
+	return name != "" && len(name) <= 63 && labelChars(name, "-_.") && alnum(name[0]) && alnum(name[len(name)-1])
+}
+
+// validLabelValue reports whether v is a Kubernetes label value: empty, or at most 63
+// characters that start and end alphanumeric.
+func validLabelValue(v string) bool {
+	return v == "" || (len(v) <= 63 && labelChars(v, "-_.") && alnum(v[0]) && alnum(v[len(v)-1]))
+}
+
+func labelChars(s, extra string) bool {
+	for i := 0; i < len(s); i++ {
+		if !alnum(s[i]) && !strings.ContainsRune(extra, rune(s[i])) {
+			return false
+		}
+	}
+	return true
+}
+
+func alnum(c byte) bool { return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' }
 
 // ClusterConstraints is the subset of a Scenario's cluster that deployment validation
 // reads: the node and per-node GPU counts, and the declared storage inventory. It is a

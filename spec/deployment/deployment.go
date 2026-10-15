@@ -42,6 +42,31 @@ type Deployment struct {
 
 	Offload    *Offload    `yaml:"offload,omitempty"`
 	PDTransfer *PDTransfer `yaml:"pd_transfer,omitempty"`
+
+	// Router names the inputs of the llm-d router (the Endpoint Picker) that routes the
+	// deployment's requests. Absent means the router's built-in configuration in standalone
+	// mode over every pod of the deployment.
+	Router *Router `yaml:"router,omitempty"`
+}
+
+// Router names the llm-d router's own inputs, exactly as a real deployment gives them to the
+// router, so one set of files configures both the real router and the simulated one. Paths are
+// relative to the directory of the file that holds the deployment.
+//
+// There is deliberately no field for a routing decision: scorers, weights, admission and flow
+// control are the router's configuration, carried by the files named here and never
+// restated in this schema.
+type Router struct {
+	// EPPFlags are the router's command-line flags, verbatim (for example the router Helm
+	// chart's epp.flags rendered as --name=value). They select the pool (--pool-name or
+	// --endpoint-selector) and may name the configuration with --config-file.
+	EPPFlags []string `yaml:"epp_flags,omitempty"`
+	// EndpointPickerConfig is the EndpointPickerConfig file, as the router reads it with
+	// --config-file. Naming the file here and in EPPFlags is an error.
+	EndpointPickerConfig string `yaml:"endpoint_picker_config,omitempty"`
+	// Manifests are Kubernetes manifest files. The router reads the InferencePool,
+	// InferenceObjective and InferenceModelRewrite objects in them; other kinds are ignored.
+	Manifests []string `yaml:"manifests,omitempty"`
 }
 
 // Role distinguishes the engines of a disaggregated deployment.
@@ -68,6 +93,10 @@ type Pool struct {
 	Nodes    int         `yaml:"nodes"`
 	Parallel Parallelism `yaml:"parallel"`
 	Engine   Engine      `yaml:"engine"`
+	// Labels are the Kubernetes labels on the pool's model-server pods, as the pool's pod
+	// template sets them. The router selects and filters endpoints by them (an InferencePool
+	// selector, the llm-d.ai/role label of a disaggregated deployment).
+	Labels map[string]string `yaml:"labels,omitempty"`
 }
 
 // Parallelism is the layout. EP is absent: see the package comment.

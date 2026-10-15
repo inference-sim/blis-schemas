@@ -1,0 +1,67 @@
+package deployment
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestRouterInputs(t *testing.T) {
+	cases := []struct {
+		name    string
+		mutate  func(d *Deployment)
+		wantErr string // substring of the problem; "" = valid
+	}{
+		{"no router block", func(*Deployment) {}, ""},
+		{"full router block", func(d *Deployment) {
+			d.Router = &Router{
+				EPPFlags:             []string{"--pool-name=llama", "--refresh-metrics-interval=50ms"},
+				EndpointPickerConfig: "epp-config.yaml",
+				Manifests:            []string{"inferencepool.yaml", "objectives.yaml"},
+			}
+			d.Pools[0].Labels = map[string]string{"app": "llama", "llm-d.ai/role": "prefill"}
+		}, ""},
+		{"positional argument", func(d *Deployment) { d.Router = &Router{EPPFlags: []string{"llama"}} }, "router.epp_flags[0]"},
+		{"configuration named twice", func(d *Deployment) {
+			d.Router = &Router{EPPFlags: []string{"--config-file=a.yaml"}, EndpointPickerConfig: "b.yaml"}
+		}, "router.endpoint_picker_config"},
+		{"empty manifest path", func(d *Deployment) { d.Router = &Router{Manifests: []string{" "}} }, "router.manifests[0]"},
+		{"bad label key", func(d *Deployment) { d.Pools[1].Labels = map[string]string{"-bad": "x"} }, "pools[1].labels"},
+		{"bad label value", func(d *Deployment) { d.Pools[1].Labels = map[string]string{"app": "has space"} }, "pools[1].labels.app"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := pdDeployment()
+			tc.mutate(d)
+			p := d.Validate()
+			problems := ""
+			if !p.OK() {
+				problems = p.Error()
+			}
+			if tc.wantErr == "" {
+				if problems != "" {
+					t.Fatalf("valid deployment rejected: %s", problems)
+				}
+				return
+			}
+			if !strings.Contains(problems, tc.wantErr) {
+				t.Fatalf("want a problem at %q, got %q", tc.wantErr, problems)
+			}
+		})
+	}
+}
+
+func TestLabelSyntax(t *testing.T) {
+	for k, want := range map[string]bool{
+		"app": true, "llm-d.ai/role": true, "example.com/a_b.c": true,
+		"": false, "/x": false, "-x": false, "x-": false, strings.Repeat("a", 64): false,
+	} {
+		if got := validLabelKey(k); got != want {
+			t.Errorf("validLabelKey(%q) = %v, want %v", k, got, want)
+		}
+	}
+	for v, want := range map[string]bool{"": true, "decode": true, "prefill-decode": true, "a b": false, "x.": false} {
+		if got := validLabelValue(v); got != want {
+			t.Errorf("validLabelValue(%q) = %v, want %v", v, got, want)
+		}
+	}
+}
