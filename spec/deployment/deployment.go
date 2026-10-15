@@ -79,6 +79,11 @@ type Parallelism struct {
 	// the node's GPU count.
 	DPLocal int `yaml:"dp_local,omitempty"`
 
+	// DataParallelLoadBalancing is how the pool's data-parallel ranks are exposed, which
+	// decides what a router sees and chooses between. Empty is internal, the default.
+	// See DPLoadBalancing.
+	DataParallelLoadBalancing DPLoadBalancing `yaml:"data_parallel_load_balancing,omitempty"`
+
 	EnableExpertParallel bool `yaml:"enable_expert_parallel"`
 
 	// PCP and DCP are prefill- and decode-context parallel width: sharding one
@@ -149,6 +154,21 @@ type Engine struct {
 	AllReduceBackend string `yaml:"allreduce_backend,omitempty"`
 	// CUDAGraphMode selects capture strategy, which sets the host launch term.
 	CUDAGraphMode string `yaml:"cudagraph_mode,omitempty"`
+	// MaxCUDAGraphCaptureSize is compilation_config.max_cudagraph_capture_size: the
+	// largest step, in tokens, a CUDA graph is captured for. A larger step runs eager,
+	// so with DSpark at K=5, where a decode step verifies 6 tokens per request, a size of
+	// 64 sends every step of more than 10 decoding requests eager. Nil takes the release
+	// default, min(max_num_seqs x decode query length x 2, 512), or 1024 on SM100 (v0.31.0
+	// vllm/config/vllm.py _set_cudagraph_sizes). The engine caps it at
+	// max_num_batched_tokens; Pack.CUDAGraphCaptureSizes resolves the sizes that run.
+	//
+	// A pointer, because a stated 0 is not unset: the engine refuses it.
+	MaxCUDAGraphCaptureSize *int `yaml:"max_cudagraph_capture_size,omitempty"`
+	// CUDAGraphCaptureSizes is compilation_config.cudagraph_capture_sizes: the exact
+	// step sizes, in tokens, to capture. Nil generates them from the maximum. The engine
+	// drops sizes above max_num_batched_tokens, and refuses a stated maximum that is not
+	// the largest size it keeps.
+	CUDAGraphCaptureSizes []int `yaml:"cudagraph_capture_sizes,omitempty"`
 	// AsyncScheduling is tri-state: nil lets the engine resolve it through its
 	// disqualifying conditions, which is what a real deployment does.
 	AsyncScheduling *bool `yaml:"async_scheduling,omitempty"`
@@ -181,6 +201,15 @@ type Engine struct {
 	BlockSize           int `yaml:"block_size,omitempty"`
 	MaxNumBatchedTokens int `yaml:"max_num_batched_tokens,omitempty"`
 	MaxNumSeqs          int `yaml:"max_num_seqs,omitempty"`
+	// LongPrefillTokenThreshold is SchedulerConfig.long_prefill_token_threshold: the most
+	// tokens of one prefill scheduled in a step, so a long prompt cannot take the whole
+	// token budget and stall the decodes beside it. Zero, the default, leaves prefills
+	// uncapped. The engine refuses one above max_model_len (vllm/config/scheduler.py
+	// verify_max_model_len), and whether a request alone in the batch is exempt is a
+	// release fact (rules.Pack.LongPrefillExemptsLoneRequest).
+	//
+	// The field name follows the engine's CLI flag (--long-prefill-token-threshold).
+	LongPrefillTokenThreshold int `yaml:"long_prefill_token_threshold,omitempty"`
 	// MaxModelLen is the context length: omitted, auto, or a count. See MaxModelLen.
 	MaxModelLen MaxModelLen `yaml:"max_model_len,omitempty"`
 
@@ -370,4 +399,40 @@ type Tier struct {
 // free parameter.
 type PDTransfer struct {
 	Connector string `yaml:"connector"`
+}
+
+// DPLoadBalancing is how a data-parallel pool's ranks are exposed to clients, vLLM's
+// three launch modes (v0.31.0 vllm/engine/arg_utils.py:536-538, 1225-1242):
+//
+//   - internal, the default: one API endpoint, and the engine's core client balances
+//     every request across all ranks (DPLBAsyncMPClient, vllm/v1/engine/core_client.py:
+//     155-166);
+//   - hybrid (--data-parallel-hybrid-lb): one endpoint per node, balancing across that
+//     node's ranks; a router chooses the node;
+//   - external (--data-parallel-external-lb, or --data-parallel-multi-port-external-lb,
+//     which launches one such server per local rank): every rank serves its own
+//     endpoint (DPAsyncMPClient), and a router chooses the rank.
+//
+// The api server count is not part of it: --api-server-count sets how many frontend
+// processes share an endpoint (vllm/entrypoints/cli/serve.py:105-127), not which ranks a
+// router can reach.
+type DPLoadBalancing string
+
+const (
+	DPLBInternal DPLoadBalancing = "internal"
+	DPLBHybrid   DPLoadBalancing = "hybrid"
+	DPLBExternal DPLoadBalancing = "external"
+)
+
+var dpLoadBalancings = map[DPLoadBalancing]bool{DPLBInternal: true, DPLBHybrid: true, DPLBExternal: true}
+
+// Valid reports whether m is a recognized mode; empty is the default, internal.
+func (m DPLoadBalancing) Valid() bool { return m == "" || dpLoadBalancings[m] }
+
+// Mode returns the mode with its default applied.
+func (m DPLoadBalancing) Mode() DPLoadBalancing {
+	if m == "" {
+		return DPLBInternal
+	}
+	return m
 }

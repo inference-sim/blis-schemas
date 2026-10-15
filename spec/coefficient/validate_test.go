@@ -327,3 +327,49 @@ coefficients:
 		})
 	}
 }
+
+func calibratedEntry() Entry {
+	return Entry{Name: "host_launch_eager_per_kernel", Value: 4.2,
+		Units: vocab.UnitMicrosecondsPerLayer, Method: vocab.MethodCalibrated, Fitted: true,
+		Scope:     Scope{Hardware: []string{"h100"}, Model: []string{"gpt-oss-120b"}},
+		Rationale: "fitted on output throughput; holdout grouped by model x hardware x source",
+		Sources: []Source{{Kind: vocab.SourceMeasuredCase,
+			Cite: "synthetic-h100-tp4@0123abcd", Role: vocab.RolePrimary}},
+		Validated: MetricList{"output_tps", "tpot"}}
+}
+
+// A calibrated value is fitted through the cost model to measured cases, so it must name
+// them and the held-out metrics it was checked on; `derived` is a catalog provenance and
+// is not a method at all.
+func TestCalibratedRequiresMeasuredCasesAndHoldout(t *testing.T) {
+	ok := validSet()
+	ok.Coefficients = append(ok.Coefficients, calibratedEntry())
+	if p := ok.Validate(); !p.OK() {
+		t.Fatalf("a well-formed calibrated entry was rejected:\n%s", p.Error())
+	}
+	cases := []struct {
+		name   string
+		mutate func(*Entry)
+	}{
+		{"no sources", func(e *Entry) { e.Sources = nil }},
+		{"sources without a measured case", func(e *Entry) {
+			e.Sources = []Source{{Kind: vocab.SourcePublication, Cite: "x", Role: vocab.RolePrimary}}
+		}},
+		{"no held-out metrics", func(e *Entry) { e.Validated = nil }},
+		{"no rationale", func(e *Entry) { e.Rationale = "" }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := validSet()
+			e := calibratedEntry()
+			tc.mutate(&e)
+			s.Coefficients = append(s.Coefficients, e)
+			if p := s.Validate(); p.OK() {
+				t.Fatal("expected rejection, got none")
+			}
+		})
+	}
+	if vocab.Method("derived").Valid() {
+		t.Error("derived is a catalog provenance, not a coefficient method")
+	}
+}

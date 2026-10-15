@@ -13,7 +13,10 @@
 // sweep axis that is neither.
 package scenario
 
-import "github.com/inference-sim/blis-schemas/spec/workload"
+import (
+	"github.com/inference-sim/blis-schemas/spec/acceptance"
+	"github.com/inference-sim/blis-schemas/spec/workload"
+)
 
 // Scenario is the immutable problem: a model, the hardware it is available on, the
 // workload it is measured against, and the references that identify what a prediction is
@@ -35,6 +38,13 @@ type Scenario struct {
 	// which is enough for a capacity question and not enough for a throughput one, so it
 	// is a pointer and omitting it is valid. When present it must choose exactly one arm.
 	Workload *workload.Binding `yaml:"workload,omitempty"`
+
+	// Acceptance pins speculative acceptance for the run, above the workload's and the
+	// registry's: by naming an acceptance profile set in the registry (as Coefficients
+	// names coefficient sets) or by an inline value. To score against a run that forced
+	// its acceptance, pin the value it forced. Omitted, the workload and the registry
+	// decide (acceptance.Resolve).
+	Acceptance *acceptance.Pin `yaml:"acceptance,omitempty"`
 
 	// EngineVersion is the engine release this scenario is fitted against. It is not
 	// cosmetic: a coefficient is valid only for the code it was fitted against, and

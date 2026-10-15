@@ -98,12 +98,13 @@ func (e Entry) validate(p *validate.Problems, at string) {
 		p.Field(at+".value",
 			"method not_charged declares a deliberate zero, but value is %v", e.Value)
 	}
-	// fitted marks a value obtained by fitting a curve to its own measured term, so it is
-	// coherent only with a measured method.
-	if e.Fitted && e.Method != vocab.MethodMeasured {
+	// fitted marks a value obtained by fitting a curve, either to its own measured term or,
+	// for calibrated, through the cost model to end-to-end cases, so it is coherent only
+	// with those two methods.
+	if e.Fitted && e.Method != vocab.MethodMeasured && e.Method != vocab.MethodCalibrated {
 		p.Field(at+".fitted",
-			"fitted: true requires method %q, got method %q",
-			vocab.MethodMeasured, e.Method)
+			"fitted: true requires method %q or %q, got method %q",
+			vocab.MethodMeasured, vocab.MethodCalibrated, e.Method)
 	}
 	// Companion fields required by method. Gated on a known method so an unknown one is
 	// reported once (as an unknown method) rather than also as a missing companion.
@@ -122,6 +123,18 @@ func (e Entry) validate(p *validate.Problems, at string) {
 		}
 		if e.Method == vocab.MethodCopied && e.CopiedFrom == "" {
 			p.Field(at+".copied_from", "method copied requires copied_from")
+		}
+		// A calibrated value is only as good as the cases it was fitted to and the ones it
+		// was held out against, so both must be on the entry.
+		if e.Method == vocab.MethodCalibrated {
+			if !e.citesKind(vocab.SourceMeasuredCase) {
+				p.Field(at+".sources", "method calibrated requires at least one source of kind %q",
+					vocab.SourceMeasuredCase)
+			}
+			if len(e.Validated) == 0 {
+				p.Field(at+".validated",
+					"method calibrated requires the held-out metrics the value was checked against")
+			}
 		}
 	}
 	// Intentional minor divergence from the Python validator: it also rejects a present-
@@ -157,4 +170,13 @@ func (e Entry) validate(p *validate.Problems, at string) {
 				e.Value, e.CI95.Low, e.CI95.High)
 		}
 	}
+}
+
+func (e Entry) citesKind(k vocab.SourceKind) bool {
+	for _, s := range e.Sources {
+		if s.Kind == k {
+			return true
+		}
+	}
+	return false
 }

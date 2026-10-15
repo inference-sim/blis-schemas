@@ -85,6 +85,15 @@
 `sequence-parallel-moe-implied`
 :   *warning.* On this backend with tensor and data parallelism both above one, the engine makes the MoE input sequence-parallel, which replaces the layer's all-reduce with a different pair of collectives.
 
+`data-parallel-load-balancing`
+:   *error or warning.* This release refuses external data-parallel load balancing for a model without experts and hybrid without data_parallel_size_local, switches hybrid with one rank per node to external, and runs hybrid with every rank on one node as internal (vllm/engine/arg_utils.py create_engine_config); the mode decides which endpoints a router can choose between.
+
+`long-prefill-threshold-within-max-model-len`
+:   *error.* This release refuses at startup a long_prefill_token_threshold greater than max_model_len (vllm/config/scheduler.py verify_max_model_len).
+
+`cudagraph-capture-sizes`
+:   *error or warning.* This release refuses a stated max_cudagraph_capture_size that is not the largest of the stated cudagraph_capture_sizes it keeps, caps the maximum at max_num_batched_tokens, drops sizes above it, and truncates a maximum off its capture stride to the largest size it generates (vllm/config/vllm.py _set_cudagraph_sizes); a step larger than the size that runs is executed eager, so the size that runs is the one to price.
+
 ### Accepted values
 
 | Pack field | Governs | Value |
@@ -118,6 +127,8 @@
 | `TritonFetchPageBytes` | Offload page size, in bytes, at which a CPU-to-GPU fetch uses an SM-consuming kernel | `28672` |
 | `TritonFetchSMs` | SMs that fetch path withholds from the forward pass | `12` |
 | `CascadeAttnOptIn` | Cascade attention is off unless requested | `true` |
+| `LongPrefillExemptsLoneRequest` | Whether `engine.long_prefill_token_threshold` is waived for a request alone in the scheduler | `true` |
+| `KVCachePacking` | How stated caches are grouped into KV cache groups sharing one block pool | `packed groups share one block pool; state caches split to fit the block; a lone window bucket splits like state; the block rounds to the layers' stride alignment; a state ring is sized from K` |
 
 ## Engine 0.29.0
 
@@ -189,6 +200,15 @@
 `sequence-parallel-moe-implied`
 :   *warning.* On this backend with tensor and data parallelism both above one, the engine makes the MoE input sequence-parallel, which replaces the layer's all-reduce with a different pair of collectives.
 
+`data-parallel-load-balancing`
+:   *error or warning.* This release refuses external data-parallel load balancing for a model without experts and hybrid without data_parallel_size_local, switches hybrid with one rank per node to external, and runs hybrid with every rank on one node as internal (vllm/engine/arg_utils.py create_engine_config); the mode decides which endpoints a router can choose between.
+
+`long-prefill-threshold-within-max-model-len`
+:   *error.* This release refuses at startup a long_prefill_token_threshold greater than max_model_len (vllm/config/scheduler.py verify_max_model_len).
+
+`cudagraph-capture-sizes`
+:   *error or warning.* This release refuses a stated max_cudagraph_capture_size that is not the largest of the stated cudagraph_capture_sizes it keeps, caps the maximum at max_num_batched_tokens, drops sizes above it, and truncates a maximum off its capture stride to the largest size it generates (vllm/config/vllm.py _set_cudagraph_sizes); a step larger than the size that runs is executed eager, so the size that runs is the one to price.
+
 ### Accepted values
 
 | Pack field | Governs | Value |
@@ -222,4 +242,6 @@
 | `TritonFetchPageBytes` | Offload page size, in bytes, at which a CPU-to-GPU fetch uses an SM-consuming kernel | `28672` |
 | `TritonFetchSMs` | SMs that fetch path withholds from the forward pass | `12` |
 | `CascadeAttnOptIn` | Cascade attention is off unless requested | `true` |
+| `LongPrefillExemptsLoneRequest` | Whether `engine.long_prefill_token_threshold` is waived for a request alone in the scheduler | `false` |
+| `KVCachePacking` | How stated caches are grouped into KV cache groups sharing one block pool | `packed groups share one block pool` |
 

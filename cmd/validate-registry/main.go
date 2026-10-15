@@ -1,5 +1,6 @@
 // Command validate-registry loads every committed coefficient set in a blis-registry
-// checkout and validates it against the schema.
+// checkout, and every acceptance-profile set under acceptance/ when the registry hosts any,
+// and validates each against the schema.
 //
 // blis-registry carries its own Python validator, but every Go consumer loads these
 // sets through blisschemas.LoadCoefficientSet and the field checks in
@@ -40,6 +41,7 @@ import (
 
 	blisschemas "github.com/inference-sim/blis-schemas"
 	"github.com/inference-sim/blis-schemas/internal/registry"
+	"github.com/inference-sim/blis-schemas/internal/validate"
 )
 
 func main() {
@@ -77,39 +79,68 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	var failed int
-	for _, path := range paths {
-		// Name each set by its path relative to coefficients/, so sets with the same
-		// base name in different subdirectories stay distinct in the output.
-		name := path
-		if rel, e := filepath.Rel(coeffDir, path); e == nil {
-			name = rel
-		}
-		s, err := blisschemas.LoadCoefficientSet(path)
-		if err != nil {
-			// A strict-decoder error can span several lines; prefix each with the file
-			// so every line is attributable, not just the first.
-			fmt.Fprint(stderr, prefixLines(name, err.Error()))
-			fmt.Fprintf(stdout, "%-46s FAILED (load error)\n", name)
-			failed++
-			continue
-		}
-		p := s.Validate()
-		for _, problem := range p.All() {
-			fmt.Fprintf(stderr, "%s: %s\n", name, problem)
-		}
-		if !p.OK() {
-			fmt.Fprintf(stdout, "%-46s FAILED (%d problem(s))\n", name, len(p.Errors()))
-			failed++
-			continue
-		}
-		fmt.Fprintf(stdout, "%-46s %3d coefficient(s)\n", name, len(s.Coefficients))
+	accPaths, err := registry.AcceptancePaths(root)
+	if err != nil {
+		fmt.Fprintf(stderr, "scanning %s: %v\n", filepath.Join(root, "acceptance"), err)
+		return 2
 	}
+
+	failed := 0
+	for _, path := range paths {
+		failed += check(stdout, stderr, coeffDir, path, func() (int, string, *validate.Problems, error) {
+			s, err := blisschemas.LoadCoefficientSet(path)
+			if err != nil {
+				return 0, "", nil, err
+			}
+			return len(s.Coefficients), "coefficient(s)", s.Validate(), nil
+		})
+	}
+	// Acceptance-profile sets are optional: a registry that hosts none is complete. They are
+	// named relative to the root (acceptance/<file>) so they cannot be mistaken for a
+	// coefficient set of the same file name.
+	for _, path := range accPaths {
+		failed += check(stdout, stderr, root, path, func() (int, string, *validate.Problems, error) {
+			s, err := blisschemas.LoadAcceptanceProfileSet(path)
+			if err != nil {
+				return 0, "", nil, err
+			}
+			return len(s.Profiles), "profile(s)", s.Validate(), nil
+		})
+	}
+	total := len(paths) + len(accPaths)
 	if failed > 0 {
-		fmt.Fprintf(stderr, "\n%d of %d set(s) failed\n", failed, len(paths))
+		fmt.Fprintf(stderr, "\n%d of %d set(s) failed\n", failed, total)
 		return 1
 	}
-	fmt.Fprintf(stdout, "\nall %d set(s) validate\n", len(paths))
+	fmt.Fprintf(stdout, "\nall %d set(s) validate\n", total)
+	return 0
+}
+
+// check loads and validates one set, writing its summary line to stdout and its findings
+// to stderr, and returns 1 if it failed. The set is named by its path relative to base,
+// so sets with one base name in different subdirectories stay distinct in the output.
+func check(stdout, stderr io.Writer, base, path string,
+	load func() (int, string, *validate.Problems, error)) int {
+	name := path
+	if rel, e := filepath.Rel(base, path); e == nil {
+		name = rel
+	}
+	n, noun, p, err := load()
+	if err != nil {
+		// A strict-decoder error can span several lines; prefix each with the file so
+		// every line is attributable, not just the first.
+		fmt.Fprint(stderr, prefixLines(name, err.Error()))
+		fmt.Fprintf(stdout, "%-46s FAILED (load error)\n", name)
+		return 1
+	}
+	for _, problem := range p.All() {
+		fmt.Fprintf(stderr, "%s: %s\n", name, problem)
+	}
+	if !p.OK() {
+		fmt.Fprintf(stdout, "%-46s FAILED (%d problem(s))\n", name, len(p.Errors()))
+		return 1
+	}
+	fmt.Fprintf(stdout, "%-46s %3d %s\n", name, n, noun)
 	return 0
 }
 

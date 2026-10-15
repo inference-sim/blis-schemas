@@ -42,7 +42,14 @@ distinguishable from an estimate, so it is never inferred.
 `not_charged`
 :   Deliberately zero, so that "no cost" can be told apart from "cost unknown".
 
-`measured`, `literature` and `vendor_spec` count as evidenced. That is a statement about
+`calibrated`
+:   Back-solved through the cost model from end-to-end [measured runs](measurement.md), and
+    checked against held-out ones. The entry cites its runs as sources of kind
+    `measured_case` and names the held-out metrics in `validated`. It is not `derived`,
+    which is a catalog [provenance](#provenances): a figure computed from other catalog
+    facts.
+
+`measured`, `literature`, `vendor_spec` and `calibrated` count as evidenced. That is a statement about
 the basis of a number, not its quality: a vendor figure is evidenced but nominal.
 
 ### Scope keys
@@ -288,6 +295,19 @@ A speculator's `drafting`. An omitted `drafting` means autoregressive.
 
 --8<-- "docs/generated/enum/deployment.Role.md"
 
+### Data-parallel load balancing
+
+A pool's `parallel.data_parallel_load_balancing`. `internal`, the default, serves one
+endpoint and the engine balances requests across every rank. `hybrid`
+(`--data-parallel-hybrid-lb`) serves one endpoint per node, balancing across that node's
+ranks. `external` (`--data-parallel-external-lb`, or
+`--data-parallel-multi-port-external-lb`, which launches one such server per local rank)
+serves one endpoint per rank, and the router chooses the rank. `Pack.ResolveDPLoadBalancing`
+returns the mode that runs: `hybrid` with one rank per node runs `external`, and with
+every rank on one node runs `internal`.
+
+--8<-- "docs/generated/enum/deployment.DPLoadBalancing.md"
+
 ## Traces
 
 ### Trace modes
@@ -296,12 +316,152 @@ A trace header's `mode`: how the trace was produced.
 
 --8<-- "docs/generated/enum/workload.Mode.md"
 
+### Replay scenarios
+
+A replay's `scenario`.
+
+--8<-- "docs/generated/enum/workload.ReplayScenario.md"
+
+### Corpus formats
+
+A replay corpus's `format`.
+
+--8<-- "docs/generated/enum/workload.CorpusFormat.md"
+
+### Corpus encodings
+
+A replay corpus's `encoding`.
+
+--8<-- "docs/generated/enum/workload.CorpusEncoding.md"
+
+### Cache-bust modes
+
+A replay's `cache_bust`.
+
+--8<-- "docs/generated/enum/workload.CacheBust.md"
+
+### Warmup modes
+
+A replay's `warmup.mode`. `synthesized` sends, for every stream mid-flight at its lane's
+snapshot, its last earlier request with one output token, and starts profiling when all
+have returned. `cache_pressure` runs an accelerated warmup for a stated duration.
+
+--8<-- "docs/generated/enum/workload.WarmupMode.md"
+
 ### Time units
 
 A trace header's `time_unit`. Several members name the same unit, because the tools that
 write traces spell it differently.
 
 --8<-- "docs/generated/enum/workload.TimeUnit.md"
+
+## Acceptance
+
+### Thinking modes
+
+A profile's and a workload's `thinking`: whether the target model ran with its reasoning
+mode on.
+
+--8<-- "docs/generated/enum/acceptance.Thinking.md"
+
+## Measured runs
+
+The vocabularies of a [measured run](measurement.md) and its licence registry.
+
+### Verdicts
+
+--8<-- "docs/generated/enum/measurement.Verdict.md"
+
+### Resolutions
+
+--8<-- "docs/generated/enum/measurement.Resolution.md"
+
+### Measurement source kinds
+
+--8<-- "docs/generated/enum/measurement.SourceKind.md"
+
+### Input roles
+
+--8<-- "docs/generated/enum/measurement.InputRole.md"
+
+### Extraction methods
+
+--8<-- "docs/generated/enum/measurement.ExtractionMethod.md"
+
+### Ramp strategies
+
+--8<-- "docs/generated/enum/measurement.RampStrategy.md"
+
+### Metric formulas
+
+`interactivity` is 1000 over an inter-token-latency statistic, in tokens per second per
+user. `output_throughput`, `total_throughput` and `request_throughput` are rates over a
+window, with a denominator rather than a statistic.
+
+--8<-- "docs/generated/enum/measurement.Formula.md"
+
+### Statistics
+
+A percentile is written `pNN` or `pNN.N`, strictly between 0 and 100, with no leading or
+trailing zeros: `p50`, `p99`, `p99.9`.
+
+--8<-- "docs/generated/enum/measurement.Statistic.md"
+
+### Populations
+
+--8<-- "docs/generated/enum/measurement.Population.md"
+
+### Denominators
+
+--8<-- "docs/generated/enum/measurement.Denominator.md"
+
+### Clocks
+
+--8<-- "docs/generated/enum/measurement.Clock.md"
+
+### Start events
+
+--8<-- "docs/generated/enum/measurement.StartEvent.md"
+
+### Stop events
+
+--8<-- "docs/generated/enum/measurement.StopEvent.md"
+
+### Output length sources
+
+--8<-- "docs/generated/enum/measurement.OutputLenSource.md"
+
+### Percentile methods
+
+--8<-- "docs/generated/enum/measurement.PercentileMethod.md"
+
+### Metric units
+
+--8<-- "docs/generated/enum/measurement.MetricUnit.md"
+
+### Provenance row verdicts
+
+--8<-- "docs/generated/enum/measurement.RowVerdict.md"
+
+### Materiality
+
+--8<-- "docs/generated/enum/measurement.Materiality.md"
+
+### Difference kinds
+
+--8<-- "docs/generated/enum/measurement.DiffKind.md"
+
+### Licence statuses
+
+--8<-- "docs/generated/enum/measurement.LicenseStatus.md"
+
+### Permitted uses
+
+--8<-- "docs/generated/enum/measurement.Use.md"
+
+### Router kinds
+
+--8<-- "docs/generated/enum/router.Kind.md"
 
 ## Kernel
 

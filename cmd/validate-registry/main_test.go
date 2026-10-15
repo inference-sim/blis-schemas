@@ -270,3 +270,60 @@ func TestRunDiscoversYmlNestedAndUppercase(t *testing.T) {
 		t.Errorf("stdout summary wrong, want all 4 valid:\n%s", so)
 	}
 }
+
+const validAcceptance = `
+kind: AcceptanceProfileSet
+name: inferencex-golden-al
+profiles:
+  - model: deepseek-v4.1-flash
+    speculative_method: dspark
+    num_spec_tokens: 5
+    thinking: "off"
+    category: coding
+    acceptance_length: 4.07
+    method: measured
+    provenance:
+      source: golden.yaml
+      hardware: b300
+      engine_image: vllm/vllm-openai:deepseekv41-flash-0909
+      sampling: {temperature: 1.0}
+`
+
+func writeAcceptance(t *testing.T, dir, name, body string) {
+	t.Helper()
+	path := filepath.Join(dir, "acceptance", name)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Acceptance-profile sets under acceptance/ are validated beside the coefficient sets
+// and counted in the summary; an invalid one fails the run.
+func TestRunValidatesAcceptanceSets(t *testing.T) {
+	dir := t.TempDir()
+	writeSet(t, dir, "primitives.yaml", validSet)
+	writeAcceptance(t, dir, "inferencex-golden-al.yaml", validAcceptance)
+
+	var out, errBuf bytes.Buffer
+	if code := run([]string{dir}, &out, &errBuf); code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr:\n%s", code, errBuf.String())
+	}
+	so := out.String()
+	if !strings.Contains(so, filepath.Join("acceptance", "inferencex-golden-al.yaml")) ||
+		!strings.Contains(so, "1 profile(s)") || !strings.Contains(so, "all 2 set(s) validate") {
+		t.Errorf("stdout does not report the acceptance set:\n%s", so)
+	}
+
+	writeAcceptance(t, dir, "bad.yaml", strings.Replace(validAcceptance, "4.07", "6.5", 1))
+	out.Reset()
+	errBuf.Reset()
+	if code := run([]string{dir}, &out, &errBuf); code != 1 {
+		t.Fatalf("exit = %d, want 1 for an AL above K+1", code)
+	}
+	if !strings.Contains(errBuf.String(), "outside [1, 6]") || !strings.Contains(errBuf.String(), "1 of 3 set(s) failed") {
+		t.Errorf("stderr:\n%s", errBuf.String())
+	}
+}

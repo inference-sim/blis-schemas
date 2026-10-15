@@ -250,7 +250,7 @@ func TestCorpusDeploymentsAreExpressible(t *testing.T) {
 			}, nil),
 		},
 		{
-			// From the curvebender llm-d manifests (glm-5.3 rits-roce-h100-canary): a
+			// From an internal llm-d deployment (a glm-5.3 H100 canary): a
 			// LeaderWorkerSet of 4 pods, one vLLM per pod, prefill at DP 4 x PCP 8 with
 			// DCP 8 at TP 1 — an expert group of 32 — and decode at DP 16 x TP 2. The
 			// canary ran an engine that supports PCP with DP, which v0.29.0 does not, so

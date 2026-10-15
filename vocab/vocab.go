@@ -70,11 +70,17 @@ const (
 	// MethodNotCharged: deliberately zero, so a reader can tell "no cost" from
 	// "cost unknown".
 	MethodNotCharged Method = "not_charged"
+	// MethodCalibrated: back-solved through the cost model from end-to-end measured
+	// cases. It is not "derived", which ProvenanceDerived already means: computed from
+	// other catalog facts. A calibrated entry cites its cases as SourceMeasuredCase and
+	// records the held-out metrics it was checked against.
+	MethodCalibrated Method = "calibrated"
 )
 
 var methods = map[Method]bool{
 	MethodMeasured: true, MethodLiterature: true, MethodVendorSpec: true,
 	MethodCopied: true, MethodAssumed: true, MethodNotCharged: true,
+	MethodCalibrated: true,
 }
 
 // Valid reports whether m is a recognized method.
@@ -84,7 +90,8 @@ func (m Method) Valid() bool { return methods[m] }
 // Callers use it to separate a calibrated deployment from an estimated one; it is
 // not a quality ranking, since a vendor spec is evidenced but nominal.
 func (m Method) Evidenced() bool {
-	return m == MethodMeasured || m == MethodLiterature || m == MethodVendorSpec
+	return m == MethodMeasured || m == MethodLiterature || m == MethodVendorSpec ||
+		m == MethodCalibrated
 }
 
 // ScopeKey names a dimension a coefficient's validity is bounded along. The set
@@ -138,11 +145,14 @@ const (
 	SourceDatasheet   SourceKind = "datasheet"
 	SourceModel       SourceKind = "model"
 	SourceVendorDoc   SourceKind = "vendor_doc"
+	// SourceMeasuredCase cites a measured run in blis-catalog's measurements/, by its
+	// name, that a calibrated entry was fitted against.
+	SourceMeasuredCase SourceKind = "measured_case"
 )
 
 var sourceKinds = map[SourceKind]bool{
 	SourceDiscussion: true, SourcePublication: true, SourceDatasheet: true,
-	SourceModel: true, SourceVendorDoc: true,
+	SourceModel: true, SourceVendorDoc: true, SourceMeasuredCase: true,
 }
 
 // Valid reports whether k is a recognized source kind.

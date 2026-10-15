@@ -186,3 +186,32 @@ func joinPath(segs []string) string {
 	}
 	return strings.Join(out, ".")
 }
+
+// IsSHA256 reports whether s is a canonical sha256 digest: 64 lowercase hex characters.
+// Lowercase only, so that a digest compares and caches byte for byte.
+func IsSHA256(s string) bool {
+	if len(s) != 64 {
+		return false
+	}
+	for _, c := range s {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// SHA256Field records a problem at a named field unless v is a canonical sha256 digest.
+// An empty v is reported as missing, so callers with an optional digest check presence
+// first.
+func (p *Problems) SHA256Field(name, v string) bool {
+	switch {
+	case v == "":
+		p.Field(name, "required: a sha256 digest, 64 lowercase hex characters")
+	case !IsSHA256(v):
+		p.Field(name, "must be a sha256 digest, 64 lowercase hex characters, got %q", v)
+	default:
+		return true
+	}
+	return false
+}

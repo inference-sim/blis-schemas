@@ -99,7 +99,8 @@ applicable entry supplies.
 
 | Method | `rationale` | `sources` | Other |
 |---|---|---|---|
-| `measured` | — | — | The only method that allows `fitted: true`. A source is expected but not required. |
+| `measured` | — | — | Allows `fitted: true`. A source is expected but not required. |
+| `calibrated` | required | at least one of kind `measured_case` | Allows `fitted: true`. `validated` must name the held-out metrics. |
 | `literature` | required | at least one | |
 | `vendor_spec` | required | at least one | |
 | `copied` | required | — | `copied_from` required. |
@@ -119,7 +120,7 @@ A loaded set is invalid if
 - an entry has no name, or repeats another entry's name and scope;
 - `value` is not finite, `units` or `method` is not recognized, or `scope` is empty;
 - `value` is 0 with a method other than `not_charged`, or nonzero with `not_charged`;
-- `fitted` is true with a method other than `measured`;
+- `fitted` is true with a method other than `measured` or `calibrated`;
 - a companion field the method requires, per the table above, is missing;
 - a source has an unrecognized `kind` or `role`, or an empty `cite`;
 - `ci95` has a non-finite end, has `low` above `high`, or does not contain `value`.

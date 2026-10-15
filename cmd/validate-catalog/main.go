@@ -26,6 +26,7 @@ import (
 	"sort"
 
 	blisschemas "github.com/inference-sim/blis-schemas"
+	"github.com/inference-sim/blis-schemas/internal/measurements"
 	"github.com/inference-sim/blis-schemas/internal/validate"
 	"github.com/inference-sim/blis-schemas/spec/model"
 )
@@ -37,7 +38,7 @@ func main() {
 // namespaces are the catalog subdirectories the validator walks. Their presence is also
 // what tells a catalog root from a mistyped path: a directory with none of them is
 // reported as "not a catalog" rather than silently passing with zero artifacts checked.
-var namespaces = []string{"models", "hardware", "networks", "workloads", "devices"}
+var namespaces = []string{"models", "hardware", "networks", "workloads", "devices", "measurements"}
 
 func run(args []string, stdout, stderr io.Writer) int {
 	if len(args) != 1 {
@@ -75,6 +76,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	validateNetworks(r, root)
 	validateDevices(r, root)
 	validateWorkloads(r, root)
+	validateMeasurements(r, root)
 
 	// A directory can satisfy the namespace gate with an empty or optional namespace (an
 	// empty devices/ or workloads/) and reach here having validated nothing. Reporting
@@ -351,18 +353,55 @@ func validateWorkloads(r *reporter, root string) {
 	}
 	r.section("# workloads/*.yaml")
 	for _, path := range paths {
-		w, err := blisschemas.LoadWorkload(path)
+		w, err := blisschemas.LoadCatalogWorkload(path)
 		if err != nil {
 			// The identity is the filename stem; the loader could not stamp it, so name
 			// the file.
 			r.loadFail(stem(path), "%v", err)
 			continue
 		}
-		if r.record(w.Name, w.Validate()) {
+		if r.record(w.Name(), w.Validate()) {
+			continue
+		}
+		if rp := w.Replay; rp != nil {
+			r.pass(fmt.Sprintf("%-46s replay %s over %s@%s", rp.Name, rp.Scenario,
+				rp.Corpus.Source.HuggingFace, rp.Corpus.Source.Revision))
 			continue
 		}
 		r.pass(fmt.Sprintf("%-46s prompt~%d, output~%d tokens",
-			w.Name, w.Prompt.Mean, w.Output.Mean))
+			w.Shape.Name, w.Shape.Prompt.Mean, w.Shape.Output.Mean))
+	}
+}
+
+// validateMeasurements checks measurements/: the licence registry and every run against
+// it. The namespace is optional, but once present it needs its sources.yaml, and every run
+// in it must be one the licence lets the catalog redistribute.
+func validateMeasurements(r *reporter, root string) {
+	dir := filepath.Join(root, "measurements")
+	ok, err := measurements.Exists(dir)
+	if err != nil {
+		r.loadFail("measurements", "%v", err)
+		return
+	}
+	if !ok {
+		return
+	}
+	results, err := measurements.Check(dir, true)
+	if err != nil {
+		r.loadFail("measurements", "%v", err)
+		return
+	}
+	r.section("# measurements/")
+	for _, res := range results {
+		name := "measurements/" + res.Name
+		if res.Err != nil {
+			r.loadFail(name, "%v", res.Err)
+			continue
+		}
+		if r.record(name, res.Problems) {
+			continue
+		}
+		r.pass(fmt.Sprintf("%-46s %s", name, res.Summary))
 	}
 }
 

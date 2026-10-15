@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/inference-sim/blis-schemas/internal/validate"
+	"github.com/inference-sim/blis-schemas/spec/workload"
 )
 
 // ValidateAgainstCatalog resolves every by-name reference a bundle's scenario makes
@@ -20,9 +21,12 @@ import (
 // than inside Validate.
 //
 // It checks presence, not validity: that model names a directory the catalog has, that
-// hardware, fabric and a workload shape name files it has, and that every storage tier and
-// coefficient set a scenario names exists. The workload's Trace arm is excluded on purpose —
-// it references an external capture by file path, not a catalog identity. Validating the
+// hardware, fabric and a workload shape name files it has, and that every storage tier,
+// coefficient set and acceptance-profile set a scenario names exists. A replay arm that
+// references a catalog replay workload is loaded and merged with its run choices
+// (ResolveReplay), since a reference that resolves to an invalid replay is a miss too. The
+// Trace arm and an inline Replay are excluded on purpose — they reference external
+// captures by path or repository, not catalog identities. Validating the
 // resolved documents is Validate's job, reached by loading them into a Bundle; this answers
 // the prior question of whether the names resolve at all, which nothing else does —
 // `hardware: nvidia-h200` validates clean today and fails later, elsewhere, as a missing file
@@ -69,7 +73,24 @@ func ValidateAgainstCatalog(b Bundle, catalogRoot, registryRoot string) Report {
 	// an external capture by file PATH, not a catalog identity — so only the shape arm is a
 	// by-name catalog reference and the trace arm is deliberately not resolved here.
 	if s.Workload != nil && s.Workload.Shape != "" {
-		resolveFile(field, "references.workload.shape", catalogRoot, "workloads", s.Workload.Shape)
+		if resolveFile(field, "references.workload.shape", catalogRoot, "workloads", s.Workload.Shape) {
+			w, err := LoadCatalogWorkload(filepath.Join(catalogRoot, "workloads", s.Workload.Shape+".yaml"))
+			if err == nil && w.Shape == nil {
+				field.Field("references.workload.shape",
+					"%q is a replay workload, not a shape; bind it as replay: {workload: %s, concurrency: ...}",
+					s.Workload.Shape, s.Workload.Shape)
+			}
+		}
+	}
+	// A replay reference names a catalog replay workload, which must exist, be a replay, and
+	// resolve with the binding's run choices to a valid replay.
+	if s.Workload != nil && s.Workload.Replay != nil && s.Workload.Replay.Workload != "" {
+		name := s.Workload.Replay.Workload
+		if resolveFile(field, "references.workload.replay.workload", catalogRoot, "workloads", name) {
+			if _, err := ResolveReplay(catalogRoot, s.Workload.Replay); err != nil {
+				field.Field("references.workload.replay.workload", "%v", err)
+			}
+		}
 	}
 
 	// storage → a key in devices/storage.yaml. Unlike the others this is a membership check
@@ -87,6 +108,13 @@ func ValidateAgainstCatalog(b Bundle, catalogRoot, registryRoot string) Report {
 		}
 		resolveFile(field, fmt.Sprintf("references.coefficients[%d]", i),
 			registryRoot, "coefficients", name)
+	}
+
+	// acceptance.profiles -> acceptance/<name>.yaml under the registry, the acceptance
+	// counterpart of a coefficient set.
+	if s.Acceptance != nil && s.Acceptance.Profiles != "" {
+		resolveFile(field, "references.acceptance.profiles", registryRoot, "acceptance",
+			s.Acceptance.Profiles)
 	}
 
 	return Report{Field: field, Rule: &validate.Problems{}}
@@ -114,17 +142,18 @@ func resolveDir(p *validate.Problems, path, root, dir, name string) {
 // resolveFile reports a problem at path unless <root>/<dir>/<name>.yaml exists. The error
 // names the looked-for path and lists the real entries (as stems), so it teaches the naming
 // convention; it names the registry rather than the catalog for a coefficients reference.
-func resolveFile(p *validate.Problems, path, root, dir, name string) {
+// It returns whether the file was found.
+func resolveFile(p *validate.Problems, path, root, dir, name string) bool {
 	if name == "" {
 		p.Field(path, "required: a scenario must name a %s", dir)
-		return
+		return false
 	}
 	if root == "" {
 		p.Field(path, "%q cannot be resolved: no %s root was given", name, rootKind(dir))
-		return
+		return false
 	}
 	if !validStem(p, path, name, dir) {
-		return
+		return false
 	}
 	info, err := os.Stat(filepath.Join(root, dir, name+".yaml"))
 	if err != nil || !info.Mode().IsRegular() {
@@ -135,7 +164,9 @@ func resolveFile(p *validate.Problems, path, root, dir, name string) {
 		p.Field(path, "%q: looked for %s; %s has %v",
 			name, filepath.Join(dir, name+".yaml"), rootKind(dir),
 			dirEntries(root, dir, false))
+		return false
 	}
+	return true
 }
 
 // validStem reports whether name is a bare catalog identity — one ordinary path segment that
@@ -226,8 +257,36 @@ func dirEntries(root, dir string, wantDirs bool) []string {
 // rootKind names which root a namespace lives under, so an error says "the catalog has" for
 // a chip and "the registry has" for a coefficient set rather than a generic "it has".
 func rootKind(dir string) string {
-	if dir == "coefficients" {
+	if dir == "coefficients" || dir == "acceptance" {
 		return "the registry"
 	}
 	return "the catalog"
+}
+
+// ResolveReplay returns the inline replay a binding's replay arm describes: an inline
+// replay as it is, or a reference merged with the catalog replay workload it names, read
+// from <catalogRoot>/workloads/<name>.yaml. It refuses a missing entry, an entry that is a
+// shape, and a merge that is not a valid replay.
+func ResolveReplay(catalogRoot string, r *workload.Replay) (*workload.Replay, error) {
+	if r.Workload == "" {
+		return r, nil
+	}
+	if catalogRoot == "" {
+		return nil, fmt.Errorf("replay workload %q cannot be resolved: no catalog root was given", r.Workload)
+	}
+	p := &validate.Problems{}
+	if !validStem(p, "workload", r.Workload, "workloads") {
+		return nil, fmt.Errorf("%s", p.Error())
+	}
+	w, err := LoadCatalogWorkload(filepath.Join(catalogRoot, "workloads", r.Workload+".yaml"))
+	if err != nil {
+		return nil, err
+	}
+	if w.Replay == nil {
+		return nil, fmt.Errorf("workloads/%s.yaml is a shape, not a replay workload", r.Workload)
+	}
+	if p := w.Replay.Validate(); !p.OK() {
+		return nil, fmt.Errorf("workloads/%s.yaml is not a valid replay workload:\n%s", r.Workload, p.Error())
+	}
+	return r.Resolve(w.Replay)
 }

@@ -25,8 +25,14 @@ import (
 // reachable only through a linked directory is out of scope; the registry stores its sets
 // as regular files. The result is empty with no error when the directory is absent, so a
 // caller can treat "no sets" as its own case rather than an error.
-func SetPaths(root string) ([]string, error) {
-	dir := filepath.Join(root, "coefficients")
+func SetPaths(root string) ([]string, error) { return yamlPaths(root, "coefficients") }
+
+// AcceptancePaths returns every acceptance-profile set file under <root>/acceptance, by
+// the same predicate as SetPaths. Empty with no error when the directory is absent.
+func AcceptancePaths(root string) ([]string, error) { return yamlPaths(root, "acceptance") }
+
+func yamlPaths(root, namespace string) ([]string, error) {
+	dir := filepath.Join(root, namespace)
 	if _, err := os.Stat(dir); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, nil

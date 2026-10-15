@@ -42,31 +42,42 @@ func (s *Scenario) Validate() *validate.Problems {
 	if s.Workload != nil {
 		p.Merge("workload", s.Workload.Validate())
 	}
+	if s.Acceptance != nil {
+		p.Merge("acceptance", s.Acceptance.Validate())
+	}
 
 	s.validateCluster(p)
 	return p
 }
 
 func (s *Scenario) validateCluster(p *validate.Problems) {
-	c := s.Cluster
+	p.Merge("cluster", s.Cluster.Validate())
+}
+
+// Validate performs field-level validation of a cluster inventory on its own, for a
+// document that states a cluster without the rest of a scenario: a measured run records
+// the cluster it ran on, and the coefficients a scenario names are BLIS's choice, not a
+// fact of the measurement.
+func (c Cluster) Validate() *validate.Problems {
+	p := &validate.Problems{}
 	if c.Hardware == "" {
-		p.Field("cluster.hardware",
+		p.Field("hardware",
 			"required: names the catalog accelerator the cluster is built from")
 	}
 	if c.Nodes < 1 {
-		p.Field("cluster.nodes", "must be at least 1")
+		p.Field("nodes", "must be at least 1")
 	}
 	if c.GPUsPerNode < 1 {
-		p.Field("cluster.gpus_per_node", "must be at least 1")
+		p.Field("gpus_per_node", "must be at least 1")
 	}
 	if c.GPUsPerRack > 0 && c.GPUsPerNode > 0 && c.GPUsPerRack%c.GPUsPerNode != 0 {
-		p.Field("cluster.gpus_per_rack", "%d is not a multiple of gpus_per_node %d",
+		p.Field("gpus_per_rack", "%d is not a multiple of gpus_per_node %d",
 			c.GPUsPerRack, c.GPUsPerNode)
 	}
 	// A multi-node cluster moves bytes between nodes, and the bandwidth for that is a
 	// fabric property. Without one, every cross-node cost is unpriced.
 	if c.Nodes > 1 && c.Fabric == "" {
-		p.Field("cluster.fabric",
+		p.Field("fabric",
 			"required for a %d-node cluster: cross-node cost resolves from the fabric, not the chip",
 			c.Nodes)
 	}
@@ -75,7 +86,7 @@ func (s *Scenario) validateCluster(p *validate.Problems) {
 	// make a deployment's tier reference ambiguous.
 	seen := map[string]bool{}
 	for i, dev := range c.Storage {
-		at := fmt.Sprintf("cluster.storage[%d]", i)
+		at := fmt.Sprintf("storage[%d]", i)
 		if dev == "" {
 			p.Field(at, "names a catalog storage-device class and must not be empty")
 		} else if seen[dev] {
@@ -83,4 +94,5 @@ func (s *Scenario) validateCluster(p *validate.Problems) {
 		}
 		seen[dev] = true
 	}
+	return p
 }

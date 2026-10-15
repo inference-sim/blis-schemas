@@ -21,32 +21,35 @@ func TestEngineFieldNames(t *testing.T) {
 	// the internal field differ, the CLI name is used, because a deployment is written
 	// by whoever launched the engine.
 	want := map[string]string{
-		"all2all_backend":             "VLLM_ALL2ALL_BACKEND / --all2all-backend",
-		"disable_custom_all_reduce":   "--disable-custom-all-reduce",
-		"allreduce_backend":           "resolved override, not an engine field",
-		"cudagraph_mode":              "-O/--compilation-config cudagraph_mode",
-		"async_scheduling":            "--async-scheduling",
-		"disable_cascade_attn":        "--disable-cascade-attn",
-		"enable_prefix_caching":       "--enable-prefix-caching / --no-enable-prefix-caching",
-		"block_size":                  "--block-size",
-		"max_num_batched_tokens":      "--max-num-batched-tokens",
-		"max_num_seqs":                "--max-num-seqs",
-		"max_model_len":               "--max-model-len",
-		"quantization":                "--quantization",
-		"cache_dtype":                 "--kv-cache-dtype",
-		"mamba_cache_dtype":           "--mamba-cache-dtype",
-		"mamba_ssm_cache_dtype":       "--mamba-ssm-cache-dtype",
-		"mamba_cache_mode":            "--mamba-cache-mode",
-		"gpu_memory_utilization":      "--gpu-memory-utilization",
-		"scheduling_policy":           "--scheduling-policy",
-		"dbo":                         "--enable-dbo and its thresholds",
-		"eplb":                        "--enable-eplb and --eplb-config",
-		"speculative":                 "--speculative-config",
-		"engram_config":               "--engram-config (cpu_offload, dp_shared_memory, use_thp)",
-		"moe_backend":                 "--moe-backend",
-		"dcp_comm_backend":            "--dcp-comm-backend",
-		"dcp_q_replicate":             "--dcp-q-replicate / --no-dcp-q-replicate",
-		"cp_kv_cache_interleave_size": "--cp-kv-cache-interleave-size",
+		"all2all_backend":              "VLLM_ALL2ALL_BACKEND / --all2all-backend",
+		"disable_custom_all_reduce":    "--disable-custom-all-reduce",
+		"allreduce_backend":            "resolved override, not an engine field",
+		"cudagraph_mode":               "-O/--compilation-config cudagraph_mode",
+		"max_cudagraph_capture_size":   "-O/--compilation-config max_cudagraph_capture_size",
+		"cudagraph_capture_sizes":      "-O/--compilation-config cudagraph_capture_sizes",
+		"async_scheduling":             "--async-scheduling",
+		"disable_cascade_attn":         "--disable-cascade-attn",
+		"enable_prefix_caching":        "--enable-prefix-caching / --no-enable-prefix-caching",
+		"block_size":                   "--block-size",
+		"max_num_batched_tokens":       "--max-num-batched-tokens",
+		"max_num_seqs":                 "--max-num-seqs",
+		"long_prefill_token_threshold": "--long-prefill-token-threshold",
+		"max_model_len":                "--max-model-len",
+		"quantization":                 "--quantization",
+		"cache_dtype":                  "--kv-cache-dtype",
+		"mamba_cache_dtype":            "--mamba-cache-dtype",
+		"mamba_ssm_cache_dtype":        "--mamba-ssm-cache-dtype",
+		"mamba_cache_mode":             "--mamba-cache-mode",
+		"gpu_memory_utilization":       "--gpu-memory-utilization",
+		"scheduling_policy":            "--scheduling-policy",
+		"dbo":                          "--enable-dbo and its thresholds",
+		"eplb":                         "--enable-eplb and --eplb-config",
+		"speculative":                  "--speculative-config",
+		"engram_config":                "--engram-config (cpu_offload, dp_shared_memory, use_thp)",
+		"moe_backend":                  "--moe-backend",
+		"dcp_comm_backend":             "--dcp-comm-backend",
+		"dcp_q_replicate":              "--dcp-q-replicate / --no-dcp-q-replicate",
+		"cp_kv_cache_interleave_size":  "--cp-kv-cache-interleave-size",
 	}
 	got := yamlNames(reflect.TypeOf(Engine{}))
 	if len(got) != len(want) {
@@ -69,7 +72,7 @@ func TestEngineFieldNames(t *testing.T) {
 // named ep exists: the width is derived, and a field for it could disagree.
 func TestParallelismFieldNames(t *testing.T) {
 	got := yamlNames(reflect.TypeOf(Parallelism{}))
-	want := []string{"tp", "pp", "dp", "dp_local", "enable_expert_parallel",
+	want := []string{"tp", "pp", "dp", "dp_local", "data_parallel_load_balancing", "enable_expert_parallel",
 		"pcp", "dcp"}
 	if len(got) != len(want) {
 		t.Errorf("Parallelism has %d yaml fields, want %d: %v", len(got), len(want), got)
