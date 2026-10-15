@@ -90,7 +90,7 @@ Scheduling and memory:
 | `scheduling_policy` | string | no | `fcfs` or `priority` in vLLM 0.29.0. |
 | `async_scheduling` | boolean | no | Omitted means the engine decides through its own disqualifying conditions. |
 | `cudagraph_mode` | string | no | CUDA graph capture strategy. |
-| `max_cudagraph_capture_size` | integer | no | `compilation_config.max_cudagraph_capture_size`: the largest step, in tokens, a CUDA graph is captured for; a larger step runs eager. At least 1. Omitted, the release default, min(`max_num_seqs` x decode query length x 2, 512), or 1024 on SM100. The engine caps it at `max_num_batched_tokens` and truncates it to the largest size it generates. |
+| `max_cudagraph_capture_size` | integer | no | `compilation_config.max_cudagraph_capture_size`: the largest step, in tokens, a CUDA graph is captured for; a larger step runs eager. At least 1. Omitted, the release default, min(`max_num_seqs` x decode query length x 2, 512), or 1024 on SM100. The engine caps it at `max_num_batched_tokens` and truncates it to the largest size it generates. `cudagraph_mode: NONE`, or `--enforce-eager`, which has no field here, captures nothing. |
 | `cudagraph_capture_sizes` | list of integers | no | `compilation_config.cudagraph_capture_sizes`: the exact step sizes to capture, each at least 1, not empty. Sizes above `max_num_batched_tokens` are dropped. With `max_cudagraph_capture_size` too, that must be the largest kept, or the engine refuses the pair. |
 
 Weights and caches:

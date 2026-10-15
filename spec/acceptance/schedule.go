@@ -69,7 +69,7 @@ func CheckRates(rates []float64, k int) error {
 		}
 		if i > 0 && r > rates[i-1] {
 			return fmt.Errorf("per_position_rates[%d] = %v exceeds per_position_rates[%d] = %v; "+
-				"rate i is the probability the first i drafts are all accepted, so it cannot rise",
+				"per_position_rates[i] is the probability the first i+1 drafts are all accepted, so it cannot rise",
 				i, r, i-1, rates[i-1])
 		}
 	}

@@ -16,6 +16,10 @@ Two other quantities are derived from it, and each has one name here:
 
 - The **acceptance rate** is the accepted fraction of drafts, (AL − 1) / K. It is vLLM's
   logged "Avg Draft acceptance rate" and inference-sim's `--speculative-acceptance-rate`.
+  The two agree only when every step drafts all K: with a drafter that verifies fewer on
+  some steps, such as DSpark under `enable_adaptive_verification`, vLLM's logged rate
+  (accepted over drafted tokens, `vllm/v1/spec_decode/metrics.py:107-110`) divides by the
+  drafts actually proposed and diverges from (AL − 1) / K.
   The per-token probability p of the speculative-decoding papers is a different quantity
   and is never called a rate in this schema.
 - **Per-position rates** p<sub>1</sub>..p<sub>K</sub> follow vLLM's

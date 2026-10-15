@@ -41,6 +41,10 @@ var ErrCUDAGraphCaptureInconsistent = fmt.Errorf("max_cudagraph_capture_size is 
 //     max_num_batched_tokens added when it fits. The maximum that runs is the largest of
 //     those, which is below the stated one when it falls off that stride.
 //
+// enforce_eager disables capture too, as cudagraph_mode NONE does (_set_cudagraph_sizes
+// tests both), but the schema has no field for it, so a consumer pricing an eager
+// deployment must not read these sizes.
+//
 // It needs max_num_batched_tokens, which the engine otherwise derives. It does not model
 // performance_mode interactivity, which captures every size up to 32, or the
 // sequence-parallel rounding the engine applies under tensor parallelism with SP enabled;
