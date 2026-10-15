@@ -202,7 +202,7 @@ or its rates are invalid or disagree with it. A pin is invalid if it sets nothin
 both `profiles` and `value`, sets `fallback_category` with `value`, or its value is
 invalid.
 
-With a deployment in the bundle, every inline value (the scenario's pin, its trace's or replay's, and
+With a deployment in the bundle, every inline value (the scenario's pin, its trace's, its replay's, merged with its catalog entry when the bundle carries one, a catalog replay's, and
 the workload shape's) must name the K of each pool that speculates. When no pool
 speculates, a stated value draws a warning.
 

@@ -155,8 +155,9 @@ func Validate(b Bundle) Report {
 }
 
 // checkAcceptanceK refuses an inline acceptance stated for a K other than one the
-// deployment speculates with: the scenario's pinned value, its trace's or replay's, and
-// the workload shape's. Acceptance at one K says nothing exact about another, so a value is never
+// deployment speculates with: the scenario's pinned value, its trace's, its replay's (the
+// merged replay, for a reference whose catalog entry the bundle carries), and the
+// workload shape's or catalog replay's. Acceptance at one K says nothing exact about another, so a value is never
 // rescaled. A value with no speculating pool to apply to is a warning, since it is inert
 // rather than wrong.
 func checkAcceptanceK(p *validate.Problems, b Bundle) {
@@ -172,12 +173,25 @@ func checkAcceptanceK(p *validate.Problems, b Bundle) {
 		if s.Workload != nil && s.Workload.Trace != nil && s.Workload.Trace.Acceptance != nil {
 			values = append(values, stated{"scenario.workload.trace.acceptance.num_spec_tokens", s.Workload.Trace.Acceptance})
 		}
-		if s.Workload != nil && s.Workload.Replay != nil && s.Workload.Replay.Acceptance != nil {
-			values = append(values, stated{"scenario.workload.replay.acceptance.num_spec_tokens", s.Workload.Replay.Acceptance})
+		if s.Workload != nil && s.Workload.Replay != nil {
+			// A reference takes its acceptance from the catalog entry unless it overrides
+			// it, so check the replay it resolves to when the bundle carries that entry.
+			r := s.Workload.Replay
+			if e := b.ReplayWorkload; r.Workload != "" && e != nil && e.Name == r.Workload {
+				if merged, err := r.Resolve(e); err == nil {
+					r = merged
+				}
+			}
+			if r.Acceptance != nil {
+				values = append(values, stated{"scenario.workload.replay.acceptance.num_spec_tokens", r.Acceptance})
+			}
 		}
 	}
 	if b.Workload != nil && b.Workload.Acceptance != nil {
 		values = append(values, stated{"workload.acceptance.num_spec_tokens", b.Workload.Acceptance})
+	}
+	if b.ReplayWorkload != nil && b.ReplayWorkload.Acceptance != nil {
+		values = append(values, stated{"workload.acceptance.num_spec_tokens", b.ReplayWorkload.Acceptance})
 	}
 	if len(values) == 0 {
 		return

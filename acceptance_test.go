@@ -183,3 +183,35 @@ func TestLoadRegistryAcceptanceFilesIfPresent(t *testing.T) {
 		}
 	}
 }
+
+// A replay reference inherits its catalog entry's acceptance, so the K check runs on the
+// merged replay; a catalog replay in the bundle is checked on its own too.
+func TestAcceptanceKChecksTheResolvedReplay(t *testing.T) {
+	entry := &workload.CatalogReplay{Name: "agentx", ReplayDefinition: workload.ReplayDefinition{
+		Scenario: workload.ScenarioInferenceXAgentXMVP, HarnessVersion: "0.12.0",
+		Corpus: workload.Corpus{Loader: "semianalysis_cc_traces_weka_062126_256k",
+			Format: workload.CorpusWekaTraceV7, Encoding: workload.CorpusJSONL,
+			Source: workload.CorpusSource{HuggingFace: "semianalysisai/cc-traces-weka-062126-256k",
+				Revision: "8fecd2fc"}, SHA256: strings.Repeat("e", 64)},
+		Acceptance: alValue(3, 2.8)}}
+	refusedAt := func(rep Report, path string) bool {
+		for _, p := range rep.Field.Errors() {
+			if p.Path == path && strings.Contains(p.Message, "does not carry across K") {
+				return true
+			}
+		}
+		return false
+	}
+	b := speculating(5)
+	b.Scenario.Workload = &workload.Binding{Replay: &workload.Replay{Workload: "agentx", Concurrency: 8}}
+	b.ReplayWorkload = entry
+	if rep := Validate(b); !refusedAt(rep, "scenario.workload.replay.acceptance.num_spec_tokens") ||
+		!refusedAt(rep, "workload.acceptance.num_spec_tokens") {
+		t.Errorf("the entry's K=3 acceptance passed at K=5:\n%v", rep.Problems())
+	}
+	// The reference's own override is what runs, so a matching override passes there.
+	b.Scenario.Workload.Replay.Acceptance = alValue(5, 4.07)
+	if rep := Validate(b); refusedAt(rep, "scenario.workload.replay.acceptance.num_spec_tokens") {
+		t.Errorf("a K=5 override was refused:\n%v", rep.Problems())
+	}
+}
