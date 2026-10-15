@@ -229,6 +229,10 @@ func Pack() *rules.Pack {
 		// MambaSpec and CircularBufferSpec buckets, and a sliding-window bucket when no
 		// repeat pattern is fixed; _get_kv_cache_bytes_per_block (:1606-1632) rounds the
 		// widest group to the lcm of every block_stride_alignment.
+		// The scheduler waives the cap when the request is the only running or waiting
+		// one (vllm/v1/core/sched/scheduler.py:611-620).
+		LongPrefillExemptsLoneRequest: true,
+
 		KVCachePacking: rules.KVCachePacking{Modeled: true, StateCacheBuckets: true,
 			LoneWindowIsState: true, BlockStrideAlignment: true, StateRingFromSpecTokens: true},
 	}
@@ -901,6 +905,20 @@ func ruleList(p *rules.Pack) []rules.Rule {
 					out.RuleWarnf("sequence-parallel-moe-implied",
 						"%s: engine %s makes the MoE input sequence-parallel here (backend %q, tp %d, dp %d), so the model graph must emit a reduce-scatter and all-gather pair rather than an all-reduce",
 						at, p.Version, backend, pl.TP, pl.DP)
+				})
+			},
+		},
+		{
+			Name:    "long-prefill-threshold-within-max-model-len",
+			Because: "this release refuses at startup a long_prefill_token_threshold greater than max_model_len (vllm/config/scheduler.py verify_max_model_len)",
+			Check: func(in rules.Input, out *validate.Problems) {
+				forEachEngine(in, func(at string, e deployment.Engine) {
+					n, ok := e.MaxModelLen.Stated()
+					if ok && e.LongPrefillTokenThreshold > n {
+						out.RuleErrorf("long-prefill-threshold-within-max-model-len",
+							"%s.engine: long_prefill_token_threshold %d exceeds max_model_len %d; engine %s refuses it at startup",
+							at, e.LongPrefillTokenThreshold, n, p.Version)
+					}
 				})
 			},
 		},

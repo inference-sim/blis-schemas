@@ -146,6 +146,11 @@ type Pack struct {
 	// CascadeAttnOptIn records that cascade attention is disabled by default.
 	CascadeAttnOptIn bool
 
+	// LongPrefillExemptsLoneRequest is whether long_prefill_token_threshold is waived
+	// for a request with no other running or waiting request beside it, which then takes
+	// the whole token budget.
+	LongPrefillExemptsLoneRequest bool
+
 	// KVCachePacking is how the release groups stated caches into KV cache groups that
 	// share one block pool. See KVCacheGroups.
 	KVCachePacking KVCachePacking

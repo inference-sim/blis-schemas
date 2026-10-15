@@ -535,8 +535,9 @@ func admissibleDCP(pcp int, block *big.Int) []*big.Int {
 func validateEngine(p *validate.Problems, at string, e Engine) {
 	for field, v := range map[string]int{
 		"block_size": e.BlockSize, "max_num_batched_tokens": e.MaxNumBatchedTokens,
-		"max_num_seqs":                e.MaxNumSeqs,
-		"cp_kv_cache_interleave_size": e.CPKVCacheInterleaveSize,
+		"max_num_seqs":                 e.MaxNumSeqs,
+		"long_prefill_token_threshold": e.LongPrefillTokenThreshold,
+		"cp_kv_cache_interleave_size":  e.CPKVCacheInterleaveSize,
 	} {
 		if v < 0 {
 			p.Field(at+".engine."+field, "must not be negative")

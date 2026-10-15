@@ -925,3 +925,30 @@ func classBody(src, header string) string {
 	}
 	return b.String()
 }
+
+// long_prefill_token_threshold: its default and floor, the startup refusal above
+// max_model_len, the per-step cap, and this release's waiver for a lone request.
+func TestLongPrefillTokenThresholdMatchSource(t *testing.T) {
+	root := vllmSource(t)
+	cfg := readSource(t, root, "vllm", "config", "scheduler.py")
+	for _, want := range []string{
+		"long_prefill_token_threshold: int = Field(default=0, ge=0)",
+		"if self.long_prefill_token_threshold > max_model_len:",
+	} {
+		if !strings.Contains(cfg, want) {
+			t.Errorf("scheduler.py changed: %q is gone", want)
+		}
+	}
+	sched := readSource(t, root, "vllm", "v1", "core", "sched", "scheduler.py")
+	for _, want := range []string{
+		"if 0 < long_prefill_token_threshold < num_new_tokens:",
+		"if num_eligible_reqs > 1\n            else 0",
+	} {
+		if !strings.Contains(sched, want) {
+			t.Errorf("the scheduler's cap changed: %q is gone", want)
+		}
+	}
+	if !Pack().LongPrefillExemptsLoneRequest {
+		t.Error("the pack no longer records the lone-request waiver the source states")
+	}
+}

@@ -196,6 +196,15 @@ type Engine struct {
 	BlockSize           int `yaml:"block_size,omitempty"`
 	MaxNumBatchedTokens int `yaml:"max_num_batched_tokens,omitempty"`
 	MaxNumSeqs          int `yaml:"max_num_seqs,omitempty"`
+	// LongPrefillTokenThreshold is SchedulerConfig.long_prefill_token_threshold: the most
+	// tokens of one prefill scheduled in a step, so a long prompt cannot take the whole
+	// token budget and stall the decodes beside it. Zero, the default, leaves prefills
+	// uncapped. The engine refuses one above max_model_len (vllm/config/scheduler.py
+	// verify_max_model_len), and whether a request alone in the batch is exempt is a
+	// release fact (rules.Pack.LongPrefillExemptsLoneRequest).
+	//
+	// The field name follows the engine's CLI flag (--long-prefill-token-threshold).
+	LongPrefillTokenThreshold int `yaml:"long_prefill_token_threshold,omitempty"`
 	// MaxModelLen is the context length: omitted, auto, or a count. See MaxModelLen.
 	MaxModelLen MaxModelLen `yaml:"max_model_len,omitempty"`
 

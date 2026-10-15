@@ -670,6 +670,20 @@ func ruleList(p *rules.Pack) []rules.Rule {
 			},
 		},
 		{
+			Name:    "long-prefill-threshold-within-max-model-len",
+			Because: "this release refuses at startup a long_prefill_token_threshold greater than max_model_len (vllm/config/scheduler.py verify_max_model_len)",
+			Check: func(in rules.Input, out *validate.Problems) {
+				forEachEngine(in, func(at string, e deployment.Engine) {
+					n, ok := e.MaxModelLen.Stated()
+					if ok && e.LongPrefillTokenThreshold > n {
+						out.RuleErrorf("long-prefill-threshold-within-max-model-len",
+							"%s.engine: long_prefill_token_threshold %d exceeds max_model_len %d; engine %s refuses it at startup",
+							at, e.LongPrefillTokenThreshold, n, p.Version)
+					}
+				})
+			},
+		},
+		{
 			Name:    "cudagraph-capture-sizes",
 			Because: "this release refuses a stated max_cudagraph_capture_size that is not the largest of the stated cudagraph_capture_sizes it keeps, caps the maximum at max_num_batched_tokens, drops sizes above it, and truncates a maximum off its capture stride to the largest size it generates (vllm/config/vllm.py _set_cudagraph_sizes); a step larger than the size that runs is executed eager, so the size that runs is the one to price",
 			Check: func(in rules.Input, out *validate.Problems) {

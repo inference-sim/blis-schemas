@@ -89,6 +89,7 @@ func TestPackRuleSet(t *testing.T) {
 		"eviction-policy-known",
 		"expert-divisibility-under-eplb",
 		"expert-imbalance-without-eplb",
+		"long-prefill-threshold-within-max-model-len",
 		"mamba-cache-mode-matches-model",
 		"max-model-len-within-context-window",
 		"model-sequence-parallel-collectives",
@@ -1152,5 +1153,23 @@ func TestCUDAGraphCaptureSizesRule(t *testing.T) {
 				t.Errorf("severity %q, want %q\n%s", got, c.sev, p.Error())
 			}
 		})
+	}
+}
+
+func TestLongPrefillThresholdWithinMaxModelLen(t *testing.T) {
+	for _, c := range []struct {
+		e    deployment.Engine
+		fire bool
+	}{
+		{deployment.Engine{LongPrefillTokenThreshold: 8192, MaxModelLen: 131072}, false},
+		{deployment.Engine{LongPrefillTokenThreshold: 8192, MaxModelLen: 8192}, false},
+		{deployment.Engine{LongPrefillTokenThreshold: 8193, MaxModelLen: 8192}, true},
+		{deployment.Engine{LongPrefillTokenThreshold: 1 << 20, MaxModelLen: deployment.MaxModelLenAuto}, false},
+		{deployment.Engine{LongPrefillTokenThreshold: 1 << 20}, false},
+	} {
+		p := run(t, dep(colocated(deployment.Parallelism{TP: 8, PP: 1, DP: 1}, c.e)), graniteGraph())
+		if fired(p, "long-prefill-threshold-within-max-model-len") != c.fire {
+			t.Errorf("%+v: fired %v, want %v\n%s", c.e, !c.fire, c.fire, p.Error())
+		}
 	}
 }

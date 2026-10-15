@@ -684,3 +684,25 @@ func TestCUDAGraphCaptureSizesMatchSource(t *testing.T) {
 		t.Error("the uniform decode sizes are no longer empty for a stated maximum")
 	}
 }
+
+// long_prefill_token_threshold: its default and floor, the startup refusal above
+// max_model_len, and the per-step cap, which this release applies even to a lone request.
+func TestLongPrefillTokenThresholdMatchSource(t *testing.T) {
+	root := vllmSource(t)
+	cfg := readSource(t, root, "vllm", "config", "scheduler.py")
+	for _, want := range []string{
+		"long_prefill_token_threshold: int = Field(default=0, ge=0)",
+		"if self.long_prefill_token_threshold > max_model_len:",
+	} {
+		if !strings.Contains(cfg, want) {
+			t.Errorf("scheduler.py changed: %q is gone", want)
+		}
+	}
+	sched := readSource(t, root, "vllm", "v1", "core", "sched", "scheduler.py")
+	if !strings.Contains(sched, "if 0 < self.scheduler_config.long_prefill_token_threshold < num_new_tokens:") {
+		t.Error("the scheduler's cap changed")
+	}
+	if strings.Contains(sched, "num_eligible_reqs") || Pack().LongPrefillExemptsLoneRequest {
+		t.Error("this release now waives the cap for a lone request; record it in the pack")
+	}
+}
