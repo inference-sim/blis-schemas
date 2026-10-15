@@ -301,7 +301,13 @@ and the bytes per block (vLLM's `_get_packed_kv_cache_groups` and
 `_get_kv_cache_bytes_per_block`). A consumer sizes each group in whole blocks of that size
 rather than each cache at its own page. It refuses what it does not model: several cache
 types sharing one page size, and a state cache on 0.29.0, which stores DeepSeek-V4's
-compressor state as a sliding-window spec the graph does not state.
+compressor state as a sliding-window spec the graph does not state. A window cache's
+group holds `Pack.WindowPagesPerRequest` blocks per request, each costing `BytesPerBlock`;
+under 0.31.0, which splits a lone window bucket into several groups, that holds per group.
+Only the MLA specs pad a page to `page_alignment`; a `state` cache is a circular buffer the
+engine never pads, so an alignment on one is refused, and 0.31.0 sizes its ring from the
+deployment's K (`KVCacheGroupsInput.NumSpecTokens`): max(8, 1 << (K + 1).bit_length())
+rows, so K = 7 needs 16 rows where the graph states 8.
 
 ### Context work
 

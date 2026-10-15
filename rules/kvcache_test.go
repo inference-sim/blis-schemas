@@ -57,16 +57,23 @@ func TestKVCacheGroupsMatchEngineGoldens(t *testing.T) {
 		pack   *rules.Pack
 		block  int
 		align  int
+		k      int // speculative K for the ring; 0: the graph's stated ring
 	}{
-		{"synth-nostate", v0_29.Pack(), 64, 0},
-		{"synth-nostate", v0_31.Pack(), 64, 0},
-		{"synth-state", v0_31.Pack(), 64, 0},
-		{"synth-state", v0_31.Pack(), 64, 1024},
-		{"deepseek-v4.1-example", v0_31.Pack(), 64, 0},
-		{"deepseek-v4.1-example", v0_31.Pack(), 256, 0},
+		{"synth-nostate", v0_29.Pack(), 64, 0, 0},
+		{"synth-nostate", v0_31.Pack(), 64, 0, 0},
+		{"synth-state", v0_31.Pack(), 64, 0, 0},
+		{"synth-state", v0_31.Pack(), 64, 1024, 0},
+		{"deepseek-v4.1-example", v0_31.Pack(), 64, 0, 0},
+		{"deepseek-v4.1-example", v0_31.Pack(), 256, 0, 0},
+		{"deepseek-v4.1-example", v0_31.Pack(), 64, 0, 7},
 	} {
 		name := c.layers + "." + "v" + strings.ReplaceAll(c.pack.Version, ".", "_")
 		name = strings.TrimSuffix(name, "_0") + ".block" + strconv.Itoa(c.block) + ".align" + strconv.Itoa(c.align)
+		var k *int
+		if c.k > 0 {
+			name += ".k" + strconv.Itoa(c.k)
+			k = &c.k
+		}
 		t.Run(name, func(t *testing.T) {
 			b, err := os.ReadFile(filepath.Join(kvDir, name+".json"))
 			if err != nil {
@@ -78,7 +85,7 @@ func TestKVCacheGroupsMatchEngineGoldens(t *testing.T) {
 			}
 			got, err := c.pack.KVCacheGroups(rules.KVCacheGroupsInput{
 				Layers: loadLayers(t, c.layers), EngineBlockSize: c.block,
-				CacheDType: "fp8_ds_mla", BlockStrideAlignment: c.align})
+				CacheDType: "fp8_ds_mla", BlockStrideAlignment: c.align, NumSpecTokens: k})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -231,5 +238,37 @@ func TestExampleLayersAreTheGraphs(t *testing.T) {
 			gc.BlockSize != wc.BlockSize || gc.PageAlignment != wc.PageAlignment {
 			t.Errorf("layer %d: graph %+v, file %+v", i, got[i], want[i])
 		}
+	}
+}
+
+// The ring holds the drafts, the bonus token and the previous row, rounded up to a power
+// of two of at least 8 (compressor.py:147-149).
+func TestCompressorRingRows(t *testing.T) {
+	for k, want := range map[int]int{0: 8, 1: 8, 5: 8, 6: 8, 7: 16, 14: 16, 15: 32} {
+		if got := rules.CompressorRingRows(k); got != want {
+			t.Errorf("CompressorRingRows(%d) = %d, want %d", k, got, want)
+		}
+	}
+}
+
+// A state cache is never padded by the engine, so a stated alignment on one is refused,
+// and v0.31.0 sizes its ring from the deployment's K when one is given.
+func TestKVCacheGroupsStateCache(t *testing.T) {
+	ring := func(align int) rules.KVCacheLayer {
+		return rules.KVCacheLayer{Name: "ring", Cache: model.Cache{Name: "ring", Kind: model.CacheState,
+			Owned: true, BytesPerEntry: 4096, Entries: 8, PageAlignment: align}}
+	}
+	in := rules.KVCacheGroupsInput{Layers: []rules.KVCacheLayer{kv("a", 0, 100), ring(576)}, EngineBlockSize: 16}
+	if _, err := v0_31.Pack().KVCacheGroups(in); err == nil || !strings.Contains(err.Error(), "never pads") {
+		t.Errorf("an aligned state cache was accepted: %v", err)
+	}
+	k := 7
+	in = rules.KVCacheGroupsInput{Layers: []rules.KVCacheLayer{kv("a", 0, 100), ring(0)}, EngineBlockSize: 16, NumSpecTokens: &k}
+	got, err := v0_31.Pack().KVCacheGroups(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.PageBytes["ring"] != 16*4096 {
+		t.Errorf("ring page at K=7 = %d, want %d", got.PageBytes["ring"], 16*4096)
 	}
 }

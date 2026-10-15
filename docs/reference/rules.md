@@ -37,7 +37,11 @@ Besides checks, a pack carries version-specific arithmetic a consumer applies:
 which resolves the CUDA graph capture sizes a deployment's stated knobs run with, and
 `KVCacheGroups`,
 which groups a graph's stated caches into the KV cache groups that share one block pool
-and returns the bytes each block costs. Its tests compare it with groupings computed by the
-engine's own functions, and pin those functions by digest.
+and returns the bytes each block costs. Its tests compare it with groupings computed by
+running the engine's own packing functions, and pin those functions by digest. The
+goldens stub the step before them, mapping each cache to a spec (its kind, block size and
+page bytes), with the same mapping `KVCacheGroups` uses, so they prove the packing and the
+block size given that mapping, not the mapping; the engine facts the mapping rests on are
+pinned by source tests instead.
 
 Source: [`rules`](https://github.com/inference-sim/blis-schemas/tree/main/rules).

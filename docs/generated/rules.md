@@ -121,7 +121,7 @@
 | `TritonFetchPageBytes` | Offload page size, in bytes, at which a CPU-to-GPU fetch uses an SM-consuming kernel | `28672` |
 | `TritonFetchSMs` | SMs that fetch path withholds from the forward pass | `12` |
 | `CascadeAttnOptIn` | Cascade attention is off unless requested | `true` |
-| `KVCachePacking` | How stated caches are grouped into KV cache groups sharing one block pool | `packed groups share one block pool; state caches split to fit the block; a lone window bucket splits like state; the block rounds to the layers' stride alignment` |
+| `KVCachePacking` | How stated caches are grouped into KV cache groups sharing one block pool | `packed groups share one block pool; state caches split to fit the block; a lone window bucket splits like state; the block rounds to the layers' stride alignment; a state ring is sized from K` |
 
 ## Engine 0.29.0
 

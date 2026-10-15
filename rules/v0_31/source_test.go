@@ -854,6 +854,26 @@ func TestKVCachePackingMatchSource(t *testing.T) {
 	if !strings.Contains(comp, "return CircularBufferSpec(") {
 		t.Error("DeepSeek-V4.1's compressor state is no longer a CircularBufferSpec")
 	}
+	for _, want := range []string{
+		"rows_per_step = get_current_vllm_config().num_speculative_tokens + 2",
+		"self.block_size = max(8, 1 << (rows_per_step - 1).bit_length())",
+	} {
+		if !strings.Contains(comp, want) {
+			t.Errorf("the compressor ring size changed: %q is gone; re-derive CompressorRingRows", want)
+		}
+	}
+	// Only the MLA specs pad a page to an alignment; a circular buffer never does, which
+	// is why a state cache's page_alignment is refused.
+	iface := readSource(t, root, "vllm", "v1", "kv_cache_interface.py")
+	for _, class := range []string{"class MLAAttentionSpec(", "class SlidingWindowMLASpec("} {
+		body := classBody(iface, class)
+		if !strings.Contains(body, "_apply_alignment_padding(self)") {
+			t.Errorf("%s no longer pads its page", class)
+		}
+	}
+	if body := classBody(iface, "class CircularBufferSpec("); body == "" || strings.Contains(body, "_apply_alignment_padding") || strings.Contains(body, "    alignment:") {
+		t.Error("CircularBufferSpec now carries an alignment; re-derive the state-cache page")
+	}
 }
 
 // Pack.CUDAGraphCaptureSizes and the cudagraph-capture-sizes rule transcribe
@@ -885,4 +905,23 @@ func TestCUDAGraphCaptureSizesMatchSource(t *testing.T) {
 	if !strings.Contains(src, "uniform_decode_sizes: list[int] = []") {
 		t.Error("the uniform decode sizes are no longer empty for a stated maximum")
 	}
+}
+
+// classBody returns a top-level Python class's text, from its class line to the next
+// top-level definition or decorator.
+func classBody(src, header string) string {
+	i := strings.Index(src, "\n"+header)
+	if i < 0 {
+		return ""
+	}
+	rest := src[i+1:]
+	lines := strings.Split(rest, "\n")
+	var b strings.Builder
+	for j, line := range lines {
+		if j > 0 && line != "" && line[0] != ' ' && line[0] != '\t' && line[0] != ')' {
+			break
+		}
+		b.WriteString(line + "\n")
+	}
+	return b.String()
 }

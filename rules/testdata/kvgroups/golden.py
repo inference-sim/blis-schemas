@@ -9,11 +9,18 @@
 #   python -I golden.py /tmp/kvu31.py synth-state.layers.json 64 0 \
 #     > synth-state.v0_31.block64.align0.json
 #
-# The last two arguments are the engine block size and a block_stride_alignment.
+# The next two arguments are the engine block size and a block_stride_alignment.
+#
+# This stub reproduces KVCacheGroups' own cache-to-spec mapping (kind, block size, page
+# bytes), so a golden proves the packing and the block size given that mapping, not the
+# mapping itself; MatchSource tests pin the mapping's engine facts separately.
 import ast, json, math, sys
 from collections import defaultdict, Counter
 
 src_path, layers_path, block, align = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4])
+# An optional fifth argument is the speculative K, which sizes the compressor ring as
+# vllm/models/deepseek_v41/compressor.py:147-149 does at v0.31.0.
+spec_k = int(sys.argv[5]) if len(sys.argv) > 5 else None
 src = open(src_path).read()
 tree = ast.parse(src)
 want = {"_approximate_gcd", "_get_packed_kv_cache_groups", "_get_kv_cache_bytes_per_block", "_get_per_layer_spec"}
@@ -68,13 +75,15 @@ specs = {}
 for l in json.load(open(layers_path)):
     kind = l["Kind"]
     if kind == "state":
-        b, page, cls, key = l["Entries"], l["Entries"] * l["Bytes"], CircularBufferSpec, ("state", l["Entries"])
+        rows = l["Entries"] if spec_k is None else max(8, 1 << (spec_k + 1).bit_length())
+        b, page, cls, key = rows, rows * l["Bytes"], CircularBufferSpec, ("state", rows)
     else:
         b = l["Block"] or block
         page = b // l["TPE"] * l["Bytes"]
         cls = SlidingWindowSpec if kind == "window" else FullAttentionSpec
         key = ("window", l["Window"], b) if kind == "window" else ("full", b)
-    if l["Align"] > 1: page = round_up(page, l["Align"])
+    # Only the MLA specs pad (_apply_alignment_padding); a CircularBufferSpec never does.
+    if l["Align"] > 1 and kind != "state": page = round_up(page, l["Align"])
     specs[l["Name"]] = cls(cls, key, b, page)
 groups = ns["_get_packed_kv_cache_groups"](Cfg(), specs)
 if groups is None:

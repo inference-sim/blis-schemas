@@ -230,7 +230,7 @@ func Pack() *rules.Pack {
 		// repeat pattern is fixed; _get_kv_cache_bytes_per_block (:1606-1632) rounds the
 		// widest group to the lcm of every block_stride_alignment.
 		KVCachePacking: rules.KVCachePacking{Modeled: true, StateCacheBuckets: true,
-			LoneWindowIsState: true, BlockStrideAlignment: true},
+			LoneWindowIsState: true, BlockStrideAlignment: true, StateRingFromSpecTokens: true},
 	}
 	p.Rules = ruleList(p)
 	return p

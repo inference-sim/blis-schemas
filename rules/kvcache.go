@@ -29,6 +29,10 @@ type KVCachePacking struct {
 	// BlockStrideAlignment is whether the block's bytes round up to the least common
 	// multiple of every layer's block_stride_alignment (v0.31.0).
 	BlockStrideAlignment bool
+	// StateRingFromSpecTokens is whether a state cache's ring holds
+	// CompressorRingRows(K) rows, derived from the deployment's K rather than stated
+	// (v0.31.0 vllm/models/deepseek_v41/compressor.py:147-149).
+	StateRingFromSpecTokens bool
 }
 
 // String renders the packing for the generated documentation.
@@ -45,6 +49,9 @@ func (k KVCachePacking) String() string {
 	}
 	if k.BlockStrideAlignment {
 		parts = append(parts, "the block rounds to the layers' stride alignment")
+	}
+	if k.StateRingFromSpecTokens {
+		parts = append(parts, "a state ring is sized from K")
 	}
 	return strings.Join(parts, "; ")
 }
@@ -102,6 +109,11 @@ type KVCacheGroupsInput struct {
 	// DeepSeek-V4.1 the indexer's lcm(512, page alignment) when indexer_sparse_logits is
 	// on (vllm/models/deepseek_v41/attention.py). Zero means none.
 	BlockStrideAlignment int
+	// NumSpecTokens is the deployment's speculative K, which sizes a state cache's ring
+	// where the release derives it from K (KVCachePacking.StateRingFromSpecTokens). Nil
+	// takes the ring the graph states (Cache.Entries), which is right only at the K the
+	// graph's speculator was derived for.
+	NumSpecTokens *int
 }
 
 // KVCacheGroup is one KV cache group: layers sharing a block table.
@@ -252,8 +264,19 @@ func (p *Pack) packLayerOf(l KVCacheLayer, in KVCacheGroupsInput) (packLayer, er
 		if !p.KVCachePacking.StateCacheBuckets {
 			return pl, fmt.Errorf("layer %q: engine %s stores a state cache as a spec the graph does not state", l.Name, p.Version)
 		}
+		// CircularBufferSpec is never padded: it has no alignment and is not one of the
+		// specs _apply_alignment_padding touches, so a stated alignment would describe a
+		// page the engine does not allocate.
+		if c.PageAlignment > 1 {
+			return pl, fmt.Errorf("layer %q: a state cache is a CircularBufferSpec, which engine %s never pads; page_alignment %d has no engine meaning",
+				l.Name, p.Version, c.PageAlignment)
+		}
 		// CircularBufferSpec: block_size is the ring's row count, one row per state.
-		pl.block, pl.page, pl.state = c.Entries, c.Entries*entry, true
+		rows := c.Entries
+		if k := in.NumSpecTokens; k != nil && p.KVCachePacking.StateRingFromSpecTokens {
+			rows = CompressorRingRows(*k)
+		}
+		pl.block, pl.page, pl.state = rows, rows*entry, true
 		pl.key = fmt.Sprintf("state:%d", pl.block)
 	default:
 		return pl, fmt.Errorf("layer %q: cache kind %q has no engine spec", l.Name, c.Kind)
@@ -456,3 +479,19 @@ func distinctPages(layers []packLayer) int {
 func cdiv(a, b int) int { return (a + b - 1) / b }
 
 func roundUp(x, m int) int { return cdiv(x, m) * m }
+
+// CompressorRingRows is DeepSeek-V4.1's compressor ring capacity at K speculative tokens:
+// the drafts, the bonus token and the previous row, rounded up to a power of two of at
+// least 8, max(8, 1 << (K+1).bit_length()) (v0.31.0 vllm/models/deepseek_v41/
+// compressor.py:147-149). K=5 is 8 rows; K=7 is 16.
+func CompressorRingRows(k int) int {
+	n := k + 1 // rows_per_step - 1
+	bits := 0
+	for v := n; v > 0; v >>= 1 {
+		bits++
+	}
+	if rows := 1 << bits; rows > 8 {
+		return rows
+	}
+	return 8
+}
