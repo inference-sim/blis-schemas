@@ -54,6 +54,11 @@ func TestLabelSyntax(t *testing.T) {
 	for k, want := range map[string]bool{
 		"app": true, "llm-d.ai/role": true, "example.com/a_b.c": true,
 		"": false, "/x": false, "-x": false, "x-": false, strings.Repeat("a", 64): false,
+		// The prefix is a lowercase DNS-1123 subdomain.
+		"Example.com/name": false, ".example.com/name": false, "example..com/name": false,
+		"example-.com/name": false, "-example.com/name": false, "ex_ample.com/name": false,
+		strings.Repeat("a", 64) + ".com/name": false, strings.Repeat("a", 63) + ".com/name": true,
+		strings.Repeat("a.", 127) + "a/name": false, "a-b.c-d.example/name": true,
 	} {
 		if got := validLabelKey(k); got != want {
 			t.Errorf("validLabelKey(%q) = %v, want %v", k, got, want)

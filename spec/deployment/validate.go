@@ -69,18 +69,38 @@ func (d *Deployment) validateRouter(p *validate.Problems) {
 	}
 }
 
-// validLabelKey reports whether k is a Kubernetes label key: an optional DNS-subdomain prefix
-// and a slash, then a name of at most 63 characters.
+// validLabelKey reports whether k is a Kubernetes label key: an optional prefix (a lowercase
+// DNS-1123 subdomain) and a slash, then a name of at most 63 characters.
 func validLabelKey(k string) bool {
 	name := k
 	if i := strings.LastIndexByte(k, '/'); i >= 0 {
 		prefix := k[:i]
 		name = k[i+1:]
-		if prefix == "" || len(prefix) > 253 || !labelChars(prefix, ".-") {
+		if !dns1123Subdomain(prefix) {
 			return false
 		}
 	}
 	return name != "" && len(name) <= 63 && labelChars(name, "-_.") && alnum(name[0]) && alnum(name[len(name)-1])
+}
+
+// dns1123Subdomain reports whether s is a lowercase RFC 1123 subdomain, as Kubernetes requires of
+// a label key's prefix: at most 253 characters of dot-separated labels, each 1 to 63 characters of
+// lowercase letters, digits and '-', starting and ending with a letter or digit.
+func dns1123Subdomain(s string) bool {
+	if s == "" || len(s) > 253 {
+		return false
+	}
+	for _, label := range strings.Split(s, ".") {
+		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for i := 0; i < len(label); i++ {
+			if c := label[i]; !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-') {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // validLabelValue reports whether v is a Kubernetes label value: empty, or at most 63
