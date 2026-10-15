@@ -40,6 +40,7 @@
 package v0_31
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -900,6 +901,50 @@ func ruleList(p *rules.Pack) []rules.Rule {
 					out.RuleWarnf("sequence-parallel-moe-implied",
 						"%s: engine %s makes the MoE input sequence-parallel here (backend %q, tp %d, dp %d), so the model graph must emit a reduce-scatter and all-gather pair rather than an all-reduce",
 						at, p.Version, backend, pl.TP, pl.DP)
+				})
+			},
+		},
+		{
+			Name:    "cudagraph-capture-sizes",
+			Because: "this release refuses a stated max_cudagraph_capture_size that is not the largest of the stated cudagraph_capture_sizes it keeps, caps the maximum at max_num_batched_tokens, drops sizes above it, and truncates a maximum off its capture stride to the largest size it generates (vllm/config/vllm.py _set_cudagraph_sizes); a step larger than the size that runs is executed eager, so the size that runs is the one to price",
+			Check: func(in rules.Input, out *validate.Problems) {
+				forEachEngine(in, func(at string, e deployment.Engine) {
+					stated := e.MaxCUDAGraphCaptureSize != nil || e.CUDAGraphCaptureSizes != nil
+					if !stated {
+						return
+					}
+					if e.CUDAGraphMode == "NONE" {
+						out.RuleWarnf("cudagraph-capture-sizes",
+							"%s.engine: cudagraph_mode NONE captures no graph, so engine %s ignores the stated capture sizes",
+							at, p.Version)
+						return
+					}
+					c, _, err := p.CUDAGraphCaptureSizes(e)
+					switch {
+					case errors.Is(err, rules.ErrCUDAGraphCaptureInconsistent):
+						out.RuleErrorf("cudagraph-capture-sizes",
+							"%s.engine: max_cudagraph_capture_size %d is not the largest of the cudagraph_capture_sizes engine %s keeps (%d); it refuses the pair at startup",
+							at, *e.MaxCUDAGraphCaptureSize, p.Version, c.Max)
+						return
+					case err != nil:
+						// max_num_batched_tokens is unstated, so the cap cannot be applied here.
+						return
+					}
+					if c.Capped {
+						out.RuleWarnf("cudagraph-capture-sizes",
+							"%s.engine: max_cudagraph_capture_size %d exceeds max_num_batched_tokens %d; engine %s captures up to %d",
+							at, *e.MaxCUDAGraphCaptureSize, e.MaxNumBatchedTokens, p.Version, c.Max)
+					}
+					if c.Truncated {
+						out.RuleWarnf("cudagraph-capture-sizes",
+							"%s.engine: max_cudagraph_capture_size %d is off the capture stride; engine %s truncates it to %d",
+							at, *e.MaxCUDAGraphCaptureSize, p.Version, c.Max)
+					}
+					if len(c.Dropped) > 0 {
+						out.RuleWarnf("cudagraph-capture-sizes",
+							"%s.engine: cudagraph_capture_sizes %v exceed max_num_batched_tokens %d; engine %s drops them",
+							at, c.Dropped, e.MaxNumBatchedTokens, p.Version)
+					}
 				})
 			},
 		},

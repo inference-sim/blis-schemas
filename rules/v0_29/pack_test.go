@@ -76,6 +76,7 @@ func TestPackRuleSet(t *testing.T) {
 		"cascade-attention-is-opt-in",
 		"connector-known",
 		"cp-kv-cache-interleave-fits-block",
+		"cudagraph-capture-sizes",
 		"custom-allreduce-reachable",
 		"dbo-thresholds-stated-when-enabled",
 		"dcp-comm-backend-known",
@@ -633,5 +634,41 @@ func TestCacheRecordDTypesKnownIn029(t *testing.T) {
 		if got := fired(run(t, dep(colocated(pl, deployment.Engine{})), g), "cache-record-dtypes-known"); got != want {
 			t.Errorf("%q: fired=%v, want %v", key, got, want)
 		}
+	}
+}
+
+// The capture knobs are refused as a pair the engine refuses, and the values it changes
+// at startup are named with the value that runs.
+func TestCUDAGraphCaptureSizesRule(t *testing.T) {
+	n := func(v int) *int { return &v }
+	for _, c := range []struct {
+		name string
+		e    deployment.Engine
+		sev  validate.Severity // empty: the rule stays silent
+	}{
+		{"unstated", deployment.Engine{MaxNumBatchedTokens: 8192}, ""},
+		{"on the stride", deployment.Engine{MaxNumBatchedTokens: 8192, MaxCUDAGraphCaptureSize: n(64)}, ""},
+		{"consistent pair", deployment.Engine{MaxNumBatchedTokens: 8192, MaxCUDAGraphCaptureSize: n(32),
+			CUDAGraphCaptureSizes: []int{8, 32}}, ""},
+		{"unstated max_num_batched_tokens", deployment.Engine{MaxCUDAGraphCaptureSize: n(100)}, ""},
+		{"inconsistent pair", deployment.Engine{MaxNumBatchedTokens: 8192, MaxCUDAGraphCaptureSize: n(64),
+			CUDAGraphCaptureSizes: []int{8, 32}}, validate.SeverityError},
+		{"capped", deployment.Engine{MaxNumBatchedTokens: 512, MaxCUDAGraphCaptureSize: n(1024)}, validate.SeverityWarning},
+		{"truncated", deployment.Engine{MaxNumBatchedTokens: 8192, MaxCUDAGraphCaptureSize: n(100)}, validate.SeverityWarning},
+		{"dropped sizes", deployment.Engine{MaxNumBatchedTokens: 16, CUDAGraphCaptureSizes: []int{8, 32}}, validate.SeverityWarning},
+		{"ignored under NONE", deployment.Engine{CUDAGraphMode: "NONE", MaxCUDAGraphCaptureSize: n(64)}, validate.SeverityWarning},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			p := run(t, dep(colocated(deployment.Parallelism{TP: 8, PP: 1, DP: 1}, c.e)), graniteGraph())
+			var got validate.Severity
+			for _, it := range p.All() {
+				if it.Rule == "cudagraph-capture-sizes" && (got == "" || it.Severity == validate.SeverityError) {
+					got = it.Severity
+				}
+			}
+			if got != c.sev {
+				t.Errorf("severity %q, want %q\n%s", got, c.sev, p.Error())
+			}
+		})
 	}
 }

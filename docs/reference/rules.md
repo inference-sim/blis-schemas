@@ -33,7 +33,9 @@ lists, and both packs' all-reduce backend names, are not re-derived and rest on 
 alone. See [A new engine release](../contributing/engine-release.md).
 
 Besides checks, a pack carries version-specific arithmetic a consumer applies:
-`ResolveCacheDType`, `WindowPagesPerRequest`, `ModelSequenceParallel`, and `KVCacheGroups`,
+`ResolveCacheDType`, `WindowPagesPerRequest`, `ModelSequenceParallel`, `CUDAGraphCaptureSizes`,
+which resolves the CUDA graph capture sizes a deployment's stated knobs run with, and
+`KVCacheGroups`,
 which groups a graph's stated caches into the KV cache groups that share one block pool
 and returns the bytes each block costs. Its tests compare it with groupings computed by the
 engine's own functions, and pin those functions by digest.

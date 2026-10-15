@@ -85,6 +85,9 @@
 `sequence-parallel-moe-implied`
 :   *warning.* On this backend with tensor and data parallelism both above one, the engine makes the MoE input sequence-parallel, which replaces the layer's all-reduce with a different pair of collectives.
 
+`cudagraph-capture-sizes`
+:   *error or warning.* This release refuses a stated max_cudagraph_capture_size that is not the largest of the stated cudagraph_capture_sizes it keeps, caps the maximum at max_num_batched_tokens, drops sizes above it, and truncates a maximum off its capture stride to the largest size it generates (vllm/config/vllm.py _set_cudagraph_sizes); a step larger than the size that runs is executed eager, so the size that runs is the one to price.
+
 ### Accepted values
 
 | Pack field | Governs | Value |
@@ -189,6 +192,9 @@
 
 `sequence-parallel-moe-implied`
 :   *warning.* On this backend with tensor and data parallelism both above one, the engine makes the MoE input sequence-parallel, which replaces the layer's all-reduce with a different pair of collectives.
+
+`cudagraph-capture-sizes`
+:   *error or warning.* This release refuses a stated max_cudagraph_capture_size that is not the largest of the stated cudagraph_capture_sizes it keeps, caps the maximum at max_num_batched_tokens, drops sizes above it, and truncates a maximum off its capture stride to the largest size it generates (vllm/config/vllm.py _set_cudagraph_sizes); a step larger than the size that runs is executed eager, so the size that runs is the one to price.
 
 ### Accepted values
 

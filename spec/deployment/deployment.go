@@ -149,6 +149,21 @@ type Engine struct {
 	AllReduceBackend string `yaml:"allreduce_backend,omitempty"`
 	// CUDAGraphMode selects capture strategy, which sets the host launch term.
 	CUDAGraphMode string `yaml:"cudagraph_mode,omitempty"`
+	// MaxCUDAGraphCaptureSize is compilation_config.max_cudagraph_capture_size: the
+	// largest step, in tokens, a CUDA graph is captured for. A larger step runs eager,
+	// so with DSpark at K=5, where a decode step verifies 6 tokens per request, a size of
+	// 64 sends every step of more than 10 decoding requests eager. Nil takes the release
+	// default, min(max_num_seqs x decode query length x 2, 512), or 1024 on SM100 (v0.31.0
+	// vllm/config/vllm.py _set_cudagraph_sizes). The engine caps it at
+	// max_num_batched_tokens; Pack.CUDAGraphCaptureSizes resolves the sizes that run.
+	//
+	// A pointer, because a stated 0 is not unset: the engine refuses it.
+	MaxCUDAGraphCaptureSize *int `yaml:"max_cudagraph_capture_size,omitempty"`
+	// CUDAGraphCaptureSizes is compilation_config.cudagraph_capture_sizes: the exact
+	// step sizes, in tokens, to capture. Nil generates them from the maximum. The engine
+	// drops sizes above max_num_batched_tokens, and refuses a stated maximum that is not
+	// the largest size it keeps.
+	CUDAGraphCaptureSizes []int `yaml:"cudagraph_capture_sizes,omitempty"`
 	// AsyncScheduling is tri-state: nil lets the engine resolve it through its
 	// disqualifying conditions, which is what a real deployment does.
 	AsyncScheduling *bool `yaml:"async_scheduling,omitempty"`

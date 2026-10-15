@@ -653,3 +653,34 @@ func TestKVCachePackingMatchSource(t *testing.T) {
 		t.Error("DeepSeek-V4's compressor state is no longer a SlidingWindowMLASpec")
 	}
 }
+
+// Pack.CUDAGraphCaptureSizes and the cudagraph-capture-sizes rule transcribe
+// _set_cudagraph_sizes; the defaults the documentation states are its too. Each
+// transcribed line must still be in the release's source.
+func TestCUDAGraphCaptureSizesMatchSource(t *testing.T) {
+	root := vllmSource(t)
+	src := readSource(t, root, "vllm", "config", "vllm.py")
+	for _, want := range []string{
+		"1024 if current_platform.is_device_capability_family(100) else 512",
+		"max_num_seqs * decode_query_len * 2, default_max_graph_size",
+		"max_cudagraph_capture_size = min(max_num_tokens, max_cudagraph_capture_size)",
+		"dedup_sizes = list(set(self.compilation_config.cudagraph_capture_sizes))",
+		"i for i in dedup_sizes if i <= max_num_tokens",
+		"cudagraph_capture_sizes = [\n                        i for i in [1, 2, 4] if i <= max_cudagraph_capture_size\n                    ]",
+		"range(8, min(max_cudagraph_capture_size + 1, 256), 8)",
+		"range(256, max_cudagraph_capture_size + 1, 16)",
+		"max_num_tokens <= max_cudagraph_capture_size",
+		"cudagraph_capture_sizes[-1] if cudagraph_capture_sizes else 0",
+		"\"customized max_cudagraph_capture_size\"",
+		"and self.compilation_config.cudagraph_mode != CUDAGraphMode.NONE",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("_set_cudagraph_sizes changed: %q is gone", want)
+		}
+	}
+	// The stated-maximum path adds no uniform decode sizes: they are populated only when
+	// the default is computed.
+	if !strings.Contains(src, "uniform_decode_sizes: list[int] = []") {
+		t.Error("the uniform decode sizes are no longer empty for a stated maximum")
+	}
+}

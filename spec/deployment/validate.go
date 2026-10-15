@@ -570,6 +570,20 @@ func validateEngine(p *validate.Problems, at string, e Engine) {
 		p.Field(at+".engine.gpu_memory_utilization",
 			"must lie in [0, 1] (0 means unset), got %v", e.GPUMemoryUtilization)
 	}
+	// The engine asserts the capture maximum is at least 1 once it is capped at
+	// max_num_batched_tokens, and that a stated size list is non-empty (v0.31.0
+	// vllm/config/vllm.py _set_cudagraph_sizes). A size below 1 captures no step.
+	if m := e.MaxCUDAGraphCaptureSize; m != nil && *m < 1 {
+		p.Field(at+".engine.max_cudagraph_capture_size", "must be at least 1, got %d; omit it for the release default", *m)
+	}
+	if e.CUDAGraphCaptureSizes != nil && len(e.CUDAGraphCaptureSizes) == 0 {
+		p.Field(at+".engine.cudagraph_capture_sizes", "must list at least one size; omit it to generate them")
+	}
+	for i, s := range e.CUDAGraphCaptureSizes {
+		if s < 1 {
+			p.Field(fmt.Sprintf("%s.engine.cudagraph_capture_sizes[%d]", at, i), "must be at least 1, got %d", s)
+		}
+	}
 	// The engine types both thresholds Field(ge=0) whether or not overlap is enabled.
 	if e.DBO != nil {
 		for field, v := range map[string]*int{
