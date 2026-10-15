@@ -48,6 +48,7 @@ beside a `colocated` pool.
 | `pp` | integer | yes | Pipeline-parallel width, at least 1. |
 | `dp` | integer | yes | Data-parallel width, at least 1. |
 | `dp_local` | integer | no | Data-parallel replicas resident on one node. Must divide `gpus_per_node` and not exceed `dp`. Zero means the launch decides. |
+| `data_parallel_load_balancing` | string | no | How the data-parallel ranks are exposed, which decides what a router chooses between. One of the [load-balancing modes](vocabularies.md#data-parallel-load-balancing). Omitted, `internal`. `hybrid` and `external` need `dp` > 1. The rules pack refuses `external` on a model without experts and `hybrid` without `dp_local`, and names the mode that runs when the engine resolves `hybrid` to another. `--api-server-count` is not part of it: it sets how many frontend processes share an endpoint, not which ranks a router can reach. |
 | `pcp` | integer | no | Prefill-context-parallel width. Zero or 1 means off. |
 | `dcp` | integer | no | Decode-context-parallel width. Reuses the tensor-parallel ranks; see below. Zero or 1 means off. |
 | `enable_expert_parallel` | boolean | no | Shard MoE experts across ranks. Default false. |

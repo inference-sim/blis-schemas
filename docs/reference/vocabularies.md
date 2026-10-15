@@ -288,6 +288,19 @@ A speculator's `drafting`. An omitted `drafting` means autoregressive.
 
 --8<-- "docs/generated/enum/deployment.Role.md"
 
+### Data-parallel load balancing
+
+A pool's `parallel.data_parallel_load_balancing`. `internal`, the default, serves one
+endpoint and the engine balances requests across every rank. `hybrid`
+(`--data-parallel-hybrid-lb`) serves one endpoint per node, balancing across that node's
+ranks. `external` (`--data-parallel-external-lb`, or
+`--data-parallel-multi-port-external-lb`, which launches one such server per local rank)
+serves one endpoint per rank, and the router chooses the rank. `Pack.ResolveDPLoadBalancing`
+returns the mode that runs: `hybrid` with one rank per node runs `external`, and with
+every rank on one node runs `internal`.
+
+--8<-- "docs/generated/enum/deployment.DPLoadBalancing.md"
+
 ## Traces
 
 ### Trace modes

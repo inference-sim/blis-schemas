@@ -78,6 +78,7 @@ func TestPackRuleSet(t *testing.T) {
 		"cp-kv-cache-interleave-fits-block",
 		"cudagraph-capture-sizes",
 		"custom-allreduce-reachable",
+		"data-parallel-load-balancing",
 		"dbo-thresholds-at-least-microbatches",
 		"dbo-thresholds-stated-when-enabled",
 		"dcp-comm-backend-known",
@@ -1171,5 +1172,49 @@ func TestLongPrefillThresholdWithinMaxModelLen(t *testing.T) {
 		if fired(p, "long-prefill-threshold-within-max-model-len") != c.fire {
 			t.Errorf("%+v: fired %v, want %v\n%s", c.e, !c.fire, c.fire, p.Error())
 		}
+	}
+}
+
+// The load-balancing mode is refused where the engine refuses it, and a hybrid mode the
+// engine runs as another is named with the mode that runs.
+func TestDataParallelLoadBalancing(t *testing.T) {
+	dense := graniteGraph()
+	dense.LayerKinds[0].Nodes = dense.LayerKinds[0].Nodes[:1]
+	pl := func(mode deployment.DPLoadBalancing, dp, local int) deployment.Parallelism {
+		return deployment.Parallelism{TP: 1, PP: 1, DP: dp, DPLocal: local, DataParallelLoadBalancing: mode}
+	}
+	for _, c := range []struct {
+		name string
+		pl   deployment.Parallelism
+		g    *model.Graph
+		sev  validate.Severity
+		runs deployment.DPLoadBalancing
+	}{
+		{"internal", pl("", 8, 0), graniteGraph(), "", deployment.DPLBInternal},
+		{"external on a MoE", pl(deployment.DPLBExternal, 8, 8), graniteGraph(), "", deployment.DPLBExternal},
+		{"external on a dense model", pl(deployment.DPLBExternal, 8, 8), dense, validate.SeverityError, deployment.DPLBExternal},
+		{"hybrid across nodes", pl(deployment.DPLBHybrid, 16, 8), graniteGraph(), "", deployment.DPLBHybrid},
+		{"hybrid without dp_local", pl(deployment.DPLBHybrid, 16, 0), graniteGraph(), validate.SeverityError, deployment.DPLBHybrid},
+		{"hybrid with one rank per node", pl(deployment.DPLBHybrid, 8, 1), graniteGraph(), validate.SeverityWarning, deployment.DPLBExternal},
+		{"hybrid with one rank per node, dense", pl(deployment.DPLBHybrid, 8, 1), dense, validate.SeverityError, deployment.DPLBExternal},
+		{"hybrid on one node", pl(deployment.DPLBHybrid, 8, 8), graniteGraph(), validate.SeverityWarning, deployment.DPLBInternal},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := Pack().ResolveDPLoadBalancing(c.pl); got != c.runs {
+				t.Errorf("runs %s, want %s", got, c.runs)
+			}
+			pool := colocated(c.pl, deployment.Engine{})
+			pool.Nodes = max(1, c.pl.DP/max(1, c.pl.DPLocal))
+			p := run(t, dep(pool), c.g)
+			var got validate.Severity
+			for _, it := range p.All() {
+				if it.Rule == "data-parallel-load-balancing" && (got == "" || it.Severity == validate.SeverityError) {
+					got = it.Severity
+				}
+			}
+			if got != c.sev {
+				t.Errorf("severity %q, want %q\n%s", got, c.sev, p.Error())
+			}
+		})
 	}
 }

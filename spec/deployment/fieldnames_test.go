@@ -72,7 +72,7 @@ func TestEngineFieldNames(t *testing.T) {
 // named ep exists: the width is derived, and a field for it could disagree.
 func TestParallelismFieldNames(t *testing.T) {
 	got := yamlNames(reflect.TypeOf(Parallelism{}))
-	want := []string{"tp", "pp", "dp", "dp_local", "enable_expert_parallel",
+	want := []string{"tp", "pp", "dp", "dp_local", "data_parallel_load_balancing", "enable_expert_parallel",
 		"pcp", "dcp"}
 	if len(got) != len(want) {
 		t.Errorf("Parallelism has %d yaml fields, want %d: %v", len(got), len(want), got)

@@ -79,6 +79,11 @@ type Parallelism struct {
 	// the node's GPU count.
 	DPLocal int `yaml:"dp_local,omitempty"`
 
+	// DataParallelLoadBalancing is how the pool's data-parallel ranks are exposed, which
+	// decides what a router sees and chooses between. Empty is internal, the default.
+	// See DPLoadBalancing.
+	DataParallelLoadBalancing DPLoadBalancing `yaml:"data_parallel_load_balancing,omitempty"`
+
 	EnableExpertParallel bool `yaml:"enable_expert_parallel"`
 
 	// PCP and DCP are prefill- and decode-context parallel width: sharding one
@@ -394,4 +399,40 @@ type Tier struct {
 // free parameter.
 type PDTransfer struct {
 	Connector string `yaml:"connector"`
+}
+
+// DPLoadBalancing is how a data-parallel pool's ranks are exposed to clients, vLLM's
+// three launch modes (v0.31.0 vllm/engine/arg_utils.py:536-538, 1225-1242):
+//
+//   - internal, the default: one API endpoint, and the engine's core client balances
+//     every request across all ranks (DPLBAsyncMPClient, vllm/v1/engine/core_client.py:
+//     155-166);
+//   - hybrid (--data-parallel-hybrid-lb): one endpoint per node, balancing across that
+//     node's ranks; a router chooses the node;
+//   - external (--data-parallel-external-lb, or --data-parallel-multi-port-external-lb,
+//     which launches one such server per local rank): every rank serves its own
+//     endpoint (DPAsyncMPClient), and a router chooses the rank.
+//
+// The api server count is not part of it: --api-server-count sets how many frontend
+// processes share an endpoint (vllm/entrypoints/cli/serve.py:105-127), not which ranks a
+// router can reach.
+type DPLoadBalancing string
+
+const (
+	DPLBInternal DPLoadBalancing = "internal"
+	DPLBHybrid   DPLoadBalancing = "hybrid"
+	DPLBExternal DPLoadBalancing = "external"
+)
+
+var dpLoadBalancings = map[DPLoadBalancing]bool{DPLBInternal: true, DPLBHybrid: true, DPLBExternal: true}
+
+// Valid reports whether m is a recognized mode; empty is the default, internal.
+func (m DPLoadBalancing) Valid() bool { return m == "" || dpLoadBalancings[m] }
+
+// Mode returns the mode with its default applied.
+func (m DPLoadBalancing) Mode() DPLoadBalancing {
+	if m == "" {
+		return DPLBInternal
+	}
+	return m
 }

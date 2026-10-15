@@ -909,6 +909,36 @@ func ruleList(p *rules.Pack) []rules.Rule {
 			},
 		},
 		{
+			Name:    "data-parallel-load-balancing",
+			Because: "this release refuses external data-parallel load balancing for a model without experts and hybrid without data_parallel_size_local, switches hybrid with one rank per node to external, and runs hybrid with every rank on one node as internal (vllm/engine/arg_utils.py create_engine_config); the mode decides which endpoints a router can choose between",
+			Check: func(in rules.Input, out *validate.Problems) {
+				forEachPool(in, func(at string, pool deployment.Pool) {
+					pl := pool.Parallel
+					stated := pl.DataParallelLoadBalancing.Mode()
+					if stated == deployment.DPLBInternal || pl.DP <= 1 {
+						return
+					}
+					if stated == deployment.DPLBHybrid && pl.DPLocal < 1 {
+						out.RuleErrorf("data-parallel-load-balancing",
+							"%s.parallel: hybrid load balancing needs dp_local, the ranks on each node; engine %s refuses it without --data-parallel-size-local",
+							at, p.Version)
+						return
+					}
+					runs := p.ResolveDPLoadBalancing(pl)
+					if runs != stated {
+						out.RuleWarnf("data-parallel-load-balancing",
+							"%s.parallel: hybrid load balancing with dp_local %d of dp %d runs as %s on engine %s",
+							at, pl.DPLocal, pl.DP, runs, p.Version)
+					}
+					if runs == deployment.DPLBExternal && in.Model != nil && totalExperts(in) == 0 {
+						out.RuleErrorf("data-parallel-load-balancing",
+							"%s.parallel: external data-parallel load balancing on a model without experts; engine %s refuses it and asks for independent instances instead",
+							at, p.Version)
+					}
+				})
+			},
+		},
+		{
 			Name:    "long-prefill-threshold-within-max-model-len",
 			Because: "this release refuses at startup a long_prefill_token_threshold greater than max_model_len (vllm/config/scheduler.py verify_max_model_len)",
 			Check: func(in rules.Input, out *validate.Problems) {

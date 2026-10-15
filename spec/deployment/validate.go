@@ -428,6 +428,16 @@ func validateParallelism(p *validate.Problems, at string, pl Parallelism) {
 	// engine supports it from e6dc16cebd, and llm-d deploys it (DP 4 x PCP 8). A
 	// release that refuses it says so in its rules pack.
 	validateDecodeContextParallel(p, at, pl)
+	// A load-balancing mode other than internal exposes ranks to a router; with one rank
+	// there is nothing to expose. Which layouts each mode accepts beyond that is the
+	// release's (rules packs).
+	switch m := pl.DataParallelLoadBalancing; {
+	case !m.Valid():
+		p.Field(at+".parallel.data_parallel_load_balancing", "%q is not one of %v", m,
+			[]DPLoadBalancing{DPLBInternal, DPLBHybrid, DPLBExternal})
+	case m.Mode() != DPLBInternal && pl.DP <= 1:
+		p.Field(at+".parallel.data_parallel_load_balancing", "%s load balancing needs dp > 1, got dp %d", m, pl.DP)
+	}
 	if pl.DPLocal < 0 {
 		// The engine constrains it ge=0; zero is unset here, as there.
 		p.Field(at+".parallel.dp_local", "must not be negative, got %d", pl.DPLocal)

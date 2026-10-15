@@ -706,3 +706,38 @@ func TestLongPrefillTokenThresholdMatchSource(t *testing.T) {
 		t.Error("this release now waives the cap for a lone request; record it in the pack")
 	}
 }
+
+// The three load-balancing modes, how the engine resolves hybrid, the refusals the
+// data-parallel-load-balancing rule encodes, and which client each mode gets.
+func TestDataParallelLoadBalancingMatchSource(t *testing.T) {
+	root := vllmSource(t)
+	args := readSource(t, root, "vllm", "engine", "arg_utils.py")
+	for _, want := range []string{
+		"data_parallel_hybrid_lb: bool = False",
+		"data_parallel_external_lb: bool = False",
+		`"--data-parallel-multi-port-external-lb",`,
+		"Non-MoE models do not support external data parallel mode.",
+		"`--data-parallel-hybrid-lb` requires ",
+		"data_parallel_hybrid_lb is not eligible when ",
+		"if data_parallel_size_local == self.data_parallel_size:",
+		"`--data-parallel-external-lb` cannot be enabled together.",
+	} {
+		if !strings.Contains(args, want) {
+			t.Errorf("arg_utils.py changed: %q is gone", want)
+		}
+	}
+	client := readSource(t, root, "vllm", "v1", "engine", "core_client.py")
+	ext := strings.Index(client, "if parallel_config.data_parallel_external_lb:")
+	if ext < 0 || !strings.Contains(client[ext:ext+300], "DPAsyncMPClient(") ||
+		!strings.Contains(client[ext:ext+600], "DPLBAsyncMPClient(") {
+		t.Error("core_client.py no longer gives external a per-rank client and internal the balancing one")
+	}
+	serve := readSource(t, root, "vllm", "entrypoints", "cli", "serve.py")
+	if !strings.Contains(serve, "Cannot use more than one data parallel load balancing mode.") {
+		t.Error("serve.py no longer refuses two load-balancing modes at once")
+	}
+	// The api server count only defaults per mode; it is not part of the mode.
+	if !strings.Contains(serve, "# Default api_server_count if not explicitly set.") {
+		t.Error("serve.py no longer defaults api_server_count per mode")
+	}
+}

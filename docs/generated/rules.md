@@ -85,6 +85,9 @@
 `sequence-parallel-moe-implied`
 :   *warning.* On this backend with tensor and data parallelism both above one, the engine makes the MoE input sequence-parallel, which replaces the layer's all-reduce with a different pair of collectives.
 
+`data-parallel-load-balancing`
+:   *error or warning.* This release refuses external data-parallel load balancing for a model without experts and hybrid without data_parallel_size_local, switches hybrid with one rank per node to external, and runs hybrid with every rank on one node as internal (vllm/engine/arg_utils.py create_engine_config); the mode decides which endpoints a router can choose between.
+
 `long-prefill-threshold-within-max-model-len`
 :   *error.* This release refuses at startup a long_prefill_token_threshold greater than max_model_len (vllm/config/scheduler.py verify_max_model_len).
 
@@ -196,6 +199,9 @@
 
 `sequence-parallel-moe-implied`
 :   *warning.* On this backend with tensor and data parallelism both above one, the engine makes the MoE input sequence-parallel, which replaces the layer's all-reduce with a different pair of collectives.
+
+`data-parallel-load-balancing`
+:   *error or warning.* This release refuses external data-parallel load balancing for a model without experts and hybrid without data_parallel_size_local, switches hybrid with one rank per node to external, and runs hybrid with every rank on one node as internal (vllm/engine/arg_utils.py create_engine_config); the mode decides which endpoints a router can choose between.
 
 `long-prefill-threshold-within-max-model-len`
 :   *error.* This release refuses at startup a long_prefill_token_threshold greater than max_model_len (vllm/config/scheduler.py verify_max_model_len).
