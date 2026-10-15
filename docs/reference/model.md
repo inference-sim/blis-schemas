@@ -293,6 +293,16 @@ compressed cache, and the ratio-2 ones hold one entry per two tokens. Every laye
 window is a bounded ring. Its KV is 1,790 bytes per context token, where one full-length
 584-byte cache per layer would be 23,360.
 
+Caches with different page sizes share one block pool, and every block costs the widest
+group's page bytes, so a narrow group pays padding in each of its blocks. The rules pack
+reproduces the engine's grouping: `rules.OwnedKVCacheLayers` lists a graph's owned caches
+in engine order, and `Pack.KVCacheGroups` returns the KV cache groups, each cache's group
+and the bytes per block (vLLM's `_get_packed_kv_cache_groups` and
+`_get_kv_cache_bytes_per_block`). A consumer sizes each group in whole blocks of that size
+rather than each cache at its own page. It refuses what it does not model: several cache
+types sharing one page size, and a state cache on 0.29.0, which stores DeepSeek-V4's
+compressor state as a sliding-window spec the graph does not state.
+
 ### Context work
 
 <!-- fields: model.ContextWork -->

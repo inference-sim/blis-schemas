@@ -146,6 +146,10 @@ type Pack struct {
 	// CascadeAttnOptIn records that cascade attention is disabled by default.
 	CascadeAttnOptIn bool
 
+	// KVCachePacking is how the release groups stated caches into KV cache groups that
+	// share one block pool. See KVCacheGroups.
+	KVCachePacking KVCachePacking
+
 	// Rules are the checks themselves.
 	Rules []Rule
 }

@@ -1,6 +1,8 @@
 package v0_29
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -607,5 +609,47 @@ func TestEffectiveBlockMatchSource(t *testing.T) {
 	if !strings.Contains(src, "g.kv_cache_spec.block_size for g in kv_cache_groups") ||
 		strings.Contains(src, "if g.kv_cache_spec.prefix_cacheable") {
 		t.Error("the block-size replacement changed; effectiveBlocks encodes the minimum over every group")
+	}
+}
+
+// pyFunction returns a top-level Python function's text, from its def line to the next
+// top-level def, one newline per line.
+func pyFunction(t *testing.T, src, name string) string {
+	t.Helper()
+	var b strings.Builder
+	in := false
+	for _, line := range strings.Split(src, "\n") {
+		if strings.HasPrefix(line, "def ") {
+			in = strings.HasPrefix(line, "def "+name+"(")
+		}
+		if in {
+			b.WriteString(line + "\n")
+		}
+	}
+	if b.Len() == 0 {
+		t.Fatalf("no top-level def %s", name)
+	}
+	return b.String()
+}
+
+// KVCacheGroups transcribes these three functions; each is pinned by digest. This
+// release's compressor state is a SlidingWindowMLASpec, which is why the pack refuses a
+// state cache.
+func TestKVCachePackingMatchSource(t *testing.T) {
+	root := vllmSource(t)
+	src := readSource(t, root, "vllm", "v1", "core", "kv_cache_utils.py")
+	for fn, want := range map[string]string{
+		"_approximate_gcd":              "22370757cf8c20dba515cf9452594dfc484f3057a709c704214ebb68328b4f1c",
+		"_get_packed_kv_cache_groups":   "01798d12fbaf3a13915eb5fb499662bd68d1d23eb8b44ffa7cc0a9c5d439a392",
+		"_get_kv_cache_bytes_per_block": "27a19eeafec8a0f63e4b73a6c2d272211aab97da82673a7b8a6f6d598a4fdb94",
+	} {
+		sum := sha256.Sum256([]byte(pyFunction(t, src, fn)))
+		if got := hex.EncodeToString(sum[:]); got != want {
+			t.Errorf("%s changed (sha256 %s); re-derive KVCacheGroups", fn, got)
+		}
+	}
+	comp := readSource(t, root, "vllm", "models", "deepseek_v4", "compressor.py")
+	if !strings.Contains(comp, "return SlidingWindowMLASpec(") {
+		t.Error("DeepSeek-V4's compressor state is no longer a SlidingWindowMLASpec")
 	}
 }

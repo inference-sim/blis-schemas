@@ -222,6 +222,14 @@ func Pack() *rules.Pack {
 		EngramArchitectures: set(rules.ArchDeepseekV41, "Qwen4ExpForCausalLM",
 			"Qwen4ExpForConditionalGeneration"),
 		EngramCPUOffloadDefault: true,
+
+		// get_kv_cache_groups (vllm/v1/core/kv_cache_utils.py:2300-2398): one uniform-type
+		// group, else _get_packed_kv_cache_groups (:2001-2120), whose is_state_bucket takes
+		// MambaSpec and CircularBufferSpec buckets, and a sliding-window bucket when no
+		// repeat pattern is fixed; _get_kv_cache_bytes_per_block (:1606-1632) rounds the
+		// widest group to the lcm of every block_stride_alignment.
+		KVCachePacking: rules.KVCachePacking{Modeled: true, StateCacheBuckets: true,
+			LoneWindowIsState: true, BlockStrideAlignment: true},
 	}
 	p.Rules = ruleList(p)
 	return p

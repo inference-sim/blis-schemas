@@ -165,6 +165,12 @@ func Pack() *rules.Pack {
 		},
 		All2AllBackendRenames: map[string]string{
 			"pplx": "allgather_reducescatter", "naive": "allgather_reducescatter"},
+
+		// get_kv_cache_groups and _get_packed_kv_cache_groups (vllm/v1/core/kv_cache_utils.py
+		// :1668-1797) already pack mixed pages, but is_state_bucket takes MambaSpec alone, the
+		// block is the widest group unrounded (:1358-1370), and DeepSeek-V4's compressor
+		// state is a SlidingWindowMLASpec (vllm/models/deepseek_v4/compressor.py:178).
+		KVCachePacking: rules.KVCachePacking{Modeled: true},
 	}
 	p.Rules = ruleList(p)
 	return p

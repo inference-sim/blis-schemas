@@ -180,6 +180,7 @@ var packFields = map[string]string{
 	"TritonFetchPageBytes":       "Offload page size, in bytes, at which a CPU-to-GPU fetch uses an SM-consuming kernel",
 	"TritonFetchSMs":             "SMs that fetch path withholds from the forward pass",
 	"CascadeAttnOptIn":           "Cascade attention is off unless requested",
+	"KVCachePacking":             "How stated caches are grouped into KV cache groups sharing one block pool",
 }
 
 // rulesFile writes every registered pack: its rules, with the severities each can report

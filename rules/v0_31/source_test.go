@@ -1,6 +1,8 @@
 package v0_31
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -808,5 +810,48 @@ func TestCacheDTypeResolutionsMatchSource(t *testing.T) {
 		if !strings.Contains(c.src, c.text) {
 			t.Errorf("%s changed: %q is gone", c.what, c.text)
 		}
+	}
+}
+
+// pyFunction returns a top-level Python function's text, from its def line to the next
+// top-level def, one newline per line.
+func pyFunction(t *testing.T, src, name string) string {
+	t.Helper()
+	var b strings.Builder
+	in := false
+	for _, line := range strings.Split(src, "\n") {
+		if strings.HasPrefix(line, "def ") {
+			in = strings.HasPrefix(line, "def "+name+"(")
+		}
+		if in {
+			b.WriteString(line + "\n")
+		}
+	}
+	if b.Len() == 0 {
+		t.Fatalf("no top-level def %s", name)
+	}
+	return b.String()
+}
+
+// KVCacheGroups transcribes these three functions, and its goldens were computed by
+// running them (rules/testdata/kvgroups/golden.py). A changed body is a changed grouping,
+// so each is pinned by digest; re-derive the transcription and the goldens when one moves.
+// The specs it maps caches to are pinned too: a state cache is a CircularBufferSpec.
+func TestKVCachePackingMatchSource(t *testing.T) {
+	root := vllmSource(t)
+	src := readSource(t, root, "vllm", "v1", "core", "kv_cache_utils.py")
+	for fn, want := range map[string]string{
+		"_approximate_gcd":              "22370757cf8c20dba515cf9452594dfc484f3057a709c704214ebb68328b4f1c",
+		"_get_packed_kv_cache_groups":   "5f0f15282481429cf5939d3d63a201c95b01363079ee3021c9cfe2e14f718ff3",
+		"_get_kv_cache_bytes_per_block": "169b900872e70e8bcd132d27bde67480512caa16e67784d13f20ff5ca8afb733",
+	} {
+		sum := sha256.Sum256([]byte(pyFunction(t, src, fn)))
+		if got := hex.EncodeToString(sum[:]); got != want {
+			t.Errorf("%s changed (sha256 %s); re-derive KVCacheGroups and its goldens", fn, got)
+		}
+	}
+	comp := readSource(t, root, "vllm", "models", "deepseek_v41", "compressor.py")
+	if !strings.Contains(comp, "return CircularBufferSpec(") {
+		t.Error("DeepSeek-V4.1's compressor state is no longer a CircularBufferSpec")
 	}
 }
