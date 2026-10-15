@@ -296,6 +296,38 @@ A trace header's `mode`: how the trace was produced.
 
 --8<-- "docs/generated/enum/workload.Mode.md"
 
+### Replay scenarios
+
+A replay's `scenario`.
+
+--8<-- "docs/generated/enum/workload.ReplayScenario.md"
+
+### Corpus formats
+
+A replay corpus's `format`.
+
+--8<-- "docs/generated/enum/workload.CorpusFormat.md"
+
+### Corpus encodings
+
+A replay corpus's `encoding`.
+
+--8<-- "docs/generated/enum/workload.CorpusEncoding.md"
+
+### Cache-bust modes
+
+A replay's `cache_bust`.
+
+--8<-- "docs/generated/enum/workload.CacheBust.md"
+
+### Warmup modes
+
+A replay's `warmup.mode`. `synthesized` sends, for every stream mid-flight at its lane's
+snapshot, its last earlier request with one output token, and starts profiling when all
+have returned. `cache_pressure` runs an accelerated warmup for a stated duration.
+
+--8<-- "docs/generated/enum/workload.WarmupMode.md"
+
 ### Time units
 
 A trace header's `time_unit`. Several members name the same unit, because the tools that

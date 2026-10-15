@@ -7,9 +7,12 @@
 // A trace is a concrete corpus — real per-request lengths, arrival timestamps, and a
 // prefix TREE — captured in an external file this package references by path.
 //
-// A Scenario's "what traffic" slot is a Binding: a sum type over those two fidelities.
-// The slot is single on purpose, so a scenario names traffic once, distributional or
-// concrete, rather than carrying two fields that could disagree.
+// A third arm, a Replay, names a harness's agentic trace-replay scenario over a pinned
+// corpus, where the harness decides when each request is sent.
+//
+// A Scenario's "what traffic" slot is a Binding: a sum type over those three. The slot is
+// single on purpose, so a scenario names traffic once rather than carrying fields that
+// could disagree.
 package workload
 
 import (
@@ -116,14 +119,14 @@ func (d *Distribution) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-// Binding is a Scenario's "what traffic" slot: a sum type with two arms, exactly one of
-// which is set. Shape references a catalog workload Shape — the distributional arm a
+// Binding is a Scenario's "what traffic" slot: a sum type with three arms, exactly one
+// of which is set. Shape references a catalog workload Shape — the distributional arm a
 // Scenario has always carried; Trace references an external captured trace — the
-// concrete arm. A Scenario that poses a capacity question with no traffic omits the
+// concrete arm; Replay describes a harness-driven agentic replay (see Replay). A Scenario that poses a capacity question with no traffic omits the
 // binding entirely (a nil *Binding on the Scenario); a Binding that is present must
 // choose one arm.
 //
-// The two arms answer one question — what traffic a deployment is measured against — at
+// The arms answer one question — what traffic a deployment is measured against — at
 // different fidelities, which is why they share a single slot rather than sitting as two
 // independent fields that could both be set or both omitted. A Shape is distributional:
 // a cost model draws prompt and output lengths from it and shares one scalar prefix
@@ -141,6 +144,11 @@ type Binding struct {
 	// per-request rows stay in the file it names; only the reference and the small header
 	// metadata are carried in the document.
 	Trace *TraceRef `yaml:"trace,omitempty"`
+
+	// Replay describes a named agentic trace-replay scenario over a pinned corpus -- the
+	// harness-defined arm, where the harness, not a file of arrival times, decides when
+	// each request is sent.
+	Replay *Replay `yaml:"replay,omitempty"`
 }
 
 // TraceRef references a captured TraceV2 trace by PATH, never by value. A real trace is a

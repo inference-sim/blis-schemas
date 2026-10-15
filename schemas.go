@@ -150,8 +150,8 @@ func Validate(b Bundle) Report {
 }
 
 // checkAcceptanceK refuses an inline acceptance stated for a K other than one the
-// deployment speculates with: the scenario's pinned value, its trace's, and the workload
-// shape's. Acceptance at one K says nothing exact about another, so a value is never
+// deployment speculates with: the scenario's pinned value, its trace's or replay's, and
+// the workload shape's. Acceptance at one K says nothing exact about another, so a value is never
 // rescaled. A value with no speculating pool to apply to is a warning, since it is inert
 // rather than wrong.
 func checkAcceptanceK(p *validate.Problems, b Bundle) {
@@ -166,6 +166,9 @@ func checkAcceptanceK(p *validate.Problems, b Bundle) {
 		}
 		if s.Workload != nil && s.Workload.Trace != nil && s.Workload.Trace.Acceptance != nil {
 			values = append(values, stated{"scenario.workload.trace.acceptance.num_spec_tokens", s.Workload.Trace.Acceptance})
+		}
+		if s.Workload != nil && s.Workload.Replay != nil && s.Workload.Replay.Acceptance != nil {
+			values = append(values, stated{"scenario.workload.replay.acceptance.num_spec_tokens", s.Workload.Replay.Acceptance})
 		}
 	}
 	if b.Workload != nil && b.Workload.Acceptance != nil {

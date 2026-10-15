@@ -20,7 +20,7 @@ them.</p>
 | `model` | string | yes | A model directory under `models/` in the catalog. |
 | `coefficients` | list of strings | yes | Coefficient sets in the registry, named by file, at least one. How a cost model combines them is under [Selecting an entry](coefficients.md#selecting-an-entry). |
 | `engine_version` | string | yes | The exact release string of the engine the run describes, such as `0.29.0`. Selects the [rules pack](rules.md). |
-| `workload` | mapping | no | The traffic, as a shape or a trace. See [Workload](workload.md). Omitted for a question about capacity alone. |
+| `workload` | mapping | no | The traffic, as a shape, a trace or a replay. See [Workload](workload.md). Omitted for a question about capacity alone. |
 | `acceptance` | mapping | no | Pins speculative acceptance for the run, by a profile set in the registry or an inline value. See [Scenario pin](acceptance.md#scenario-pin). Omitted, the workload and the registry decide. |
 | `cluster` | mapping | yes | The hardware available, below. |
 

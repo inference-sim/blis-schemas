@@ -22,15 +22,21 @@ func isHex(s string) bool {
 // sees (the Scenario skips a nil one).
 func (b *Binding) Validate() *validate.Problems {
 	p := &validate.Problems{}
-	hasShape := b.Shape != ""
-	hasTrace := b.Trace != nil
+	arms := 0
+	for _, set := range []bool{b.Shape != "", b.Trace != nil, b.Replay != nil} {
+		if set {
+			arms++
+		}
+	}
 	switch {
-	case hasShape && hasTrace:
-		p.Errorf("a workload is a shape or a trace, not both; set shape or trace, not the two together")
-	case !hasShape && !hasTrace:
-		p.Errorf("a workload binding chooses a shape or a trace; omit the workload entirely for a scenario with no traffic")
-	case hasTrace:
+	case arms > 1:
+		p.Errorf("a workload is one of a shape, a trace or a replay; set exactly one")
+	case arms == 0:
+		p.Errorf("a workload binding chooses a shape, a trace or a replay; omit the workload entirely for a scenario with no traffic")
+	case b.Trace != nil:
 		p.Merge("trace", b.Trace.Validate())
+	case b.Replay != nil:
+		p.Merge("replay", b.Replay.Validate())
 	}
 	return p
 }

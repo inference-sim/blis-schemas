@@ -22,7 +22,8 @@ import (
 // It checks presence, not validity: that model names a directory the catalog has, that
 // hardware, fabric and a workload shape name files it has, and that every storage tier,
 // coefficient set and acceptance-profile set a scenario names exists. The workload's
-// Trace arm is excluded on purpose — it references an external capture by file path, not a catalog identity. Validating the
+// Trace and Replay arms are excluded on purpose — they reference external captures by
+// path or repository, not catalog identities. Validating the
 // resolved documents is Validate's job, reached by loading them into a Bundle; this answers
 // the prior question of whether the names resolve at all, which nothing else does —
 // `hardware: nvidia-h200` validates clean today and fails later, elsewhere, as a missing file

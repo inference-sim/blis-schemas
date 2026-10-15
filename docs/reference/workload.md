@@ -2,7 +2,8 @@
 
 <p class="lede">Traffic comes at two fidelities. A <strong>shape</strong> describes it as
 distributions and lives in the catalog. A <strong>trace</strong> is a captured file of real
-requests. A scenario's <code>workload</code> key binds exactly one of the two.</p>
+requests. A <strong>replay</strong> names a load generator's trace-replay scenario over a
+pinned corpus. A scenario's <code>workload</code> key binds exactly one of the three.</p>
 
 ## Binding
 
@@ -17,10 +18,11 @@ workload:
 
 | Key | Type | Required | Meaning |
 |---|---|---|---|
-| `shape` | string | one of the two | A workload shape under `workloads/` in the catalog. |
-| `trace` | mapping | one of the two | A reference to a captured trace, below. |
+| `shape` | string | one of the three | A workload shape under `workloads/` in the catalog. |
+| `trace` | mapping | one of the three | A reference to a captured trace, below. |
+| `replay` | mapping | one of the three | A trace-replay scenario, below. |
 
-A binding with both keys, or with neither, is invalid. To pose a question with no traffic,
+A binding with more than one key, or with none, is invalid. To pose a question with no traffic,
 omit `workload` from the scenario instead.
 
 ## Trace
@@ -88,6 +90,94 @@ constrain at least one.
 | `itl_ms` | number | no | Inter-token latency. Not negative. |
 | `e2e_ms` | number | no | End-to-end latency. Not negative. |
 
+## Replay
+
+A replay states the run a load generator makes, not the requests it sends: a named
+scenario, the harness release it reproduces, the corpus it reads, and every knob the
+scenario fixes. The corpus stays in its repository. How sessions are rebuilt and
+dispatched is the harness's behaviour, which a simulator implements; this is the contract
+it is checked against. Today one scenario is transcribed: aiperf 0.12.0's
+`inferencex-agentx-mvp`, agentic replay of SemiAnalysis's Weka Claude Code traces.
+
+```yaml
+--8<-- "docs/examples/replay-binding.yaml:workload"
+```
+
+A key the scenario locks may be omitted, and then takes the value the harness applies; a
+stated value the scenario's validator would refuse is an error. Citations are to aiperf
+0.12.0, `common/scenario/inferencex_agentx_mvp.py` and `common/scenario/validator.py`.
+
+<!-- fields: workload.Replay -->
+
+| Key | Type | Required | Meaning |
+|---|---|---|---|
+| `scenario` | string | yes | One of the [replay scenarios](vocabularies.md#replay-scenarios). |
+| `harness_version` | string | yes | The harness release the replay reproduces. `0.12.0` for `inferencex-agentx-mvp`. |
+| `corpus` | mapping | yes | The traces, below. |
+| `concurrency` | integer | yes | Session-tree lanes, at least 1. Subagents run beside their parent without taking a lane. One value: a scenario run is not a sweep. |
+| `random_seed` | integer | no | Seeds lane snapshots and prompt content. Omitted, 42. (aiperf alone would draw a random seed.) |
+| `benchmark_duration_s` | number | no | The sending window, at least 900. Omitted, 1800. |
+| `grace_period_s` | number | no | How long requests in flight at the window's end may finish. Not negative; `.inf` waits indefinitely. Omitted, 30. |
+| `max_context_length` | integer or `max_model_len` | no | Drops every trace whose recorded peak prompt plus output exceeds it. `max_model_len` is the deployment's resolved context length. Omitted, no filter. |
+| `cache_bust` | string | no | Must be `first_turn_prefix`, its default: one marker per session tree. |
+| `system_idle_gap_cap_s` | number | no | Must be 10, its default: when nothing is in flight, pending timers are pulled in so the system idles at most this long. |
+| `trajectory_start` | mapping | no | The window of each trace's span a lane's snapshot is drawn from, below. Omitted, the whole span. |
+| `warmup` | mapping | no | How the server is primed before profiling, below. Omitted, `synthesized`. |
+| `split_flattened_agents` | boolean | no | Whether agent chains a capture flattened are split by hash-prefix detection. Omitted, true. |
+| `streaming` | boolean | no | Must be true. |
+| `ignore_eos` | boolean | no | Must be true: every request generates its recorded output length. |
+| `ignore_trace_delays` | boolean | no | Must be false. |
+| `synthesis_max_isl` | integer | no | Must be unset: the scenario forbids input truncation. |
+| `trace_idle_gap_cap_s` | number | no | Must be unset: no per-trace idle compression. |
+| `inter_turn_delay_cap_s` | number | no | Must be unset: per-turn delays are uncapped. |
+| `category` | string | no | The workload category that selects an [acceptance profile](acceptance.md). |
+| `thinking` | string | no | `on` or `off`. Selects the profile with `category`. |
+| `acceptance` | mapping | no | The run's own acceptance, an [inline value](acceptance.md#inline-values). |
+
+### `corpus`
+
+<!-- fields: workload.Corpus -->
+
+| Key | Type | Required | Meaning |
+|---|---|---|---|
+| `loader` | string | yes | The harness loader or public-dataset alias, such as `semianalysis_cc_traces_weka_062126_256k`. One the scenario accepts; `weka_trace`, a local directory, cannot pin the corpus and is refused, and `weka_hf` may only read `semianalysisai/cc-traces-weka-062126`. |
+| `format` | string | yes | One of the [corpus formats](vocabularies.md#corpus-formats). |
+| `encoding` | string | yes | One of the [corpus encodings](vocabularies.md#corpus-encodings). |
+| `source` | mapping | yes | Where it is published, below. |
+| `sha256` | string | no | Hex digest of the corpus file, 64 characters. |
+
+### `corpus.source`
+
+<!-- fields: workload.CorpusSource -->
+
+| Key | Type | Required | Meaning |
+|---|---|---|---|
+| `huggingface` | string | yes | The dataset repository, `owner/name`. |
+| `revision` | string | yes | The commit or tag it was read at. |
+| `file` | string | no | The corpus file's path in the repository. |
+| `split` | string | no | The dataset split. |
+
+### `trajectory_start`
+
+Each bound is a fraction of a trace's span, from its first request's start to its last's,
+in [0, 1]. The scenario fills [0, 1]; unlike its locks, aiperf honours a stated window.
+
+<!-- fields: workload.TrajectoryStart -->
+
+| Key | Type | Required | Meaning |
+|---|---|---|---|
+| `min_ratio` | number | no | Lower bound. Omitted, 0. |
+| `max_ratio` | number | no | Upper bound, at least `min_ratio`. Omitted, 1. |
+
+### `warmup`
+
+<!-- fields: workload.Warmup -->
+
+| Key | Type | Required | Meaning |
+|---|---|---|---|
+| `mode` | string | yes | One of the [warmup modes](vocabularies.md#warmup-modes). |
+| `duration_s` | number | with `cache_pressure` | How long the accelerated cache-pressure warmup runs. No other mode takes it. |
+
 ## Shape
 
 A catalog file under `workloads/`, named by its file; a `name` key in it is rejected. This is
@@ -124,7 +214,7 @@ A file may also carry `_comment` and `_comment_*` keys, at the top level and ins
 
 ## Checks
 
-A binding is invalid if it sets both `shape` and `trace`, or neither. A trace reference is
+A binding is invalid unless it sets exactly one of `shape`, `trace` and `replay`. A trace reference is
 invalid if
 
 - `data` is empty, `rows` is negative, or `sha256` is present and is not 64 hex digits;
@@ -137,6 +227,23 @@ invalid if
 A trace reference or a shape is also invalid if a stated `category` is malformed,
 `thinking` is not `on` or `off`, or `acceptance` is not a valid
 [inline value](acceptance.md#inline-values).
+
+A replay is invalid if
+
+- `scenario` or `harness_version` is empty or not transcribed, or `concurrency` is less
+  than 1;
+- `benchmark_duration_s` is not finite, negative, or below 900;
+- `grace_period_s` is negative or NaN;
+- `cache_bust` is other than `first_turn_prefix`, or `system_idle_gap_cap_s` other than 10;
+- a `trajectory_start` bound lies outside [0, 1], or `min_ratio` exceeds `max_ratio`;
+- `warmup.mode` is unknown, or `duration_s` is missing for `cache_pressure` or stated for
+  another mode;
+- `streaming` or `ignore_eos` is false, `ignore_trace_delays` true, or any of
+  `synthesis_max_isl`, `trace_idle_gap_cap_s` and `inter_turn_delay_cap_s` is set;
+- the corpus loader is empty or not one the scenario accepts, is `weka_trace`, or is
+  `weka_hf` on another repository; `format` or `encoding` is unknown; the repository is not
+  `owner/name`; `revision` is empty; or `sha256` is not 64 hex digits;
+- its acceptance terms are invalid, as for a trace.
 
 A shape is invalid if
 
