@@ -41,7 +41,9 @@ type Bundle struct {
 	// AcceptanceProfiles are registry acceptance-profile sets, validated field by field.
 	AcceptanceProfiles []*acceptance.ProfileSet
 	Workload           *workload.Shape
-	Evaluation         *evaluation.Run
+	// ReplayWorkload is a catalog replay workload, validated field by field.
+	ReplayWorkload *workload.CatalogReplay
+	Evaluation     *evaluation.Run
 }
 
 // Report is the outcome of validating a bundle, with the two layers kept apart.
@@ -127,6 +129,9 @@ func Validate(b Bundle) Report {
 	}
 	if b.Workload != nil {
 		field.Merge("workload", b.Workload.Validate())
+	}
+	if b.ReplayWorkload != nil {
+		field.Merge("workload", b.ReplayWorkload.Validate())
 	}
 	if b.Evaluation != nil {
 		field.Merge("evaluation", b.Evaluation.Validate())

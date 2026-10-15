@@ -16,8 +16,150 @@ import (
 // scenario declaration common/scenario/inferencex_agentx_mvp.py (mvp.py below) and the
 // lock that applies it, common/scenario/validator.py.
 
-// Replay is a Scenario's third "what traffic" arm: a named agentic trace-replay scenario
-// run over a pinned corpus, stated exactly enough that a simulator reproduces what the
+// Replay is a Scenario's third "what traffic" arm: an agentic trace-replay workload and
+// the run's lane count. It takes one of two forms.
+//
+// Inline, it states the whole definition beside Concurrency. As a reference, Workload
+// names a catalog replay workload (a workloads/<name>.yaml whose top-level key is
+// replay:, see CatalogReplay), and the binding states only the run's choices: Concurrency,
+// and optionally the seed, the window, the grace period, the context filter and the
+// acceptance, which override the catalog's. ValidateAgainstCatalog loads the entry, and
+// Resolve merges the two into an inline Replay.
+type Replay struct {
+	// Workload names a catalog replay workload by its file stem. Empty for an inline
+	// replay.
+	Workload         string `yaml:"workload,omitempty"`
+	ReplayDefinition `yaml:",inline"`
+	// Concurrency is the number of session-tree lanes: live trees, not requests.
+	// Subagents fan out beside their parent without taking a lane, so requests in flight
+	// can far exceed it. One value: a scenario run is not a sweep (validator.py:825-837).
+	// It is the run's choice, so a catalog entry does not state it.
+	Concurrency int `yaml:"concurrency"`
+}
+
+// CatalogReplay is a catalog replay workload: a definition named by its file, with no
+// lane count, which each run chooses.
+type CatalogReplay struct {
+	Name string
+	ReplayDefinition
+}
+
+// Validate checks the definition and that the entry has a name.
+func (c *CatalogReplay) Validate() *validate.Problems {
+	p := c.ReplayDefinition.Validate()
+	if c.Name == "" {
+		p.Field("name", "required")
+	}
+	return p
+}
+
+// Validate performs field-level validation of a replay. An inline one is validated in
+// full; a reference states a catalog name, a lane count, and only run choices, and the
+// definition it resolves to is validated when it is resolved.
+func (r *Replay) Validate() *validate.Problems {
+	p := &validate.Problems{}
+	if r.Concurrency < 1 {
+		p.Field("concurrency", "must be at least 1: the number of session-tree lanes")
+	}
+	if r.Workload == "" {
+		r.ReplayDefinition.validateInto(p)
+		return p
+	}
+	if fixed := r.catalogFixedFields(); len(fixed) > 0 {
+		p.Errorf("a reference to catalog replay %q may state only the run's choices "+
+			"(concurrency, random_seed, benchmark_duration_s, grace_period_s, max_context_length, "+
+			"acceptance); it also states %v, which the catalog entry fixes", r.Workload, fixed)
+	}
+	r.validateRunChoices(p)
+	return p
+}
+
+// catalogFixedFields names the keys a reference states that only a definition may.
+func (r *Replay) catalogFixedFields() []string {
+	d := r.ReplayDefinition
+	var out []string
+	add := func(set bool, key string) {
+		if set {
+			out = append(out, key)
+		}
+	}
+	add(d.Scenario != "", "scenario")
+	add(d.HarnessVersion != "", "harness_version")
+	add(d.Corpus != (Corpus{}), "corpus")
+	add(d.CacheBust != "", "cache_bust")
+	add(d.SystemIdleGapCapS != nil, "system_idle_gap_cap_s")
+	add(d.TrajectoryStart != nil, "trajectory_start")
+	add(d.Warmup != nil, "warmup")
+	add(d.SplitFlattenedAgents != nil, "split_flattened_agents")
+	add(d.Streaming != nil, "streaming")
+	add(d.IgnoreEOS != nil, "ignore_eos")
+	add(d.IgnoreTraceDelays != nil, "ignore_trace_delays")
+	add(d.SynthesisMaxISL != 0, "synthesis_max_isl")
+	add(d.TraceIdleGapCapS != nil, "trace_idle_gap_cap_s")
+	add(d.InterTurnDelayCapS != nil, "inter_turn_delay_cap_s")
+	add(d.Category != "", "category")
+	add(d.Thinking != "", "thinking")
+	return out
+}
+
+// validateRunChoices checks the overrides a reference may state.
+func (r *Replay) validateRunChoices(p *validate.Problems) {
+	d := r.ReplayDefinition
+	if p.FiniteField("benchmark_duration_s", d.BenchmarkDurationS) {
+		switch {
+		case d.BenchmarkDurationS < 0:
+			p.Field("benchmark_duration_s", "must not be negative")
+		case d.BenchmarkDurationS > 0 && d.BenchmarkDurationS < 900:
+			p.Field("benchmark_duration_s",
+				"%v is below the scenario's 900 s floor (mvp.py:32; validator.py:589-602)", d.BenchmarkDurationS)
+		}
+	}
+	if g := d.GracePeriodS; g != nil && (math.IsNaN(*g) || *g < 0) {
+		p.Field("grace_period_s", "must be a non-negative number of seconds or .inf, got %v", *g)
+	}
+	if d.Acceptance != nil {
+		p.Merge("acceptance", d.Acceptance.Validate())
+	}
+}
+
+// Resolve merges a reference with the catalog entry it names: the entry's definition, with
+// the reference's run choices over it. It returns an inline Replay, validated, or an error
+// naming what is wrong. An inline replay resolves to itself.
+func (r *Replay) Resolve(entry *CatalogReplay) (*Replay, error) {
+	if r.Workload == "" {
+		return r, nil
+	}
+	if entry == nil || entry.Name != r.Workload {
+		return nil, fmt.Errorf("replay workload %q: the catalog entry was not supplied", r.Workload)
+	}
+	out := &Replay{ReplayDefinition: entry.ReplayDefinition, Concurrency: r.Concurrency}
+	run := r.ReplayDefinition
+	if run.RandomSeed != nil {
+		out.RandomSeed = run.RandomSeed
+	}
+	if run.BenchmarkDurationS != 0 {
+		out.BenchmarkDurationS = run.BenchmarkDurationS
+	}
+	if run.GracePeriodS != nil {
+		out.GracePeriodS = run.GracePeriodS
+	}
+	if run.MaxContextLength != 0 {
+		out.MaxContextLength = run.MaxContextLength
+	}
+	if run.Acceptance != nil {
+		out.Acceptance = run.Acceptance
+	}
+	if p := r.Validate(); !p.OK() {
+		return nil, fmt.Errorf("replay workload %q: %s", r.Workload, p.Error())
+	}
+	if p := out.Validate(); !p.OK() {
+		return nil, fmt.Errorf("replay workload %q resolves to an invalid replay:\n%s", r.Workload, p.Error())
+	}
+	return out, nil
+}
+
+// ReplayDefinition is an agentic trace-replay workload apart from the run's lane count: a
+// named trace-replay scenario run over a pinned corpus, stated exactly enough that a simulator reproduces what the
 // harness would send, such as "aiperf 0.12.0 --scenario inferencex-agentx-mvp over
 // semianalysisai/cc-traces-weka-062126-256k at revision R". It describes the run and
 // carries no replay logic: the corpus stays in its file, and how a session tree is rebuilt
@@ -26,17 +168,13 @@ import (
 // Every knob the scenario locks has a field, so a document can state it, and validation
 // refuses a value the harness's scenario validator would refuse. An omitted field takes
 // the value the harness applies; the accessors return it.
-type Replay struct {
+type ReplayDefinition struct {
 	// Scenario names the harness scenario. See ReplayScenario.
 	Scenario ReplayScenario `yaml:"scenario"`
 	// HarnessVersion is the harness release whose behaviour the scenario reproduces.
 	HarnessVersion string `yaml:"harness_version"`
 	Corpus         Corpus `yaml:"corpus"`
 
-	// Concurrency is the number of session-tree lanes: live trees, not requests.
-	// Subagents fan out beside their parent without taking a lane, so requests in flight
-	// can far exceed it. One value: a scenario run is not a sweep (validator.py:825-837).
-	Concurrency int `yaml:"concurrency"`
 	// RandomSeed seeds lane snapshots and prompt content. Omitted, it is 42, the value
 	// the target command and InferenceX use; aiperf itself would draw a random one
 	// (validator.py:788-816), which no simulation can reproduce.
@@ -311,7 +449,7 @@ func (c ContextLimit) MarshalYAML() (any, error) {
 }
 
 // Seed returns the random seed, 42 when unstated.
-func (r *Replay) Seed() int64 {
+func (r *ReplayDefinition) Seed() int64 {
 	if r.RandomSeed != nil {
 		return *r.RandomSeed
 	}
@@ -319,7 +457,7 @@ func (r *Replay) Seed() int64 {
 }
 
 // Duration returns the profiling window in seconds, 1800 when unstated.
-func (r *Replay) Duration() float64 {
+func (r *ReplayDefinition) Duration() float64 {
 	if r.BenchmarkDurationS > 0 {
 		return r.BenchmarkDurationS
 	}
@@ -327,7 +465,7 @@ func (r *Replay) Duration() float64 {
 }
 
 // Grace returns the grace period in seconds, 30 when unstated.
-func (r *Replay) Grace() float64 {
+func (r *ReplayDefinition) Grace() float64 {
 	if r.GracePeriodS != nil {
 		return *r.GracePeriodS
 	}
@@ -335,7 +473,7 @@ func (r *Replay) Grace() float64 {
 }
 
 // IdleCap returns the global idle cap in seconds, 10.
-func (r *Replay) IdleCap() float64 {
+func (r *ReplayDefinition) IdleCap() float64 {
 	if r.SystemIdleGapCapS != nil {
 		return *r.SystemIdleGapCapS
 	}
@@ -343,7 +481,7 @@ func (r *Replay) IdleCap() float64 {
 }
 
 // StartWindow returns the snapshot window's bounds, [0, 1] where unstated.
-func (r *Replay) StartWindow() (float64, float64) {
+func (r *ReplayDefinition) StartWindow() (float64, float64) {
 	lo, hi := 0.0, 1.0
 	if r.TrajectoryStart != nil {
 		if r.TrajectoryStart.MinRatio != nil {
@@ -357,7 +495,7 @@ func (r *Replay) StartWindow() (float64, float64) {
 }
 
 // WarmupMode returns the warmup mode, synthesized when unstated.
-func (r *Replay) WarmupMode() WarmupMode {
+func (r *ReplayDefinition) WarmupMode() WarmupMode {
 	if r.Warmup != nil {
 		return r.Warmup.Mode
 	}
@@ -366,19 +504,24 @@ func (r *Replay) WarmupMode() WarmupMode {
 
 // SplitsFlattenedAgents reports whether flattened agent chains are split, true when
 // unstated.
-func (r *Replay) SplitsFlattenedAgents() bool {
+func (r *ReplayDefinition) SplitsFlattenedAgents() bool {
 	return r.SplitFlattenedAgents == nil || *r.SplitFlattenedAgents
 }
 
 // AcceptanceTerms returns what the replay states about acceptance, for acceptance.Resolve.
-func (r *Replay) AcceptanceTerms() acceptance.Workload {
+func (r *ReplayDefinition) AcceptanceTerms() acceptance.Workload {
 	return acceptance.Workload{Category: r.Category, Thinking: r.Thinking, Value: r.Acceptance}
 }
 
-// Validate performs field-level validation of a replay, refusing what the harness's
+// Validate performs field-level validation of a definition, refusing what the harness's
 // scenario validator refuses for the named scenario.
-func (r *Replay) Validate() *validate.Problems {
+func (r *ReplayDefinition) Validate() *validate.Problems {
 	p := &validate.Problems{}
+	r.validateInto(p)
+	return p
+}
+
+func (r *ReplayDefinition) validateInto(p *validate.Problems) {
 	switch {
 	case r.Scenario == "":
 		p.Field("scenario", "required: one of %v", AllReplayScenarios())
@@ -392,9 +535,6 @@ func (r *Replay) Validate() *validate.Problems {
 	}
 	p.Merge("corpus", r.Corpus.Validate())
 
-	if r.Concurrency < 1 {
-		p.Field("concurrency", "must be at least 1: the number of session-tree lanes")
-	}
 	if p.FiniteField("benchmark_duration_s", r.BenchmarkDurationS) {
 		switch {
 		case r.BenchmarkDurationS < 0:
@@ -452,7 +592,6 @@ func (r *Replay) Validate() *validate.Problems {
 		p.Field("inter_turn_delay_cap_s", "the scenario forbids a per-turn delay cap (mvp.py:38; validator.py:642-693)")
 	}
 	acceptance.ValidateWorkloadTerms(p, r.Category, r.Thinking, r.Acceptance)
-	return p
 }
 
 // Validate checks a corpus reference: a loader the scenario accepts that pins the corpus,
@@ -492,5 +631,40 @@ func (c *Corpus) Validate() *validate.Problems {
 	if c.SHA256 != "" && (len(c.SHA256) != 64 || !isHex(c.SHA256)) {
 		p.Field("sha256", "must be a 64-character hex digest of the corpus file")
 	}
+	return p
+}
+
+// CatalogWorkload is one catalog workloads/<name>.yaml, which is either a traffic shape
+// or, when its top-level key is replay:, a replay workload. Exactly one is set.
+type CatalogWorkload struct {
+	Shape  *Shape
+	Replay *CatalogReplay
+}
+
+// Name is the entry's name, its file stem.
+func (w *CatalogWorkload) Name() string {
+	if w.Replay != nil {
+		return w.Replay.Name
+	}
+	if w.Shape != nil {
+		return w.Shape.Name
+	}
+	return ""
+}
+
+// Validate validates whichever form the entry takes.
+func (w *CatalogWorkload) Validate() *validate.Problems {
+	switch {
+	case w.Shape != nil && w.Replay != nil:
+		p := &validate.Problems{}
+		p.Errorf("a catalog workload is a shape or a replay, not both")
+		return p
+	case w.Replay != nil:
+		return w.Replay.Validate()
+	case w.Shape != nil:
+		return w.Shape.Validate()
+	}
+	p := &validate.Problems{}
+	p.Errorf("a catalog workload states neither a shape nor a replay")
 	return p
 }

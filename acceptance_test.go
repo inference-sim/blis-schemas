@@ -44,12 +44,14 @@ func TestAcceptanceKMustMatchTheDeployment(t *testing.T) {
 		}, "scenario.workload.trace.acceptance.num_spec_tokens"},
 		{"scenario replay", func(b *Bundle, v *acceptance.Value) {
 			b.Scenario.Workload = &workload.Binding{Replay: &workload.Replay{
-				Scenario: workload.ScenarioInferenceXAgentXMVP, HarnessVersion: "0.12.0",
-				Corpus: workload.Corpus{Loader: "semianalysis_cc_traces_weka_062126_256k",
-					Format: workload.CorpusWekaTraceV7, Encoding: workload.CorpusJSONL,
-					Source: workload.CorpusSource{HuggingFace: "semianalysisai/cc-traces-weka-062126-256k",
-						Revision: "8fecd2fc"}},
-				Concurrency: 8, Acceptance: v}}
+				ReplayDefinition: workload.ReplayDefinition{
+					Scenario: workload.ScenarioInferenceXAgentXMVP, HarnessVersion: "0.12.0",
+					Corpus: workload.Corpus{Loader: "semianalysis_cc_traces_weka_062126_256k",
+						Format: workload.CorpusWekaTraceV7, Encoding: workload.CorpusJSONL,
+						Source: workload.CorpusSource{HuggingFace: "semianalysisai/cc-traces-weka-062126-256k",
+							Revision: "8fecd2fc"}},
+					Acceptance: v},
+				Concurrency: 8}}
 		}, "scenario.workload.replay.acceptance.num_spec_tokens"},
 		{"workload shape", func(b *Bundle, v *acceptance.Value) {
 			b.Workload = &workload.Shape{Name: "chatbot",

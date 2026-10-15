@@ -14,7 +14,11 @@ func bl(b bool) *bool       { return &b }
 // agentX is the run issue #71 names: aiperf 0.12.0's inferencex-agentx-mvp over the 256k
 // Weka corpus at a pinned revision.
 func agentX() *Replay {
-	return &Replay{
+	return &Replay{Concurrency: 64, ReplayDefinition: agentXDefinition()}
+}
+
+func agentXDefinition() ReplayDefinition {
+	return ReplayDefinition{
 		Scenario: ScenarioInferenceXAgentXMVP, HarnessVersion: "0.12.0",
 		Corpus: Corpus{
 			Loader: "semianalysis_cc_traces_weka_062126_256k", Format: CorpusWekaTraceV7,
@@ -22,7 +26,7 @@ func agentX() *Replay {
 			Source: CorpusSource{HuggingFace: "semianalysisai/cc-traces-weka-062126-256k",
 				Revision: "8fecd2fc", File: "traces.jsonl", Split: "train"},
 		},
-		Concurrency: 64, BenchmarkDurationS: 900, MaxContextLength: ContextLimitMaxModelLen,
+		BenchmarkDurationS: 900, MaxContextLength: ContextLimitMaxModelLen,
 		Category: "coding", Thinking: "on",
 	}
 }
@@ -180,5 +184,64 @@ func TestBindingReplayArm(t *testing.T) {
 		if p := b.Validate(); p.OK() {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+}
+
+// A reference states the catalog name, the lane count and run choices only; Resolve lays
+// the run choices over the entry's definition.
+func TestReplayReference(t *testing.T) {
+	entry := &CatalogReplay{Name: "agentx", ReplayDefinition: agentXDefinition()}
+	if p := entry.Validate(); !p.OK() {
+		t.Fatalf("a catalog replay was rejected:\n%s", p.Error())
+	}
+	ref := &Replay{Workload: "agentx", Concurrency: 32,
+		ReplayDefinition: ReplayDefinition{GracePeriodS: fl(1800), RandomSeed: func() *int64 { s := int64(7); return &s }()}}
+	if p := ref.Validate(); !p.OK() {
+		t.Fatalf("a reference was rejected:\n%s", p.Error())
+	}
+	got, err := ref.Resolve(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Workload != "" || got.Concurrency != 32 || got.Grace() != 1800 || got.Seed() != 7 ||
+		got.Corpus.Source.Revision != "8fecd2fc" || got.Duration() != 900 {
+		t.Errorf("resolved to %+v", got)
+	}
+	if entry.Seed() != 42 {
+		t.Error("resolving changed the catalog entry")
+	}
+
+	for name, c := range map[string]struct {
+		ref   *Replay
+		entry *CatalogReplay
+	}{
+		"no lanes":           {&Replay{Workload: "agentx"}, entry},
+		"fixed field stated": {&Replay{Workload: "agentx", Concurrency: 1, ReplayDefinition: ReplayDefinition{CacheBust: CacheBustFirstTurnPrefix}}, entry},
+		"short window":       {&Replay{Workload: "agentx", Concurrency: 1, ReplayDefinition: ReplayDefinition{BenchmarkDurationS: 60}}, entry},
+		"entry not supplied": {&Replay{Workload: "agentx", Concurrency: 1}, nil},
+		"another entry":      {&Replay{Workload: "agentx", Concurrency: 1}, &CatalogReplay{Name: "other", ReplayDefinition: agentXDefinition()}},
+		"invalid merged":     {&Replay{Workload: "agentx", Concurrency: 1}, &CatalogReplay{Name: "agentx"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := c.ref.Resolve(c.entry); err == nil {
+				t.Error("resolved")
+			}
+		})
+	}
+	if p := (&Replay{Workload: "agentx", Concurrency: 1, ReplayDefinition: ReplayDefinition{Scenario: ScenarioInferenceXAgentXMVP}}).Validate(); p.OK() ||
+		!strings.Contains(p.Error(), "scenario") {
+		t.Errorf("a reference restating the scenario validated: %s", p.Error())
+	}
+}
+
+// A catalog entry is one form or the other.
+func TestCatalogWorkloadForms(t *testing.T) {
+	shape := &CatalogWorkload{Shape: chatbot()}
+	replay := &CatalogWorkload{Replay: &CatalogReplay{Name: "agentx", ReplayDefinition: agentXDefinition()}}
+	if !shape.Validate().OK() || shape.Name() != "chatbot" || !replay.Validate().OK() || replay.Name() != "agentx" {
+		t.Error("a valid entry was rejected or misnamed")
+	}
+	if (&CatalogWorkload{}).Validate().OK() || (&CatalogWorkload{Shape: chatbot(), Replay: replay.Replay}).Validate().OK() {
+		t.Error("an entry with neither or both forms validated")
 	}
 }

@@ -27,7 +27,7 @@ documents name no engine version, so no rules pack applies.
 | `hardware/*.yaml` | a [chip](hardware.md#chip) |
 | `networks/*.yaml` | a [fabric](hardware.md#fabric) |
 | `devices/storage.yaml` | [storage classes](hardware.md#storage-classes). Optional. |
-| `workloads/*.yaml` | a [workload shape](workload.md#shape) |
+| `workloads/*.yaml` | a [workload shape](workload.md#shape), or a [replay workload](workload.md#catalog-replay-workload) when its top-level key is `replay:` |
 
 Only files ending in `.yaml` are read in the flat directories. A path is treated as a
 catalog if it contains at least one of `models/`, `hardware/`, `networks/`, `workloads/` and

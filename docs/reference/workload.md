@@ -103,18 +103,36 @@ it is checked against. Today one scenario is transcribed: aiperf 0.12.0's
 --8<-- "docs/examples/replay-binding.yaml:workload"
 ```
 
+A replay arm takes one of two forms. Inline, it states the whole definition beside the
+lane count, as above. As a reference, it names a catalog replay workload and states only
+the run's choices:
+
+```yaml
+--8<-- "docs/examples/replay-reference.yaml:workload"
+```
+
+<!-- fields: workload.Replay -->
+
+| Key | Type | Required | Meaning |
+|---|---|---|---|
+| `workload` | string | no | A catalog replay workload under `workloads/`, by file name. Set, the binding may state only `concurrency`, `random_seed`, `benchmark_duration_s`, `grace_period_s`, `max_context_length` and `acceptance`, which override the entry's; `ValidateAgainstCatalog` loads the entry and `ResolveReplay` merges the two. |
+| `concurrency` | integer | yes | Session-tree lanes, at least 1. Subagents run beside their parent without taking a lane. One value: a scenario run is not a sweep. It is the run's choice, so a catalog entry does not state it. |
+
+The other keys are the definition's, below.
+
+### The definition
+
 A key the scenario locks may be omitted, and then takes the value the harness applies; a
 stated value the scenario's validator would refuse is an error. Citations are to aiperf
 0.12.0, `common/scenario/inferencex_agentx_mvp.py` and `common/scenario/validator.py`.
 
-<!-- fields: workload.Replay -->
+<!-- fields: workload.ReplayDefinition -->
 
 | Key | Type | Required | Meaning |
 |---|---|---|---|
 | `scenario` | string | yes | One of the [replay scenarios](vocabularies.md#replay-scenarios). |
 | `harness_version` | string | yes | The harness release the replay reproduces. `0.12.0` for `inferencex-agentx-mvp`. |
 | `corpus` | mapping | yes | The traces, below. |
-| `concurrency` | integer | yes | Session-tree lanes, at least 1. Subagents run beside their parent without taking a lane. One value: a scenario run is not a sweep. |
 | `random_seed` | integer | no | Seeds lane snapshots and prompt content. Omitted, 42. (aiperf alone would draw a random seed.) |
 | `benchmark_duration_s` | number | no | The sending window, at least 900. Omitted, 1800. |
 | `grace_period_s` | number | no | How long requests in flight at the window's end may finish. Not negative; `.inf` waits indefinitely. Omitted, 30. |
@@ -133,6 +151,19 @@ stated value the scenario's validator would refuse is an error. Citations are to
 | `category` | string | no | The workload category that selects an [acceptance profile](acceptance.md). |
 | `thinking` | string | no | `on` or `off`. Selects the profile with `category`. |
 | `acceptance` | mapping | no | The run's own acceptance, an [inline value](acceptance.md#inline-values). |
+
+### Catalog replay workload
+
+A catalog file under `workloads/` whose top-level key is `replay:` is a replay workload
+rather than a shape. It holds a definition, with no lane count, and is named by its file.
+It may carry `_comment` keys at its top level, as a shape may. `LoadCatalogWorkload` reads
+either form, `LoadWorkload` reads shapes only, and `validate-catalog` validates both.
+
+```yaml title="workloads/workload-replay.yaml"
+--8<-- "docs/examples/workload-replay.yaml"
+```
+
+A scenario cannot bind a replay workload as `shape:`; `ValidateAgainstCatalog` says so.
 
 ### `corpus`
 
@@ -244,6 +275,10 @@ A replay is invalid if
   `weka_hf` on another repository; `format` or `encoding` is unknown; the repository is not
   `owner/name`; `revision` is empty; or `sha256` is not 64 hex digits;
 - its acceptance terms are invalid, as for a trace.
+
+A replay that references a catalog workload is invalid if it states anything but the run's
+choices, or `concurrency` is less than 1. `ValidateAgainstCatalog` reports a reference
+whose entry is missing, is a shape, or merges to an invalid replay.
 
 A shape is invalid if
 

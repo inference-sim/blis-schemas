@@ -40,7 +40,7 @@ and recorded with its results.
 | Chip | catalog, `hardware/<name>.yaml` | the file name | [Hardware](../reference/hardware.md) |
 | Fabric | catalog, `networks/<name>.yaml` | the file name | [Hardware](../reference/hardware.md#fabric) |
 | Storage classes | catalog, `devices/storage.yaml` | each class's key in the file | [Hardware](../reference/hardware.md#storage-classes) |
-| Workload shape | catalog, `workloads/<name>.yaml` | the file name | [Workload](../reference/workload.md#shape) |
+| Workload shape or replay workload | catalog, `workloads/<name>.yaml` | the file name | [Workload](../reference/workload.md#shape) |
 | Coefficient set | registry, `coefficients/<name>.yaml` | the file name, which a scenario uses; its `name` key matches by convention | [Coefficient set](../reference/coefficients.md) |
 | Acceptance-profile set | registry, `acceptance/<name>.yaml` | the file name, which a scenario's `acceptance.profiles` uses; its `name` key matches by convention | [Acceptance profiles](../reference/acceptance.md) |
 | Evaluation run | wherever its user keeps it | its `name` key | [Evaluation run](../reference/evaluation.md) |

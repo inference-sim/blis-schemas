@@ -351,18 +351,23 @@ func validateWorkloads(r *reporter, root string) {
 	}
 	r.section("# workloads/*.yaml")
 	for _, path := range paths {
-		w, err := blisschemas.LoadWorkload(path)
+		w, err := blisschemas.LoadCatalogWorkload(path)
 		if err != nil {
 			// The identity is the filename stem; the loader could not stamp it, so name
 			// the file.
 			r.loadFail(stem(path), "%v", err)
 			continue
 		}
-		if r.record(w.Name, w.Validate()) {
+		if r.record(w.Name(), w.Validate()) {
+			continue
+		}
+		if rp := w.Replay; rp != nil {
+			r.pass(fmt.Sprintf("%-46s replay %s over %s@%s", rp.Name, rp.Scenario,
+				rp.Corpus.Source.HuggingFace, rp.Corpus.Source.Revision))
 			continue
 		}
 		r.pass(fmt.Sprintf("%-46s prompt~%d, output~%d tokens",
-			w.Name, w.Prompt.Mean, w.Output.Mean))
+			w.Shape.Name, w.Shape.Prompt.Mean, w.Shape.Output.Mean))
 	}
 }
 

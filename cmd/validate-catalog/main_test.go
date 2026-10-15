@@ -446,3 +446,35 @@ stack:
 		t.Errorf("stderr should report the cycle, got: %s", errb)
 	}
 }
+
+const replayWorkload = `_comment: the 256k AgentX corpus
+replay:
+  scenario: inferencex-agentx-mvp
+  harness_version: 0.12.0
+  corpus:
+    loader: semianalysis_cc_traces_weka_062126_256k
+    format: weka-trace-v7
+    encoding: jsonl
+    source: {huggingface: semianalysisai/cc-traces-weka-062126-256k, revision: 8fecd2fc}
+  category: coding
+  thinking: "on"
+`
+
+// A workloads/ file whose top-level key is replay: is validated as a replay workload, and
+// one the scenario's validator would refuse fails the run.
+func TestRunReplayWorkload(t *testing.T) {
+	code, out, errb := exercise(t, catalogWith(t, map[string]string{"workloads/agentx.yaml": replayWorkload}))
+	if code != 0 || !strings.Contains(out, "replay inferencex-agentx-mvp") {
+		t.Fatalf("exit = %d\nstdout:\n%s\nstderr:\n%s", code, out, errb)
+	}
+	bad := strings.Replace(replayWorkload, "  category: coding\n", "  cache_bust: every_turn\n", 1)
+	code, _, errb = exercise(t, catalogWith(t, map[string]string{"workloads/agentx.yaml": bad}))
+	if code != 1 || !strings.Contains(errb, "cache_bust") {
+		t.Fatalf("exit = %d, want 1 for a refused cache_bust\nstderr:\n%s", code, errb)
+	}
+	lanes := strings.Replace(replayWorkload, "  category: coding\n", "  concurrency: 8\n", 1)
+	code, _, errb = exercise(t, catalogWith(t, map[string]string{"workloads/agentx.yaml": lanes}))
+	if code != 1 || !strings.Contains(errb, "concurrency") {
+		t.Fatalf("exit = %d, want 1 for a catalog entry stating concurrency\nstderr:\n%s", code, errb)
+	}
+}

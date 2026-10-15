@@ -1,0 +1,19 @@
+_comment: >
+  aiperf 0.12.0's inferencex-agentx-mvp over the 256k-capped SemiAnalysis Weka corpus.
+  The lane count is the run's choice, so it is stated where the workload is bound.
+replay:
+  scenario: inferencex-agentx-mvp
+  harness_version: 0.12.0
+  corpus:
+    loader: semianalysis_cc_traces_weka_062126_256k
+    format: weka-trace-v7
+    encoding: jsonl
+    source:
+      huggingface: semianalysisai/cc-traces-weka-062126-256k
+      revision: 8fecd2fc
+      file: traces.jsonl
+      split: train
+  benchmark_duration_s: 900
+  max_context_length: max_model_len
+  category: coding
+  thinking: "on"
