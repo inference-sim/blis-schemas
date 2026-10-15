@@ -80,6 +80,7 @@ A `Batch` is what the simulator supplies for one step.
 | `Reqs []ReqShape` | One entry per request in the batch. |
 | `DecodeThreshold int` | Engine configuration that selects the attention kernel for each request. |
 | `SMBudget int` | SMs available this step: the chip's count less any held by a concurrent offload fetch. |
+| `PadTokens int` | Tokens this data-parallel rank pads its step with under vLLM's DP lockstep: every rank runs the group's largest token count, and a rank with nothing scheduled runs a dummy batch of pad alone. Pad tokens run the GEMMs, the MoE dispatch and combine and the expert paths, but never the logits, the LM head, the vocabulary all-gather or sampling. They are not requests. 0 means none; never negative. |
 
 Each `ReqShape` carries the counts an engine's own scheduler reads:
 
@@ -90,7 +91,7 @@ Each `ReqShape` carries the counts an engine's own scheduler reads:
 | `PromptLen` | The prompt length. With `Computed`, it tells the last chunk of a prefill split across steps apart from a decode. |
 | `CachedTokens` | The prefix-cache hit, already subtracted from `Scheduled`. A count, not a rate. |
 
-`Batch.Tokens()` sums `Scheduled`. `Batch.UniformDecode(width)` reports whether every
+`Batch.Tokens()` sums `Scheduled`, and `Batch.PaddedTokens()` adds `PadTokens`: the count the layers run. `Batch.Validate()` refuses a negative count. `Batch.UniformDecode(width)` reports whether every
 request schedules exactly `width` tokens. Some engine behavior, such as when dual-batch
 overlap engages, uses one threshold for such a batch and another for any other.
 

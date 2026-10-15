@@ -104,4 +104,4 @@ jobs:
         env:
           VLLM_SOURCE: ${{ github.workspace }}/vllm-source
           VLLM_SOURCE_REQUIRED: "1"
-        run: go test -v -run MatchSource ./rules/v0_31/ ./spec/acceptance/
+        run: go test -v -run MatchSource ./rules/v0_31/ ./spec/acceptance/ ./kernel/
