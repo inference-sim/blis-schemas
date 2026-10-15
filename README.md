@@ -51,6 +51,7 @@ go run github.com/inference-sim/blis-schemas/cmd/validate-registry@latest /path/
 go test ./...                                              # schemas, validators, rules, docs
 VLLM_SOURCE=/path/to/vllm-0.29.0 go test -run MatchSource ./rules/v0_29/ # each pack against its own release
 VLLM_SOURCE=/path/to/vllm-0.31.0 go test -run MatchSource ./rules/v0_31/
+AIPERF_SOURCE=/path/to/aiperf-0.12.0/src/aiperf go test -run MatchSource ./spec/workload/ # replay constants
 ```
 
 How changes are organized, how an engine release is added, and how the documentation is
