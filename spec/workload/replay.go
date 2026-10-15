@@ -312,8 +312,11 @@ type Corpus struct {
 	// Encoding is how records are stored. See CorpusEncoding.
 	Encoding CorpusEncoding `yaml:"encoding"`
 	Source   CorpusSource   `yaml:"source"`
-	// SHA256 is the optional digest of the corpus file, 64 hex characters.
-	SHA256 string `yaml:"sha256,omitempty"`
+	// SHA256 is the digest of the corpus file, 64 hex characters: the Hugging Face LFS
+	// object id (X-Linked-ETag) of the file at the revision. Required, because the harness
+	// reads whatever the default branch holds and only the digest can show it read these
+	// bytes.
+	SHA256 string `yaml:"sha256"`
 }
 
 // CorpusSource is where a corpus is published, pinned to one revision.
@@ -321,9 +324,11 @@ type CorpusSource struct {
 	// HuggingFace is the dataset repository id, such as
 	// semianalysisai/cc-traces-weka-062126-256k.
 	HuggingFace string `yaml:"huggingface"`
-	// Revision is the repository commit or tag the corpus was read at. A branch name
-	// moves, so it pins nothing; the schema cannot tell the two apart and leaves that to
-	// review.
+	// Revision is the repository commit the corpus was observed at. It is a record, not a
+	// pin aiperf applies: aiperf 0.12.0's Weka loaders set no hf_revision, so they read
+	// the repository's default branch whatever this says (dataset/loader/
+	// base_hf_dataset.py:28, 77). What ties a run to these bytes is Corpus.SHA256, which
+	// is therefore required.
 	Revision string `yaml:"revision"`
 	// File is the path of the corpus file in the repository, and Split the dataset split
 	// the loader reads. Both optional.
@@ -650,9 +655,12 @@ func (c *Corpus) Validate() *validate.Problems {
 		p.Field("source.huggingface", "required: a dataset repository id, owner/name, got %q", c.Source.HuggingFace)
 	}
 	if c.Source.Revision == "" {
-		p.Field("source.revision", "required: a corpus that is not pinned to a revision is not reproducible")
+		p.Field("source.revision", "required: the repository commit the corpus was observed at, recorded beside its sha256")
 	}
-	if c.SHA256 != "" && (len(c.SHA256) != 64 || !isHex(c.SHA256)) {
+	switch {
+	case c.SHA256 == "":
+		p.Field("sha256", "required: aiperf 0.12.0 reads the default branch, not source.revision, so only the corpus file's digest ties a run to its bytes")
+	case len(c.SHA256) != 64 || !isHex(c.SHA256):
 		p.Field("sha256", "must be a 64-character hex digest of the corpus file")
 	}
 	return p

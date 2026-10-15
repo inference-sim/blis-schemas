@@ -49,7 +49,7 @@ func TestAcceptanceKMustMatchTheDeployment(t *testing.T) {
 					Corpus: workload.Corpus{Loader: "semianalysis_cc_traces_weka_062126_256k",
 						Format: workload.CorpusWekaTraceV7, Encoding: workload.CorpusJSONL,
 						Source: workload.CorpusSource{HuggingFace: "semianalysisai/cc-traces-weka-062126-256k",
-							Revision: "8fecd2fc"}},
+							Revision: "8fecd2fc"}, SHA256: "e39cd2ff3eba21d4a3664be51da743ac3d2149a1933898cafc7bfeac8147eeef"},
 					Acceptance: v},
 				Concurrency: 8}}
 		}, "scenario.workload.replay.acceptance.num_spec_tokens"},

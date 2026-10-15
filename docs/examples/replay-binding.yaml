@@ -15,9 +15,10 @@ workload:
       encoding: jsonl
       source:
         huggingface: semianalysisai/cc-traces-weka-062126-256k
-        revision: 8fecd2fc
+        revision: 8fecd2fc56694469f758f0afbbb6335ad3043740
         file: traces.jsonl
         split: train
+      sha256: e39cd2ff3eba21d4a3664be51da743ac3d2149a1933898cafc7bfeac8147eeef
     concurrency: 64
     random_seed: 42
     benchmark_duration_s: 900

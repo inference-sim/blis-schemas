@@ -25,6 +25,7 @@ func agentXDefinition() ReplayDefinition {
 			Encoding: CorpusJSONL,
 			Source: CorpusSource{HuggingFace: "semianalysisai/cc-traces-weka-062126-256k",
 				Revision: "8fecd2fc", File: "traces.jsonl", Split: "train"},
+			SHA256: "e39cd2ff3eba21d4a3664be51da743ac3d2149a1933898cafc7bfeac8147eeef",
 		},
 		BenchmarkDurationS: 900, MaxContextLength: ContextLimitMaxModelLen,
 		Category: "coding", Thinking: "on",
@@ -107,6 +108,7 @@ func TestReplayRefuses(t *testing.T) {
 		{"unknown encoding", "corpus.encoding", func(r *Replay) { r.Corpus.Encoding = "parquet" }},
 		{"no repository", "corpus.source.huggingface", func(r *Replay) { r.Corpus.Source.HuggingFace = "" }},
 		{"no revision", "corpus.source.revision", func(r *Replay) { r.Corpus.Source.Revision = "" }},
+		{"no digest", "corpus.sha256", func(r *Replay) { r.Corpus.SHA256 = "" }},
 		{"short digest", "corpus.sha256", func(r *Replay) { r.Corpus.SHA256 = "e39cd2ff" }},
 	}
 	for _, c := range cases {

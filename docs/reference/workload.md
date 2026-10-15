@@ -175,7 +175,7 @@ A scenario cannot bind a replay workload as `shape:`; `ValidateAgainstCatalog` s
 | `format` | string | yes | One of the [corpus formats](vocabularies.md#corpus-formats). |
 | `encoding` | string | yes | One of the [corpus encodings](vocabularies.md#corpus-encodings). |
 | `source` | mapping | yes | Where it is published, below. |
-| `sha256` | string | no | Hex digest of the corpus file, 64 characters. |
+| `sha256` | string | yes | Hex digest of the corpus file, 64 characters: its Hugging Face LFS object id. Required because aiperf reads the default branch, not `revision`, so only the digest ties a run to the bytes it read. |
 
 ### `corpus.source`
 
@@ -184,7 +184,7 @@ A scenario cannot bind a replay workload as `shape:`; `ValidateAgainstCatalog` s
 | Key | Type | Required | Meaning |
 |---|---|---|---|
 | `huggingface` | string | yes | The dataset repository, `owner/name`. |
-| `revision` | string | yes | The commit or tag it was read at. |
+| `revision` | string | yes | The commit the corpus was observed at. A record, not a pin: aiperf 0.12.0's Weka loaders set no `hf_revision` and read the default branch (`dataset/loader/base_hf_dataset.py:28, 77`). |
 | `file` | string | no | The corpus file's path in the repository. |
 | `split` | string | no | The dataset split. |
 
@@ -273,7 +273,7 @@ A replay is invalid if
   `synthesis_max_isl`, `trace_idle_gap_cap_s` and `inter_turn_delay_cap_s` is set;
 - the corpus loader is empty or not one the scenario accepts, is `weka_trace`, or is
   `weka_hf` on another repository, or an alias on a repository other than its own; `format` or `encoding` is unknown; the repository is not
-  `owner/name`; `revision` is empty; or `sha256` is not 64 hex digits;
+  `owner/name`; `revision` is empty; or `sha256` is missing or not 64 hex digits;
 - its acceptance terms are invalid, as for a trace.
 
 A replay that references a catalog workload is invalid if it states anything but the run's

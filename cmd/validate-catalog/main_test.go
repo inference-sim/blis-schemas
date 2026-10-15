@@ -456,6 +456,7 @@ replay:
     format: weka-trace-v7
     encoding: jsonl
     source: {huggingface: semianalysisai/cc-traces-weka-062126-256k, revision: 8fecd2fc}
+    sha256: e39cd2ff3eba21d4a3664be51da743ac3d2149a1933898cafc7bfeac8147eeef
   category: coding
   thinking: "on"
 `
