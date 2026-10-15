@@ -24,6 +24,12 @@ func TestRouterInputs(t *testing.T) {
 		{"configuration named twice", func(d *Deployment) {
 			d.Router = &Router{EPPFlags: []string{"--config-file=a.yaml"}, EndpointPickerConfig: "b.yaml"}
 		}, "router.endpoint_picker_config"},
+		{"configuration named twice, bare flag", func(d *Deployment) {
+			d.Router = &Router{EPPFlags: []string{"--config-text", "x"}, EndpointPickerConfig: "b.yaml"}
+		}, "router.endpoint_picker_config"},
+		{"a flag that only starts like --config-file", func(d *Deployment) {
+			d.Router = &Router{EPPFlags: []string{"--config-file-format=yaml"}, EndpointPickerConfig: "b.yaml"}
+		}, ""},
 		{"empty manifest path", func(d *Deployment) { d.Router = &Router{Manifests: []string{" "}} }, "router.manifests[0]"},
 		{"bad label key", func(d *Deployment) { d.Pools[1].Labels = map[string]string{"-bad": "x"} }, "pools[1].labels"},
 		{"bad label value", func(d *Deployment) { d.Pools[1].Labels = map[string]string{"app": "has space"} }, "pools[1].labels.app"},

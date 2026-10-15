@@ -211,14 +211,22 @@ registry coefficient, so it cannot be set here.
 
 | Key | Type | Required | Meaning |
 |---|---|---|---|
-| `epp_flags` | list | no | The router's (EPP's) command-line flags, verbatim, each `--name=value`. They select the pool with `--pool-name` or `--endpoint-selector`. |
+| `epp_flags` | list | no | The router's (EPP's) command-line flags, verbatim, one list entry per flag (`--name=value`). They select the pool with `--pool-name` or `--endpoint-selector`. A Helm chart's `epp.flags` map is rendered to this list (`name: value` becomes `--name=value`). |
 | `endpoint_picker_config` | string | no | The `EndpointPickerConfig` file, as the router reads it with `--config-file`. Naming the configuration here and in `epp_flags` is an error. |
-| `manifests` | list | no | Kubernetes manifest files. The router reads their `InferencePool`, `InferenceObjective` and `InferenceModelRewrite` objects; other kinds are ignored. |
+| `manifests` | list | no | Kubernetes manifest files. The router reads their `InferencePool`, `InferenceObjective` and `InferenceModelRewrite` objects; other kinds are ignored. Objectives and rewrites take effect only for an `InferencePool` (`--pool-name`); with a standalone pool (`--endpoint-selector`) the router does not reconcile them, so a consumer may refuse them there. |
 
 Paths are relative to the directory of the file that holds the deployment. The block names
 the router's own inputs and nothing else: scorers, weights, admission and flow control are
 configured in those files, exactly as for a real deployment, so the same files configure the
 real router and a simulated one. There is no deployment key for a routing decision.
+
+These checks are syntactic. A deployment that passes them is well formed, not necessarily
+routable by a given consumer: a simulator refuses, at its startup and with the reason, router
+flags, plugins or manifests it cannot run faithfully.
+
+`pools[].labels` are a different kind of input from the three above. In a real deployment the
+labels live in each pool's pod template; a deployment here has no pod spec, so the labels restate
+them, so that an `InferencePool` selector or a label filter has the pods' labels to match.
 
 ## Checks
 

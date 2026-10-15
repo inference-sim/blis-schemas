@@ -58,7 +58,7 @@ func (d *Deployment) validateRouter(p *validate.Problems) {
 		if !strings.HasPrefix(f, "-") {
 			p.Field(fmt.Sprintf("router.epp_flags[%d]", i), "%q is not a flag; give each flag as --name=value", f)
 		}
-		if r.EndpointPickerConfig != "" && (strings.HasPrefix(f, "--config-file") || strings.HasPrefix(f, "--config-text")) {
+		if r.EndpointPickerConfig != "" && (isFlag(f, "config-file") || isFlag(f, "config-text")) {
 			p.Field("router.endpoint_picker_config", "the configuration is also named by the EPP flag %q; name it once", f)
 		}
 	}
@@ -81,6 +81,11 @@ func validLabelKey(k string) bool {
 		}
 	}
 	return name != "" && len(name) <= 63 && labelChars(name, "-_.") && alnum(name[0]) && alnum(name[len(name)-1])
+}
+
+// isFlag reports whether arg sets the command-line flag name (--name or --name=value).
+func isFlag(arg, name string) bool {
+	return arg == "--"+name || strings.HasPrefix(arg, "--"+name+"=")
 }
 
 // dns1123Subdomain reports whether s is a lowercase RFC 1123 subdomain, as Kubernetes requires of

@@ -57,9 +57,10 @@ type Deployment struct {
 // control are the router's configuration, carried by the files named here and never
 // restated in this schema.
 type Router struct {
-	// EPPFlags are the router's command-line flags, verbatim (for example the router Helm
-	// chart's epp.flags rendered as --name=value). They select the pool (--pool-name or
-	// --endpoint-selector) and may name the configuration with --config-file.
+	// EPPFlags are the router's command-line flags, verbatim, one entry per flag (a Helm chart's
+	// epp.flags map rendered as --name=value). They select the pool (--pool-name or
+	// --endpoint-selector) and may name the configuration with --config-file. The schema checks
+	// their form only; a consumer refuses flags it cannot honor.
 	EPPFlags []string `yaml:"epp_flags,omitempty"`
 	// EndpointPickerConfig is the EndpointPickerConfig file, as the router reads it with
 	// --config-file. Naming the file here and in EPPFlags is an error.
