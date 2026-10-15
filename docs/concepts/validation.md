@@ -125,6 +125,6 @@ a catalog is checked out.
 
 | Caller | Runs |
 |---|---|
-| `validate-catalog`, `validate-registry` | The field layer, for each committed document. These documents name no engine version, so no rules run. |
+| `validate-catalog`, `validate-registry`, `validate-measurements` | The field layer, for each committed document, and for measured runs the licence check and the verdict. These documents name no engine version, so no rules run. |
 | blis-latency-kernel, when it constructs a kernel | `Validate` over its inputs. A field-layer error stops construction; rule-layer problems do not. |
 | Your own Go program | Whatever it needs; see [Validate documents from Go](../guides/go.md). |

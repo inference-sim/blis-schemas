@@ -57,7 +57,8 @@ source:
 
 // TestRunValidCatalogValidatesEveryKind is the headline: the committed fixture catalog
 // holds one of every artifact kind — a graph, a config.json, a model.yaml, a chip, a
-// fabric, two storage tiers, and a NESTED workload shape — and all of them must validate,
+// fabric, two storage tiers, a NESTED workload shape, and a licence registry with one
+// measured run — and all of them must validate,
 // with a zero exit and nothing on stderr. The workload fixture is deliberately the nested
 // form; the live catalog's workloads are still flat (catalog #16), so this path is covered
 // by a local fixture rather than the live tree.
@@ -75,7 +76,7 @@ func TestRunValidCatalogValidatesEveryKind(t *testing.T) {
 	// entry contributes three artifacts.
 	for _, want := range []string{
 		"tiny-llm", "config.json", "h100", "ib-400g", "cpu_dram", "nvme_gen4", "chatbot",
-		"all 8 artifact(s) validate",
+		"measurements/sources.yaml", "EXACT/RESOLVED", "all 10 artifact(s) validate",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("report does not mention %q:\n%s", want, out)
@@ -477,5 +478,29 @@ func TestRunReplayWorkload(t *testing.T) {
 	code, _, errb = exercise(t, catalogWith(t, map[string]string{"workloads/agentx.yaml": lanes}))
 	if code != 1 || !strings.Contains(errb, "concurrency") {
 		t.Fatalf("exit = %d, want 1 for a catalog entry stating concurrency\nstderr:\n%s", code, errb)
+	}
+}
+
+// A catalog's committed measurements must be redistributable: a run whose licence is
+// unverified fails the catalog even though it is well formed.
+func TestRunRefusesAnUnredistributableMeasurement(t *testing.T) {
+	ok := filepath.Join("testdata", "catalog-ok", "measurements")
+	sources, err := os.ReadFile(filepath.Join(ok, "sources.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runBody, err := os.ReadFile(filepath.Join(ok, "synthetic-fixture", "synthetic-h100-tp4.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	moved := strings.Replace(string(runBody), "license_ref: synthetic-fixture", "license_ref: hud", 1)
+	moved = strings.Replace(moved, "verdict: EXACT\nresolution: RESOLVED\n", "verdict: PARTIAL\n", 1)
+	root := catalogWith(t, map[string]string{
+		"measurements/sources.yaml":                string(sources),
+		"measurements/hud/synthetic-h100-tp4.yaml": moved,
+	})
+	code, _, errb := exercise(t, root)
+	if code != 1 || !strings.Contains(errb, "does not permit redistribution") {
+		t.Fatalf("exit = %d, want 1 with a redistribution refusal; stderr:\n%s", code, errb)
 	}
 }

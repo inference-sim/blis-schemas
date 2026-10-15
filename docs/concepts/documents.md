@@ -44,6 +44,8 @@ and recorded with its results.
 | Coefficient set | registry, `coefficients/<name>.yaml` | the file name, which a scenario uses; its `name` key matches by convention | [Coefficient set](../reference/coefficients.md) |
 | Acceptance-profile set | registry, `acceptance/<name>.yaml` | the file name, which a scenario's `acceptance.profiles` uses; its `name` key matches by convention | [Acceptance profiles](../reference/acceptance.md) |
 | Evaluation run | wherever its user keeps it | its `name` key | [Evaluation run](../reference/evaluation.md) |
+| Measured run | catalog, `measurements/<license_ref>/<name>.yaml` | its `name` key, which must match the file name | [Measured run](../reference/measurement.md) |
+| Licence registry | catalog, `measurements/sources.yaml` | each source's `id` | [Measured run](../reference/measurement.md#licence-registry) |
 
 A model entry in the catalog is a directory. It holds an identity manifest recording where
 the model's configuration came from and, once the catalog has derived it, a graph of the

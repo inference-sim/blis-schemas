@@ -177,11 +177,24 @@ type TraceRef struct {
 	// the trace as a whole, as distinct from its per-request rows.
 	Header TraceHeader `yaml:"header"`
 
+	// TokenBlocks is the optional sidecar of per-request token block hashes, which lets a
+	// replay reproduce the prefix-cache hits of a materialized request stream rather than
+	// approximate them from prefix groups.
+	TokenBlocks *TokenBlocks `yaml:"token_blocks,omitempty"`
+
 	// Category, Thinking and Acceptance state the trace's acceptance terms, as a Shape's
 	// do. A trace whose server log recorded its acceptance carries it here.
 	Category   string              `yaml:"category,omitempty"`
 	Thinking   acceptance.Thinking `yaml:"thinking,omitempty"`
 	Acceptance *acceptance.Value   `yaml:"acceptance,omitempty"`
+}
+
+// TokenBlocks references a trace's block-hash sidecar by path and digest. The digest is
+// required: a sidecar that changed under its reference would silently move every
+// prefix-cache hit.
+type TokenBlocks struct {
+	Path   string `yaml:"path"`
+	SHA256 string `yaml:"sha256"`
 }
 
 // TraceHeader is the metadata a TraceV2 carries alongside its data CSV: what produced the

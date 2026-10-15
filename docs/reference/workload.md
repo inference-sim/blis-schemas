@@ -43,9 +43,19 @@ and row count, and the small header that says how to read the file.
 | `sha256` | string | no | Hex digest of the data file, 64 characters. |
 | `rows` | integer | no | Expected number of rows in the data file. Not negative. |
 | `header` | mapping | yes | The trace header, below. |
+| `token_blocks` | mapping | no | The per-request block-hash sidecar, below. Lets a replay reproduce prefix-cache hits exactly rather than approximate them from prefix groups. |
 | `category` | string | no | The workload category that selects an [acceptance profile](acceptance.md), such as `coding`. |
 | `thinking` | string | no | Whether the model reasons: `on` or `off`. Selects the profile with `category`. |
 | `acceptance` | mapping | no | The trace's own measured acceptance, an [inline value](acceptance.md#inline-values). Outranks the registry's. |
+
+### `token_blocks`
+
+<!-- fields: workload.TokenBlocks -->
+
+| Key | Type | Required | Meaning |
+|---|---|---|---|
+| `path` | string | yes | Path to the block-hash sidecar. |
+| `sha256` | string | yes | Its digest, 64 lowercase hex characters. |
 
 ### `header`
 

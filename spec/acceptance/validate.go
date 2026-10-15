@@ -101,6 +101,10 @@ func (pr Profile) validateEvidence(p *validate.Problems, at string) {
 		p.Field(at+".method",
 			"not_charged declares a deliberate zero cost; an acceptance length is not a cost")
 		return
+	case pr.Method == vocab.MethodCalibrated:
+		p.Field(at+".method",
+			"calibrated is a coefficient back-solved through the cost model; an acceptance length is read from a run, not fitted through one")
+		return
 	}
 	if pr.Method != vocab.MethodMeasured && pr.Rationale == "" {
 		p.Field(at+".rationale", "method %q requires a rationale", pr.Method)

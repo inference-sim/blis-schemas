@@ -42,7 +42,7 @@ func TestCUDAGraphCaptureSizes(t *testing.T) {
 		{"unstated is the release default", deployment.Engine{MaxNumBatchedTokens: 8192}, false, rules.CUDAGraphCapture{}, nil},
 		{"mode NONE captures nothing", deployment.Engine{CUDAGraphMode: "NONE", MaxCUDAGraphCaptureSize: ip(64)}, true,
 			rules.CUDAGraphCapture{Sizes: []int{}}, nil},
-		{"curvebender's 64", deployment.Engine{MaxNumBatchedTokens: 8192, MaxCUDAGraphCaptureSize: ip(64)}, true,
+		{"an internal deployment's 64", deployment.Engine{MaxNumBatchedTokens: 8192, MaxCUDAGraphCaptureSize: ip(64)}, true,
 			rules.CUDAGraphCapture{Sizes: stride(64), Max: 64}, nil},
 		{"above 256 on the 16 stride", deployment.Engine{MaxNumBatchedTokens: 8192, MaxCUDAGraphCaptureSize: ip(512)}, true,
 			rules.CUDAGraphCapture{Sizes: stride(512), Max: 512}, nil},

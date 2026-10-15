@@ -64,6 +64,12 @@ func (t *TraceRef) Validate() *validate.Problems {
 	if t.Rows < 0 {
 		p.Field("rows", "must not be negative")
 	}
+	if b := t.TokenBlocks; b != nil {
+		if b.Path == "" {
+			p.Field("token_blocks.path", "required: the path to the block-hash sidecar")
+		}
+		p.SHA256Field("token_blocks.sha256", b.SHA256)
+	}
 	p.Merge("header", t.Header.Validate())
 	acceptance.ValidateWorkloadTerms(p, t.Category, t.Thinking, t.Acceptance)
 	return p

@@ -41,10 +41,14 @@ through different channels.
 | `LoadWorkload` | `workloads/<name>.yaml` | the file name |
 | `LoadCoefficientSet` | a coefficient set | its `name` key (a scenario refers to it by file name) |
 | `LoadEvaluationRun` | an evaluation run | its `name` key |
+| `LoadMeasuredRun` | `measurements/<license_ref>/<name>.yaml` | its `name` key |
+| `LoadMeasurementSources` | `measurements/sources.yaml` | each source's `id` |
 
 Each decodes one YAML document and rejects keys its type does not declare. The loaders do
 not compare a `name` key with the directory or file it sits in; `validate-catalog` does that
-for model entries.
+for model entries and measured runs. A measured run is validated with
+`ValidateWithSources(registry)`, which also computes its verdict; it is not part of a
+bundle.
 
 ### The bundle
 

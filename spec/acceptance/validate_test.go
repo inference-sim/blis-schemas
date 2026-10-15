@@ -109,6 +109,9 @@ func TestProfileSetRejects(t *testing.T) {
 		{"not_charged", "profiles[0].method", func(s *ProfileSet) {
 			s.Profiles[0].Method = vocab.MethodNotCharged
 		}},
+		{"calibrated", "profiles[0].method", func(s *ProfileSet) {
+			s.Profiles[0].Method = vocab.MethodCalibrated
+		}},
 		{"copied without copied_from", "profiles[2].copied_from", func(s *ProfileSet) {
 			s.Profiles[2].CopiedFrom = ""
 		}},

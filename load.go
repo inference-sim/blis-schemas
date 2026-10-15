@@ -16,6 +16,7 @@ import (
 	"github.com/inference-sim/blis-schemas/spec/deployment"
 	"github.com/inference-sim/blis-schemas/spec/evaluation"
 	"github.com/inference-sim/blis-schemas/spec/hardware"
+	"github.com/inference-sim/blis-schemas/spec/measurement"
 	"github.com/inference-sim/blis-schemas/spec/model"
 	"github.com/inference-sim/blis-schemas/spec/scenario"
 	"github.com/inference-sim/blis-schemas/spec/workload"
@@ -204,6 +205,26 @@ func topLevelKey(doc *yaml.Node, key string) bool {
 // LoadEvaluationRun reads a measured run.
 func LoadEvaluationRun(path string) (*evaluation.Run, error) {
 	var r evaluation.Run
+	if err := decodeStrict(path, &r); err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+// LoadMeasuredRun reads a measured run from blis-catalog's measurements/<source>/. It
+// does not validate; call ValidateWithSources with the registry beside it.
+func LoadMeasuredRun(path string) (*measurement.MeasuredRun, error) {
+	var r measurement.MeasuredRun
+	if err := decodeStrict(path, &r); err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+// LoadMeasurementSources reads the licence registry, blis-catalog's
+// measurements/sources.yaml.
+func LoadMeasurementSources(path string) (*measurement.Registry, error) {
+	var r measurement.Registry
 	if err := decodeStrict(path, &r); err != nil {
 		return nil, err
 	}

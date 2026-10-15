@@ -2,6 +2,7 @@ package validate
 
 import (
 	"math"
+	"strings"
 	"testing"
 )
 
@@ -114,4 +115,20 @@ func contains(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+func TestIsSHA256(t *testing.T) {
+	good := strings.Repeat("0123456789abcdef", 4)
+	if !IsSHA256(good) {
+		t.Errorf("%s should be a digest", good)
+	}
+	for _, bad := range []string{"", good[:63], good + "0", strings.ToUpper(good), good[:63] + "g"} {
+		if IsSHA256(bad) {
+			t.Errorf("%q should not be a digest", bad)
+		}
+		p := &Problems{}
+		if p.SHA256Field("f", bad) || p.OK() {
+			t.Errorf("SHA256Field(%q) should record a problem", bad)
+		}
+	}
 }

@@ -21,7 +21,9 @@ import (
 	"github.com/inference-sim/blis-schemas/spec/deployment"
 	"github.com/inference-sim/blis-schemas/spec/evaluation"
 	"github.com/inference-sim/blis-schemas/spec/hardware"
+	"github.com/inference-sim/blis-schemas/spec/measurement"
 	"github.com/inference-sim/blis-schemas/spec/model"
+	"github.com/inference-sim/blis-schemas/spec/router"
 	"github.com/inference-sim/blis-schemas/spec/scenario"
 	"github.com/inference-sim/blis-schemas/spec/workload"
 )
@@ -108,6 +110,16 @@ func TestDocExamplesValidate(t *testing.T) {
 			Evaluation: fixture(LoadEvaluationRun(ex("evaluation-run.yaml"))),
 		}))
 	})
+	t.Run("measured run and its licence registry", func(t *testing.T) {
+		reg := fixture(LoadMeasurementSources(ex("measurement-sources.yaml")))
+		for _, p := range reg.Validate().All() {
+			t.Errorf("measurement-sources.yaml: %s", p)
+		}
+		run := fixture(LoadMeasuredRun(ex("measured-run.yaml")))
+		for _, p := range run.ValidateWithSources(reg).All() {
+			t.Errorf("measured-run.yaml: %s", p)
+		}
+	})
 	t.Run("model graph", func(t *testing.T) {
 		requireSilent(t, "model graph", Validate(Bundle{
 			Model: fixture(LoadModelGraph(ex("model-graph-deepseek-v4.1.yaml"))),
@@ -127,6 +139,7 @@ func TestDocExamplesValidate(t *testing.T) {
 		"model-graph-deepseek-v4.1.yaml": true,
 		"acceptance-profile-set.yaml":    true, "scenario-acceptance.yaml": true,
 		"replay-binding.yaml": true, "workload-replay.yaml": true, "replay-reference.yaml": true,
+		"measured-run.yaml": true, "measurement-sources.yaml": true,
 	}
 	all, err := filepath.Glob(ex("*"))
 	if err != nil {
@@ -172,6 +185,7 @@ var documented = map[string]struct {
 	"workload.TrajectoryStart":  {typ: reflect.TypeOf(workload.TrajectoryStart{})},
 	"workload.Warmup":           {typ: reflect.TypeOf(workload.Warmup{})},
 	"workload.TraceHeader":      {typ: reflect.TypeOf(workload.TraceHeader{})},
+	"workload.TokenBlocks":      {typ: reflect.TypeOf(workload.TokenBlocks{})},
 	"workload.TraceServer":      {typ: reflect.TypeOf(workload.TraceServer{})},
 	"workload.SLODimTargets":    {typ: reflect.TypeOf(workload.SLODimTargets{})},
 	"workload.Shape":            {typ: reflect.TypeOf(workload.Shape{})},
@@ -217,6 +231,29 @@ var documented = map[string]struct {
 	"acceptance.Sampling":       {typ: reflect.TypeOf(acceptance.Sampling{})},
 	"acceptance.Value":          {typ: reflect.TypeOf(acceptance.Value{})},
 	"acceptance.Pin":            {typ: reflect.TypeOf(acceptance.Pin{})},
+	"measurement.MeasuredRun":   {typ: reflect.TypeOf(measurement.MeasuredRun{})},
+	"measurement.Source":        {typ: reflect.TypeOf(measurement.Source{})},
+	"measurement.Adapter":       {typ: reflect.TypeOf(measurement.Adapter{})},
+	"measurement.Input":         {typ: reflect.TypeOf(measurement.Input{})},
+	"measurement.Extraction":    {typ: reflect.TypeOf(measurement.Extraction{})},
+	"measurement.ClientSpec":    {typ: reflect.TypeOf(measurement.ClientSpec{})},
+	"measurement.RampUp":        {typ: reflect.TypeOf(measurement.RampUp{})},
+	"measurement.Tokenizer":     {typ: reflect.TypeOf(measurement.Tokenizer{})},
+	"measurement.MetricDef":     {typ: reflect.TypeOf(measurement.MetricDef{})},
+	"measurement.Point":         {typ: reflect.TypeOf(measurement.Point{})},
+	"measurement.Load":          {typ: reflect.TypeOf(measurement.Load{})},
+	"measurement.Value":         {typ: reflect.TypeOf(measurement.Value{})},
+	"measurement.Realized":      {typ: reflect.TypeOf(measurement.Realized{})},
+	"measurement.Noise":         {typ: reflect.TypeOf(measurement.Noise{})},
+	"measurement.ProvenanceRow": {typ: reflect.TypeOf(measurement.ProvenanceRow{})},
+	"measurement.Observed":      {typ: reflect.TypeOf(measurement.Observed{})},
+	"measurement.DiffEntry":     {typ: reflect.TypeOf(measurement.DiffEntry{})},
+	"measurement.Registry":      {typ: reflect.TypeOf(measurement.Registry{})},
+	"measurement.License":       {typ: reflect.TypeOf(measurement.License{})},
+	"measurement.Evidence":      {typ: reflect.TypeOf(measurement.Evidence{})},
+	"router.Router":             {typ: reflect.TypeOf(router.Router{})},
+	"router.EPP":                {typ: reflect.TypeOf(router.EPP{})},
+	"router.ConfigRef":          {typ: reflect.TypeOf(router.ConfigRef{})},
 }
 
 var (
@@ -341,6 +378,7 @@ func TestDocEveryDocumentTypeHasATable(t *testing.T) {
 		reflect.TypeOf(hardware.StorageDevice{}), reflect.TypeOf(coefficient.Set{}),
 		reflect.TypeOf(acceptance.ProfileSet{}),
 		reflect.TypeOf(workload.Shape{}), reflect.TypeOf(evaluation.Run{}),
+		reflect.TypeOf(measurement.MeasuredRun{}), reflect.TypeOf(measurement.Registry{}),
 	}
 	// Types whose wire form is not a mapping, so they have no key table.
 	notMappings := map[reflect.Type]bool{reflect.TypeOf(coefficient.Interval{}): true}
