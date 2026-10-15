@@ -171,7 +171,7 @@ A scenario cannot bind a replay workload as `shape:`; `ValidateAgainstCatalog` s
 
 | Key | Type | Required | Meaning |
 |---|---|---|---|
-| `loader` | string | yes | The harness loader or public-dataset alias, such as `semianalysis_cc_traces_weka_062126_256k`. One the scenario accepts; `weka_trace`, a local directory, cannot pin the corpus and is refused, and `weka_hf` may only read `semianalysisai/cc-traces-weka-062126`. |
+| `loader` | string | yes | The harness loader or public-dataset alias, such as `semianalysis_cc_traces_weka_062126_256k`. One the scenario accepts. Each alias reads the repository aiperf's `plugins.yaml` fixes for it, and `source.huggingface` must name that one. The two rolling aliases, `semianalysis_cc_traces_weka_with_subagents` and its `_256k` variant, track whatever corpus is current and draw a warning. `weka_trace`, a local directory, cannot pin the corpus and is refused, and `weka_hf` may only read `semianalysisai/cc-traces-weka-062126`. |
 | `format` | string | yes | One of the [corpus formats](vocabularies.md#corpus-formats). |
 | `encoding` | string | yes | One of the [corpus encodings](vocabularies.md#corpus-encodings). |
 | `source` | mapping | yes | Where it is published, below. |
@@ -272,7 +272,7 @@ A replay is invalid if
 - `streaming` or `ignore_eos` is false, `ignore_trace_delays` true, or any of
   `synthesis_max_isl`, `trace_idle_gap_cap_s` and `inter_turn_delay_cap_s` is set;
 - the corpus loader is empty or not one the scenario accepts, is `weka_trace`, or is
-  `weka_hf` on another repository; `format` or `encoding` is unknown; the repository is not
+  `weka_hf` on another repository, or an alias on a repository other than its own; `format` or `encoding` is unknown; the repository is not
   `owner/name`; `revision` is empty; or `sha256` is not 64 hex digits;
 - its acceptance terms are invalid, as for a trace.
 

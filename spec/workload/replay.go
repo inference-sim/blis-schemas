@@ -3,6 +3,7 @@ package workload
 import (
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -259,25 +260,39 @@ var harnessVersions = map[ReplayScenario]map[string]bool{
 	ScenarioInferenceXAgentXMVP: {"0.12.0": true},
 }
 
-// AgentXLoaders are the loaders inferencex-agentx-mvp accepts (mvp.py:14-31). weka_trace,
-// a local directory, is among them but refused below, since it cannot pin the corpus.
-var AgentXLoaders = map[string]bool{
-	"semianalysis_cc_traces_weka_with_subagents":             true,
-	"semianalysis_cc_traces_weka_with_subagents_256k":        true,
-	"semianalysis_cc_traces_weka_with_subagents_060226":      true,
-	"semianalysis_cc_traces_weka_with_subagents_060226_256k": true,
-	"semianalysis_cc_traces_weka_with_subagents_060526":      true,
-	"semianalysis_cc_traces_weka_with_subagents_060526_256k": true,
-	"semianalysis_cc_traces_weka_with_subagents_060826":      true,
-	"semianalysis_cc_traces_weka_with_subagents_060826_256k": true,
-	"semianalysis_cc_traces_weka_061326":                     true,
-	"semianalysis_cc_traces_weka_061326_256k":                true,
-	"semianalysis_cc_traces_weka_061526":                     true,
-	"semianalysis_cc_traces_weka_061526_256k":                true,
-	"semianalysis_cc_traces_weka_062126":                     true,
-	"semianalysis_cc_traces_weka_062126_256k":                true,
-	"weka_trace": true,
-	"weka_hf":    true,
+// AgentXLoaders are the loaders inferencex-agentx-mvp accepts (mvp.py:14-31), each with
+// the Hugging Face repository it reads. A public-dataset alias fixes its own repository
+// (aiperf plugin/plugins.yaml, metadata.hf_dataset_name), so a corpus naming an alias and
+// another repository describes a run that cannot have happened. weka_hf reads the one
+// repository the scenario allows (validator.py:56, 485-500), and weka_trace, a local
+// directory, reads none and is refused, since it cannot pin the corpus (validator.py:
+// 466-483).
+var AgentXLoaders = map[string]string{
+	"semianalysis_cc_traces_weka_with_subagents":             "semianalysisai/cc-traces-weka-062126",
+	"semianalysis_cc_traces_weka_with_subagents_256k":        "semianalysisai/cc-traces-weka-062126-256k",
+	"semianalysis_cc_traces_weka_with_subagents_060226":      "semianalysisai/cc-traces-weka-with-subagents-060226",
+	"semianalysis_cc_traces_weka_with_subagents_060226_256k": "semianalysisai/cc-traces-weka-with-subagents-060226-256k",
+	"semianalysis_cc_traces_weka_with_subagents_060526":      "semianalysisai/cc-traces-weka-with-subagents-060526",
+	"semianalysis_cc_traces_weka_with_subagents_060526_256k": "semianalysisai/cc-traces-weka-with-subagents-060526-256k",
+	"semianalysis_cc_traces_weka_with_subagents_060826":      "semianalysisai/cc-traces-weka-with-subagents-060826",
+	"semianalysis_cc_traces_weka_with_subagents_060826_256k": "semianalysisai/cc-traces-weka-with-subagents-060826-256k",
+	"semianalysis_cc_traces_weka_061326":                     "semianalysisai/cc-traces-weka-061326",
+	"semianalysis_cc_traces_weka_061326_256k":                "semianalysisai/cc-traces-weka-061326-256k",
+	"semianalysis_cc_traces_weka_061526":                     "semianalysisai/cc-traces-weka-061526",
+	"semianalysis_cc_traces_weka_061526_256k":                "semianalysisai/cc-traces-weka-061526-256k",
+	"semianalysis_cc_traces_weka_062126":                     "semianalysisai/cc-traces-weka-062126",
+	"semianalysis_cc_traces_weka_062126_256k":                "semianalysisai/cc-traces-weka-062126-256k",
+	loaderWekaHF:    agentXWekaHFRepo,
+	loaderWekaTrace: "",
+}
+
+// AgentXRollingLoaders are the aliases plugins.yaml describes as a "generic rolling alias
+// that tracks the current default" corpus: the repository they read today is not the one
+// they will read after the default moves, so a run named by one is dated only by its
+// revision and digest.
+var AgentXRollingLoaders = map[string]bool{
+	"semianalysis_cc_traces_weka_with_subagents":      true,
+	"semianalysis_cc_traces_weka_with_subagents_256k": true,
 }
 
 const (
@@ -598,17 +613,26 @@ func (r *ReplayDefinition) validateInto(p *validate.Problems) {
 // a known format and encoding, and a source pinned to a revision.
 func (c *Corpus) Validate() *validate.Problems {
 	p := &validate.Problems{}
+	repo, accepted := AgentXLoaders[c.Loader]
 	switch {
 	case c.Loader == "":
 		p.Field("loader", "required: the harness loader or public-dataset alias")
-	case !AgentXLoaders[c.Loader]:
+	case !accepted:
 		p.Field("loader", "%q is not a loader the scenario accepts (mvp.py:14-31): %v",
-			c.Loader, enumerate(AgentXLoaders))
+			c.Loader, loaderNames())
 	case c.Loader == loaderWekaTrace:
 		p.Field("loader", "a local weka_trace directory cannot pin the corpus; use a public-dataset alias or weka_hf (validator.py:466-483)")
-	case c.Loader == loaderWekaHF && c.Source.HuggingFace != agentXWekaHFRepo:
+	case c.Loader == loaderWekaHF && c.Source.HuggingFace != repo:
 		p.Field("source.huggingface", "weka_hf may only read %s, got %q (validator.py:485-500)",
-			agentXWekaHFRepo, c.Source.HuggingFace)
+			repo, c.Source.HuggingFace)
+	case c.Source.HuggingFace != "" && c.Source.HuggingFace != repo:
+		p.Field("source.huggingface", "loader %s reads %s (aiperf plugin/plugins.yaml), not %q",
+			c.Loader, repo, c.Source.HuggingFace)
+	}
+	if AgentXRollingLoaders[c.Loader] {
+		w := &validate.Problems{}
+		w.Warnf("%s is a generic rolling alias that tracks the current default corpus; name the dated alias so the run stays reproducible", c.Loader)
+		p.Merge("loader", w)
 	}
 	switch {
 	case c.Format == "":
@@ -667,4 +691,13 @@ func (w *CatalogWorkload) Validate() *validate.Problems {
 	p := &validate.Problems{}
 	p.Errorf("a catalog workload states neither a shape nor a replay")
 	return p
+}
+
+func loaderNames() []string {
+	out := make([]string, 0, len(AgentXLoaders))
+	for k := range AgentXLoaders {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }

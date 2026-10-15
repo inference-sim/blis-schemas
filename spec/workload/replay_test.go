@@ -100,6 +100,9 @@ func TestReplayRefuses(t *testing.T) {
 		{"loader the scenario refuses", "corpus.loader", func(r *Replay) { r.Corpus.Loader = "sharegpt" }},
 		{"unpinned local corpus", "corpus.loader", func(r *Replay) { r.Corpus.Loader = "weka_trace" }},
 		{"weka_hf on another repository", "corpus.source.huggingface", func(r *Replay) { r.Corpus.Loader = "weka_hf" }},
+		{"alias on another repository", "corpus.source.huggingface", func(r *Replay) {
+			r.Corpus.Source.HuggingFace = "semianalysisai/cc-traces-weka-062126"
+		}},
 		{"unknown format", "corpus.format", func(r *Replay) { r.Corpus.Format = "weka-trace-v6" }},
 		{"unknown encoding", "corpus.encoding", func(r *Replay) { r.Corpus.Encoding = "parquet" }},
 		{"no repository", "corpus.source.huggingface", func(r *Replay) { r.Corpus.Source.HuggingFace = "" }},
@@ -244,4 +247,20 @@ func TestCatalogWorkloadForms(t *testing.T) {
 	if (&CatalogWorkload{}).Validate().OK() || (&CatalogWorkload{Shape: chatbot(), Replay: replay.Replay}).Validate().OK() {
 		t.Error("an entry with neither or both forms validated")
 	}
+}
+
+// A rolling alias validates, with a warning that it tracks whatever the default is.
+func TestReplayRollingAliasWarns(t *testing.T) {
+	r := agentX()
+	r.Corpus.Loader = "semianalysis_cc_traces_weka_with_subagents_256k"
+	p := r.Validate()
+	if !p.OK() {
+		t.Fatalf("a rolling alias on its repository was rejected:\n%s", p.Error())
+	}
+	for _, it := range p.All() {
+		if it.Path == "corpus.loader" && it.Severity == "warning" && strings.Contains(it.Message, "rolling alias") {
+			return
+		}
+	}
+	t.Errorf("no rolling-alias warning:\n%s", p.Error())
 }
