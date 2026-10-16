@@ -32,7 +32,7 @@ makes a layout feasible depends on the cluster.</p>
 | `nodes` | integer | yes | Nodes in the pool, at least 1. |
 | `parallel` | mapping | yes | The parallel layout of each engine in the pool. |
 | `engine` | mapping | no | Engine settings for the pool. Each omitted setting takes the engine's default. |
-| `labels` | mapping | no | Kubernetes labels on the pool's model-server pods, as its pod template sets them. The router selects and filters endpoints by them. |
+| `labels` | mapping | no | Kubernetes labels on the pool's model-server pods, as its pod template sets them. The router selects and filters endpoints by them. `llm-d.ai/role` is derived from `role` (`colocated` -> `prefill-decode`, `prefill` -> `prefill`, `decode` -> `decode`); given here, it must have that value. |
 
 A pool may run several engines with the same layout and settings. Its `nodes` is the
 pool's whole extent; one engine may occupy only part of it.
@@ -212,7 +212,7 @@ registry coefficient, so it cannot be set here.
 | Key | Type | Required | Meaning |
 |---|---|---|---|
 | `epp_flags` | list | no | The router's (EPP's) command-line flags, verbatim, one list entry per flag (`--name=value`). They select the pool with `--pool-name` or `--endpoint-selector`. A Helm chart's `epp.flags` map is rendered to this list (`name: value` becomes `--name=value`). |
-| `endpoint_picker_config` | string | no | The `EndpointPickerConfig` file, as the router reads it with `--config-file`. Naming the configuration here and in `epp_flags` is an error. |
+| `endpoint_picker_config` | string | no | The `EndpointPickerConfig` file, as the router reads it with `--config-file`; a blank path is an error. Naming the configuration here and in `epp_flags` is an error. |
 | `manifests` | list | no | Kubernetes manifest files. The router reads their `InferencePool`, `InferenceObjective` and `InferenceModelRewrite` objects; other kinds are ignored. Objectives and rewrites take effect only for an `InferencePool` (`--pool-name`); with a standalone pool (`--endpoint-selector`) the router does not reconcile them, so a consumer may refuse them there. |
 
 Paths are relative to the directory of the file that holds the deployment. The block names

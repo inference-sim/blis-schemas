@@ -41,6 +41,10 @@ func (d *Deployment) Validate() *validate.Problems {
 // paths, flags are flags, and the configuration is named once.
 func (d *Deployment) validateRouter(p *validate.Problems) {
 	for i, pool := range d.Pools {
+		if v, ok := pool.Labels[RoleLabel]; ok && pool.Role.Valid() && v != pool.Role.RoleLabelValue() {
+			p.Field(fmt.Sprintf("pools[%d].labels.%s", i, RoleLabel),
+				"%q contradicts the pool's role %q, which sets it to %q", v, pool.Role, pool.Role.RoleLabelValue())
+		}
 		for k, v := range pool.Labels {
 			if !validLabelKey(k) {
 				p.Field(fmt.Sprintf("pools[%d].labels", i), "%q is not a valid Kubernetes label key", k)
@@ -53,6 +57,9 @@ func (d *Deployment) validateRouter(p *validate.Problems) {
 	r := d.Router
 	if r == nil {
 		return
+	}
+	if r.EndpointPickerConfig != "" && strings.TrimSpace(r.EndpointPickerConfig) == "" {
+		p.Field("router.endpoint_picker_config", "must name a file")
 	}
 	for i, f := range r.EPPFlags {
 		if !strings.HasPrefix(f, "-") {

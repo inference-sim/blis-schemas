@@ -31,6 +31,15 @@ func TestRouterInputs(t *testing.T) {
 			d.Router = &Router{EPPFlags: []string{"--config-file-format=yaml"}, EndpointPickerConfig: "b.yaml"}
 		}, ""},
 		{"empty manifest path", func(d *Deployment) { d.Router = &Router{Manifests: []string{" "}} }, "router.manifests[0]"},
+		{"whitespace configuration path", func(d *Deployment) { d.Router = &Router{EndpointPickerConfig: " \t"} }, "router.endpoint_picker_config"},
+		{"role label contradicts the role", func(d *Deployment) {
+			d.Pools[0].Labels = map[string]string{"llm-d.ai/role": "decode"} // pools[0] is the prefill pool
+		}, "pools[0].labels.llm-d.ai/role"},
+		{"role label of a colocated pool", func(d *Deployment) {
+			d.Pools = d.Pools[:1]
+			d.Pools[0].Role = RoleColocated
+			d.Pools[0].Labels = map[string]string{"llm-d.ai/role": "prefill"}
+		}, "pools[0].labels.llm-d.ai/role"},
 		{"bad label key", func(d *Deployment) { d.Pools[1].Labels = map[string]string{"-bad": "x"} }, "pools[1].labels"},
 		{"bad label value", func(d *Deployment) { d.Pools[1].Labels = map[string]string{"app": "has space"} }, "pools[1].labels.app"},
 	}
@@ -53,6 +62,14 @@ func TestRouterInputs(t *testing.T) {
 				t.Fatalf("want a problem at %q, got %q", tc.wantErr, problems)
 			}
 		})
+	}
+}
+
+func TestRoleLabelValue(t *testing.T) {
+	for r, want := range map[Role]string{RoleColocated: "prefill-decode", RolePrefill: "prefill", RoleDecode: "decode"} {
+		if got := r.RoleLabelValue(); got != want {
+			t.Errorf("%s: llm-d.ai/role %q, want %q", r, got, want)
+		}
 	}
 }
 

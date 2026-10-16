@@ -84,6 +84,19 @@ var roles = map[Role]bool{RoleColocated: true, RolePrefill: true, RoleDecode: tr
 // Valid reports whether r is a recognized role.
 func (r Role) Valid() bool { return roles[r] }
 
+// RoleLabel is llm-d's pod label for an engine's disaggregation role. It is derived from the
+// pool's Role (RoleLabelValue); a pool's labels may repeat it only with that value.
+const RoleLabel = "llm-d.ai/role"
+
+// RoleLabelValue is the llm-d.ai/role value of a pool of role r: prefill-decode for a colocated
+// pool (it serves both phases), else the role itself.
+func (r Role) RoleLabelValue() string {
+	if r == RoleColocated {
+		return "prefill-decode"
+	}
+	return string(r)
+}
+
 // Pool is the nodes serving one role: a role, a node count, a parallelism layout, and
 // settings. It may hold more than one engine, each running that layout with those
 // settings — llm-d runs a LeaderWorkerSet of `replicas` groups, each group one engine
@@ -96,7 +109,8 @@ type Pool struct {
 	Engine   Engine      `yaml:"engine"`
 	// Labels are the Kubernetes labels on the pool's model-server pods, as the pool's pod
 	// template sets them. The router selects and filters endpoints by them (an InferencePool
-	// selector, the llm-d.ai/role label of a disaggregated deployment).
+	// selector, the llm-d.ai/role label of a disaggregated deployment). llm-d.ai/role is derived
+	// from Role (RoleLabelValue); given here, it must have that value.
 	Labels map[string]string `yaml:"labels,omitempty"`
 }
 
