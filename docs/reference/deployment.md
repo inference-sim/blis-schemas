@@ -218,7 +218,9 @@ registry coefficient, so it cannot be set here.
 Paths are relative to the directory of the file that holds the deployment. The block names
 the router's own inputs and nothing else: scorers, weights, admission and flow control are
 configured in those files, exactly as for a real deployment, so the same files configure the
-real router and a simulated one. There is no deployment key for a routing decision.
+real router and a simulated one. There is no deployment key for a routing decision. The router here is the Endpoint Picker. The
+multimodal Coordinator pipeline is a separate llm-d component and is not named by this block; a
+simulator that cannot host it refuses it at startup.
 
 These checks are syntactic. A deployment that passes them is well formed, not necessarily
 routable by a given consumer: a simulator refuses, at its startup and with the reason, router
