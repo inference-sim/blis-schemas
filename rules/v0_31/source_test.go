@@ -1007,3 +1007,17 @@ func TestFrontendMatchSource(t *testing.T) {
 		t.Error("serve.py no longer launches the Rust frontend only when VLLM_USE_RUST_FRONTEND is set")
 	}
 }
+
+// swa_bounded_replay defaults to true and is the --swa-bounded-replay flag: what
+// deployment.Engine.SWABoundedReplay's unstated (engine-resolved) value and name transcribe.
+func TestSWABoundedReplayMatchSource(t *testing.T) {
+	root := vllmSource(t)
+	cache := readSource(t, root, "vllm", "config", "cache.py")
+	if !strings.Contains(cache, "swa_bounded_replay: bool = True") {
+		t.Error("cache.py changed: swa_bounded_replay no longer defaults to True")
+	}
+	args := readSource(t, root, "vllm", "engine", "arg_utils.py")
+	if !strings.Contains(args, `"--swa-bounded-replay", **cache_kwargs["swa_bounded_replay"]`) {
+		t.Error("arg_utils.py no longer exposes swa_bounded_replay as --swa-bounded-replay")
+	}
+}

@@ -106,6 +106,7 @@ Weights and caches:
 | `moe_backend` | string | no | The expert-kernel backend, `--moe-backend`. Omitted means `auto`. A mega-MoE backend is one of the conditions under which DeepSeek-V4.1 turns on its own sequence parallelism. |
 | `cache_dtype` | string | no | KV cache format. |
 | `enable_prefix_caching` | boolean | no | Omitted means true, vLLM's default. `false` describes a deployment without prefix caching. |
+| `swa_bounded_replay` | boolean | no | DeepSeek-V4.1 SWA bounded replay (`--swa-bounded-replay` / `--no-swa-bounded-replay`). `true` keeps the sliding-window cache out of prefix caching and recomputes a hit's last sliding window; `false` lets the window cache take part in prefix caching (retained window tails). Omitted, the engine's resolution: on in vLLM 0.31.0 under the V2 model runner, without prefill context parallelism and not on ROCm. Only DeepSeek-V4.1 reads it. |
 | `mamba_cache_dtype` | string | no | Format of a recurrent layer's state. |
 | `mamba_ssm_cache_dtype` | string | no | Format of the SSM state alone, where it differs. |
 | `mamba_cache_mode` | string | no | Whether recurrent state is fixed per sequence or grows with context. |

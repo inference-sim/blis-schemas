@@ -202,6 +202,17 @@ type Engine struct {
 	// --no-enable-prefix-caching).
 	EnablePrefixCaching *bool `yaml:"enable_prefix_caching,omitempty"`
 
+	// SWABoundedReplay is CacheConfig.swa_bounded_replay, DeepSeek-V4.1's sliding-window
+	// bounded replay (--swa-bounded-replay / --no-swa-bounded-replay). True keeps the
+	// sliding-window cache out of prefix caching and recomputes a hit's last sliding window;
+	// false lets the window cache take part in prefix caching (retained window tails).
+	//
+	// Tri-state: nil is the engine's resolution. vLLM v0.31.0 defaults it to true
+	// (vllm/config/cache.py:242) and keeps it only under the V2 model runner, without
+	// prefill context parallelism and not on ROCm (models/deepseek_v41/attention.py:519-546).
+	// Only DeepSeek-V4.1 reads it.
+	SWABoundedReplay *bool `yaml:"swa_bounded_replay,omitempty"`
+
 	BlockSize           int `yaml:"block_size,omitempty"`
 	MaxNumBatchedTokens int `yaml:"max_num_batched_tokens,omitempty"`
 	MaxNumSeqs          int `yaml:"max_num_seqs,omitempty"`
