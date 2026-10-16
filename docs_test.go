@@ -202,6 +202,7 @@ var documented = map[string]struct {
 	"deployment.Offload":        {typ: reflect.TypeOf(deployment.Offload{})},
 	"deployment.Tier":           {typ: reflect.TypeOf(deployment.Tier{})},
 	"deployment.PDTransfer":     {typ: reflect.TypeOf(deployment.PDTransfer{})},
+	"deployment.Router":         {typ: reflect.TypeOf(deployment.Router{})},
 	"model.Graph":               {typ: reflect.TypeOf(model.Graph{})},
 	"model.Derivation":          {typ: reflect.TypeOf(model.Derivation{})},
 	"model.GlobalShape":         {typ: reflect.TypeOf(model.GlobalShape{})},
