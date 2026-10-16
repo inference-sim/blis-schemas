@@ -20,6 +20,7 @@ makes a layout feasible depends on the cluster.</p>
 | `pools` | list | yes | At least one pool, below. |
 | `offload` | mapping | no | KV offload tiers below HBM. |
 | `pd_transfer` | mapping | if any pool is `prefill` | How KV moves from prefill to decode. |
+| `router` | mapping | no | The inputs of the llm-d router that routes the deployment's requests. Absent: the router's built-in configuration over every pod. |
 
 ## Pools
 
@@ -31,6 +32,7 @@ makes a layout feasible depends on the cluster.</p>
 | `nodes` | integer | yes | Nodes in the pool, at least 1. |
 | `parallel` | mapping | yes | The parallel layout of each engine in the pool. |
 | `engine` | mapping | no | Engine settings for the pool. Each omitted setting takes the engine's default. |
+| `labels` | mapping | no | Kubernetes labels on the pool's model-server pods, as its pod template sets them. The router selects and filters endpoints by them. `llm-d.ai/role` is derived from `role` (`colocated` -> `prefill-decode`, `prefill` -> `prefill`, `decode` -> `decode`); given here, it must have that value. |
 
 A pool may run several engines with the same layout and settings. Its `nodes` is the
 pool's whole extent; one engine may occupy only part of it.
@@ -201,6 +203,32 @@ lookups.
 
 There is no bandwidth key. Transfer bandwidth comes from the scenario's fabric and a
 registry coefficient, so it cannot be set here.
+
+
+## `router`
+
+<!-- fields: deployment.Router -->
+
+| Key | Type | Required | Meaning |
+|---|---|---|---|
+| `epp_flags` | list | no | The router's (EPP's) command-line flags, verbatim, one list entry per flag (`--name=value`). They select the pool with `--pool-name` or `--endpoint-selector`. A Helm chart's `epp.flags` map is rendered to this list (`name: value` becomes `--name=value`). |
+| `endpoint_picker_config` | string | no | The `EndpointPickerConfig` file, as the router reads it with `--config-file`; a blank path is an error. Naming the configuration here and in `epp_flags` is an error. |
+| `manifests` | list | no | Kubernetes manifest files. The router reads their `InferencePool`, `InferenceObjective` and `InferenceModelRewrite` objects; other kinds are ignored. Objectives and rewrites take effect only for an `InferencePool` (`--pool-name`); with a standalone pool (`--endpoint-selector`) the router does not reconcile them, so a consumer may refuse them there. |
+
+Paths are relative to the directory of the file that holds the deployment. The block names
+the router's own inputs and nothing else: scorers, weights, admission and flow control are
+configured in those files, exactly as for a real deployment, so the same files configure the
+real router and a simulated one. There is no deployment key for a routing decision. The router here is the Endpoint Picker. The
+multimodal Coordinator pipeline is a separate llm-d component and is not named by this block; a
+simulator that cannot host it refuses it at startup.
+
+These checks are syntactic. A deployment that passes them is well formed, not necessarily
+routable by a given consumer: a simulator refuses, at its startup and with the reason, router
+flags, plugins or manifests it cannot run faithfully.
+
+`pools[].labels` are a different kind of input from the three above. In a real deployment the
+labels live in each pool's pod template; a deployment here has no pod spec, so the labels restate
+them, so that an `InferencePool` selector or a label filter has the pods' labels to match.
 
 ## Checks
 
