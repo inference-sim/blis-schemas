@@ -987,3 +987,23 @@ func TestDataParallelLoadBalancingMatchSource(t *testing.T) {
 		t.Error("serve.py no longer defaults api_server_count per mode")
 	}
 }
+
+// The frontend is chosen by VLLM_USE_RUST_FRONTEND, off by default, and serve launches
+// the Rust binary only when it is set: what deployment.Engine.Frontend's python default
+// and rust value transcribe.
+func TestFrontendMatchSource(t *testing.T) {
+	root := vllmSource(t)
+	env := readSource(t, root, "vllm", "envs.py")
+	for _, want := range []string{
+		"VLLM_USE_RUST_FRONTEND: bool = False",
+		`int(os.getenv("VLLM_USE_RUST_FRONTEND", "0"))`,
+	} {
+		if !strings.Contains(env, want) {
+			t.Errorf("envs.py changed: %q is gone", want)
+		}
+	}
+	serve := readSource(t, root, "vllm", "entrypoints", "cli", "serve.py")
+	if !strings.Contains(serve, "envs.VLLM_RUST_FRONTEND_PATH if envs.VLLM_USE_RUST_FRONTEND else None") {
+		t.Error("serve.py no longer launches the Rust frontend only when VLLM_USE_RUST_FRONTEND is set")
+	}
+}

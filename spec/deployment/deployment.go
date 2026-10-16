@@ -172,6 +172,10 @@ type Engine struct {
 	// AsyncScheduling is tri-state: nil lets the engine resolve it through its
 	// disqualifying conditions, which is what a real deployment does.
 	AsyncScheduling *bool `yaml:"async_scheduling,omitempty"`
+	// Frontend is the API server that renders and tokenizes each request before the
+	// engine sees it: python, the default, or rust (VLLM_USE_RUST_FRONTEND=1). See
+	// Frontend.
+	Frontend Frontend `yaml:"frontend,omitempty"`
 
 	// DisableCascadeAttn follows the engine default of true: cascade attention is
 	// opt-in. When enabled it changes the attention primitive itself, reading a
@@ -399,6 +403,38 @@ type Tier struct {
 // free parameter.
 type PDTransfer struct {
 	Connector string `yaml:"connector"`
+}
+
+// Frontend is the API server process a pool serves through, which renders the chat
+// template and tokenizes every prompt before the request reaches the engine core. vLLM
+// selects it with an environment variable, not a flag: VLLM_USE_RUST_FRONTEND defaults to
+// 0 (v0.31.0 vllm/envs.py:169, 1441-1443; the same at v0.29.0), and only when it is set
+// does `vllm serve` launch the vllm-rs binary instead of the Python API server
+// (vllm/entrypoints/cli/serve.py:64-66). The two tokenize the same prompt at very
+// different rates -- the Rust frontend loads its tokenizer through fastokens -- so the
+// per-prompt-token admission time a request waits before it is scheduled depends on it.
+//
+//   - python, the default: the Python OpenAI server, which renders and tokenizes with the
+//     HF fast tokenizer before it answers (vllm/entrypoints/openai/chat_completion/
+//     serving.py:285, 378).
+//   - rust: the vllm-rs frontend (rust/src/chat/src/lib.rs:364-368 prepares, then
+//     generates).
+type Frontend string
+
+const (
+	FrontendPython Frontend = "python"
+	FrontendRust   Frontend = "rust"
+)
+
+// Valid reports whether f is a recognized frontend; empty is the default, python.
+func (f Frontend) Valid() bool { return f == "" || f == FrontendPython || f == FrontendRust }
+
+// Effective returns the frontend with its default applied.
+func (f Frontend) Effective() Frontend {
+	if f == "" {
+		return FrontendPython
+	}
+	return f
 }
 
 // DPLoadBalancing is how a data-parallel pool's ranks are exposed to clients, vLLM's

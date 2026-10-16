@@ -543,6 +543,10 @@ func admissibleDCP(pcp int, block *big.Int) []*big.Int {
 }
 
 func validateEngine(p *validate.Problems, at string, e Engine) {
+	if !e.Frontend.Valid() {
+		p.Field(at+".engine.frontend", "%q is not one of %v", e.Frontend,
+			[]Frontend{FrontendPython, FrontendRust})
+	}
 	for field, v := range map[string]int{
 		"block_size": e.BlockSize, "max_num_batched_tokens": e.MaxNumBatchedTokens,
 		"max_num_seqs":                 e.MaxNumSeqs,
