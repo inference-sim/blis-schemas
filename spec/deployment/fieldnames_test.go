@@ -28,6 +28,7 @@ func TestEngineFieldNames(t *testing.T) {
 		"max_cudagraph_capture_size":   "-O/--compilation-config max_cudagraph_capture_size",
 		"cudagraph_capture_sizes":      "-O/--compilation-config cudagraph_capture_sizes",
 		"async_scheduling":             "--async-scheduling",
+		"frontend":                     "VLLM_USE_RUST_FRONTEND (environment, not a flag)",
 		"disable_cascade_attn":         "--disable-cascade-attn",
 		"enable_prefix_caching":        "--enable-prefix-caching / --no-enable-prefix-caching",
 		"block_size":                   "--block-size",
