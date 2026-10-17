@@ -12,6 +12,10 @@ place in the tree, and only one of them changes what a document may contain.</p>
 Every change reaches consumers through a release, because they pin versions. Publishing a
 release is described in [Documentation and releases](documentation.md#making-a-release).
 
+A change that also touches the catalog, the registry, the kernel or the simulator follows
+[Changes across the repositories](cross-repo-changes.md), which sets the order of pushes and
+pin bumps, and the evidence a pull request carries.
+
 Once a rules pack is released, what it accepts and refuses changes only to correct it, so
 that it describes its engine release accurately. Any other change would alter, after the
 fact, what a scenario pinned to that engine version means. A release that behaves
