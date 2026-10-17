@@ -15,6 +15,7 @@ package scenario
 
 import (
 	"github.com/inference-sim/blis-schemas/spec/acceptance"
+	"github.com/inference-sim/blis-schemas/spec/routing"
 	"github.com/inference-sim/blis-schemas/spec/workload"
 )
 
@@ -45,6 +46,13 @@ type Scenario struct {
 	// its acceptance, pin the value it forced. Omitted, the workload and the registry
 	// decide (acceptance.Resolve).
 	Acceptance *acceptance.Pin `yaml:"acceptance,omitempty"`
+
+	// Routing pins expert-parallel routing imbalance for the run, above the workload's and
+	// the registry's: by naming a routing profile set in the registry (a sensitivity set is
+	// usable only this way) or by an inline value. Omitted, the workload and the registry's
+	// default sets decide, and absent both the ranks are priced as evenly loaded
+	// (routing.Resolve).
+	Routing *routing.Pin `yaml:"routing,omitempty"`
 
 	// EngineVersion is the engine release this scenario is fitted against. It is not
 	// cosmetic: a coefficient is valid only for the code it was fitted against, and

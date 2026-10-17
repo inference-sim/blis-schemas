@@ -22,6 +22,7 @@ import (
 
 	"github.com/inference-sim/blis-schemas/internal/validate"
 	"github.com/inference-sim/blis-schemas/spec/acceptance"
+	"github.com/inference-sim/blis-schemas/spec/routing"
 )
 
 // Shape is one traffic class. Token counts are per request.
@@ -59,6 +60,9 @@ type Shape struct {
 	Category   string              `yaml:"category,omitempty"`
 	Thinking   acceptance.Thinking `yaml:"thinking,omitempty"`
 	Acceptance *acceptance.Value   `yaml:"acceptance,omitempty"`
+	// Routing is the traffic's own measured expert-parallel routing imbalance, which
+	// outranks the registry's profile for its Category (see routing.Resolve).
+	Routing *routing.Value `yaml:"routing,omitempty"`
 }
 
 // UnmarshalYAML accepts the catalog's `_comment`-prefixed provenance keys and strips them
@@ -187,6 +191,9 @@ type TraceRef struct {
 	Category   string              `yaml:"category,omitempty"`
 	Thinking   acceptance.Thinking `yaml:"thinking,omitempty"`
 	Acceptance *acceptance.Value   `yaml:"acceptance,omitempty"`
+	// Routing is the traffic's own measured expert-parallel routing imbalance, which
+	// outranks the registry's profile for its Category (see routing.Resolve).
+	Routing *routing.Value `yaml:"routing,omitempty"`
 }
 
 // TokenBlocks references a trace's block-hash sidecar by path and digest. The digest is
@@ -356,6 +363,16 @@ type SLODimTargets struct {
 // AcceptanceTerms returns what the shape states about acceptance, for acceptance.Resolve.
 func (s *Shape) AcceptanceTerms() acceptance.Workload {
 	return acceptance.Workload{Category: s.Category, Thinking: s.Thinking, Value: s.Acceptance}
+}
+
+// RoutingTerms returns what the shape states about routing, for routing.Resolve.
+func (s *Shape) RoutingTerms() routing.Workload {
+	return routing.Workload{Category: s.Category, Value: s.Routing}
+}
+
+// RoutingTerms returns what the trace states about routing, for routing.Resolve.
+func (t *TraceRef) RoutingTerms() routing.Workload {
+	return routing.Workload{Category: t.Category, Value: t.Routing}
 }
 
 // AcceptanceTerms returns what the trace states about acceptance, for acceptance.Resolve.

@@ -117,6 +117,12 @@ func ValidateAgainstCatalog(b Bundle, catalogRoot, registryRoot string) Report {
 			s.Acceptance.Profiles)
 	}
 
+	// routing.profiles -> routing/<name>.yaml under the registry.
+	if s.Routing != nil && s.Routing.Profiles != "" {
+		resolveFile(field, "references.routing.profiles", registryRoot, "routing",
+			s.Routing.Profiles)
+	}
+
 	return Report{Field: field, Rule: &validate.Problems{}}
 }
 

@@ -11,6 +11,7 @@ import (
 
 	"github.com/inference-sim/blis-schemas/internal/validate"
 	"github.com/inference-sim/blis-schemas/spec/acceptance"
+	"github.com/inference-sim/blis-schemas/spec/routing"
 )
 
 // The citations in this file are to aiperf 0.12.0's source, under src/aiperf/: the
@@ -235,6 +236,9 @@ type ReplayDefinition struct {
 	Category   string              `yaml:"category,omitempty"`
 	Thinking   acceptance.Thinking `yaml:"thinking,omitempty"`
 	Acceptance *acceptance.Value   `yaml:"acceptance,omitempty"`
+	// Routing is the traffic's own measured expert-parallel routing imbalance, which
+	// outranks the registry's profile for its Category (see routing.Resolve).
+	Routing *routing.Value `yaml:"routing,omitempty"`
 }
 
 // ReplayScenario names a trace-replay scenario a harness implements. The set is closed:
@@ -528,6 +532,11 @@ func (r *ReplayDefinition) SplitsFlattenedAgents() bool {
 	return r.SplitFlattenedAgents == nil || *r.SplitFlattenedAgents
 }
 
+// RoutingTerms returns what the replay states about routing, for routing.Resolve.
+func (r *ReplayDefinition) RoutingTerms() routing.Workload {
+	return routing.Workload{Category: r.Category, Value: r.Routing}
+}
+
 // AcceptanceTerms returns what the replay states about acceptance, for acceptance.Resolve.
 func (r *ReplayDefinition) AcceptanceTerms() acceptance.Workload {
 	return acceptance.Workload{Category: r.Category, Thinking: r.Thinking, Value: r.Acceptance}
@@ -612,6 +621,9 @@ func (r *ReplayDefinition) validateInto(p *validate.Problems) {
 		p.Field("inter_turn_delay_cap_s", "the scenario forbids a per-turn delay cap (mvp.py:38; validator.py:642-693)")
 	}
 	acceptance.ValidateWorkloadTerms(p, r.Category, r.Thinking, r.Acceptance)
+	if r.Routing != nil {
+		p.Merge("routing", r.Routing.Validate())
+	}
 }
 
 // Validate checks a corpus reference: a loader the scenario accepts that pins the corpus,

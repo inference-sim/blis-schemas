@@ -327,3 +327,36 @@ func TestRunValidatesAcceptanceSets(t *testing.T) {
 		t.Errorf("stderr:\n%s", errBuf.String())
 	}
 }
+
+// Routing-profile sets under routing/ are validated beside the others; an invalid one fails.
+func TestRunValidatesRoutingSets(t *testing.T) {
+	dir := t.TempDir()
+	writeSet(t, dir, "primitives.yaml", validSet)
+	body := `kind: RoutingProfileSet
+name: r
+role: sensitivity
+profiles:
+  - {model: m, category: text, phase: decode, placement: linear, expert_parallel: 8,
+     method: measured, provenance: {source: s},
+     points: [{batch_tokens: 64, token_imbalance: 1.6, expert_imbalance: 0.8}]}
+`
+	path := filepath.Join(dir, "routing", "r.yaml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out, errBuf bytes.Buffer
+	if code := run([]string{dir}, &out, &errBuf); code != 0 || !strings.Contains(out.String(), "all 2 set(s) validate") {
+		t.Fatalf("exit = %d; stdout:\n%s\nstderr:\n%s", code, out.String(), errBuf.String())
+	}
+	if err := os.WriteFile(path, []byte(strings.Replace(body, "1.6", "0.6", 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	errBuf.Reset()
+	if code := run([]string{dir}, &out, &errBuf); code != 1 {
+		t.Fatalf("exit = %d, want 1 for a busiest rank below the mean", code)
+	}
+}

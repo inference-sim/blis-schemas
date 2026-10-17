@@ -24,6 +24,7 @@ import (
 	"github.com/inference-sim/blis-schemas/spec/measurement"
 	"github.com/inference-sim/blis-schemas/spec/model"
 	"github.com/inference-sim/blis-schemas/spec/router"
+	"github.com/inference-sim/blis-schemas/spec/routing"
 	"github.com/inference-sim/blis-schemas/spec/scenario"
 	"github.com/inference-sim/blis-schemas/spec/workload"
 )
@@ -231,6 +232,12 @@ var documented = map[string]struct {
 	"acceptance.Sampling":       {typ: reflect.TypeOf(acceptance.Sampling{})},
 	"acceptance.Value":          {typ: reflect.TypeOf(acceptance.Value{})},
 	"acceptance.Pin":            {typ: reflect.TypeOf(acceptance.Pin{})},
+	"routing.ProfileSet":        {typ: reflect.TypeOf(routing.ProfileSet{})},
+	"routing.Profile":           {typ: reflect.TypeOf(routing.Profile{})},
+	"routing.Point":             {typ: reflect.TypeOf(routing.Point{})},
+	"routing.Provenance":        {typ: reflect.TypeOf(routing.Provenance{})},
+	"routing.Value":             {typ: reflect.TypeOf(routing.Value{})},
+	"routing.Pin":               {typ: reflect.TypeOf(routing.Pin{})},
 	"measurement.MeasuredRun":   {typ: reflect.TypeOf(measurement.MeasuredRun{})},
 	"measurement.Source":        {typ: reflect.TypeOf(measurement.Source{})},
 	"measurement.Adapter":       {typ: reflect.TypeOf(measurement.Adapter{})},
@@ -377,6 +384,7 @@ func TestDocEveryDocumentTypeHasATable(t *testing.T) {
 		reflect.TypeOf(hardware.Chip{}), reflect.TypeOf(hardware.Fabric{}),
 		reflect.TypeOf(hardware.StorageDevice{}), reflect.TypeOf(coefficient.Set{}),
 		reflect.TypeOf(acceptance.ProfileSet{}),
+		reflect.TypeOf(routing.ProfileSet{}),
 		reflect.TypeOf(workload.Shape{}), reflect.TypeOf(evaluation.Run{}),
 		reflect.TypeOf(measurement.MeasuredRun{}), reflect.TypeOf(measurement.Registry{}),
 	}

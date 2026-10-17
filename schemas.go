@@ -21,6 +21,7 @@ import (
 	"github.com/inference-sim/blis-schemas/spec/evaluation"
 	"github.com/inference-sim/blis-schemas/spec/hardware"
 	"github.com/inference-sim/blis-schemas/spec/model"
+	"github.com/inference-sim/blis-schemas/spec/routing"
 	"github.com/inference-sim/blis-schemas/spec/scenario"
 	"github.com/inference-sim/blis-schemas/spec/workload"
 )
@@ -40,7 +41,9 @@ type Bundle struct {
 	Coefficients []*coefficient.Set
 	// AcceptanceProfiles are registry acceptance-profile sets, validated field by field.
 	AcceptanceProfiles []*acceptance.ProfileSet
-	Workload           *workload.Shape
+	// RoutingProfiles are registry routing-profile sets, validated field by field.
+	RoutingProfiles []*routing.ProfileSet
+	Workload        *workload.Shape
 	// ReplayWorkload is a catalog replay workload, validated field by field.
 	ReplayWorkload *workload.CatalogReplay
 	Evaluation     *evaluation.Run
@@ -125,6 +128,11 @@ func Validate(b Bundle) Report {
 	for _, a := range b.AcceptanceProfiles {
 		if a != nil {
 			field.Merge("acceptance:"+a.Name, a.Validate())
+		}
+	}
+	for _, r := range b.RoutingProfiles {
+		if r != nil {
+			field.Merge("routing:"+r.Name, r.Validate())
 		}
 	}
 	if b.Workload != nil {

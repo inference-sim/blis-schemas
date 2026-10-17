@@ -18,6 +18,7 @@ import (
 	"github.com/inference-sim/blis-schemas/spec/hardware"
 	"github.com/inference-sim/blis-schemas/spec/measurement"
 	"github.com/inference-sim/blis-schemas/spec/model"
+	"github.com/inference-sim/blis-schemas/spec/routing"
 	"github.com/inference-sim/blis-schemas/spec/scenario"
 	"github.com/inference-sim/blis-schemas/spec/workload"
 )
@@ -112,6 +113,16 @@ func LoadCoefficientSet(path string) (*coefficient.Set, error) {
 // acceptance namespace. It does not validate; call Validate.
 func LoadAcceptanceProfileSet(path string) (*acceptance.ProfileSet, error) {
 	var s acceptance.ProfileSet
+	if err := decodeStrict(path, &s); err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
+// LoadRoutingProfileSet reads a routing-profile set from blis-registry's routing
+// namespace. It does not validate; call Validate.
+func LoadRoutingProfileSet(path string) (*routing.ProfileSet, error) {
+	var s routing.ProfileSet
 	if err := decodeStrict(path, &s); err != nil {
 		return nil, err
 	}

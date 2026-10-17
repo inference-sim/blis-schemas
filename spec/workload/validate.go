@@ -72,6 +72,9 @@ func (t *TraceRef) Validate() *validate.Problems {
 	}
 	p.Merge("header", t.Header.Validate())
 	acceptance.ValidateWorkloadTerms(p, t.Category, t.Thinking, t.Acceptance)
+	if t.Routing != nil {
+		p.Merge("routing", t.Routing.Validate())
+	}
 	return p
 }
 
@@ -167,6 +170,9 @@ func (s *Shape) Validate() *validate.Problems {
 	s.Prompt.validate(p, "prompt")
 	s.Output.validate(p, "output")
 	acceptance.ValidateWorkloadTerms(p, s.Category, s.Thinking, s.Acceptance)
+	if s.Routing != nil {
+		p.Merge("routing", s.Routing.Validate())
+	}
 	// A shared prefix longer than the prompt it is a prefix of describes no request.
 	if s.Prompt.Mean > 0 && s.PrefixTokens > s.Prompt.Mean {
 		p.Field("prefix_tokens",
