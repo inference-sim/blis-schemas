@@ -131,6 +131,7 @@ nav:
       - Hardware: reference/hardware.md
       - Coefficient set: reference/coefficients.md
       - Acceptance profiles: reference/acceptance.md
+      - Routing profiles: reference/routing.md
       - Evaluation run: reference/evaluation.md
       - Measured run: reference/measurement.md
       - Kernel interface: reference/kernel.md

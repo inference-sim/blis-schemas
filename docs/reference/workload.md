@@ -47,6 +47,7 @@ and row count, and the small header that says how to read the file.
 | `category` | string | no | The workload category that selects an [acceptance profile](acceptance.md), such as `coding`. |
 | `thinking` | string | no | Whether the model reasons: `on` or `off`. Selects the profile with `category`. |
 | `acceptance` | mapping | no | The trace's own measured acceptance, an [inline value](acceptance.md#inline-values). Outranks the registry's. |
+| `routing` | mapping | no | The traffic's own measured routing imbalance, an [inline value](routing.md#inline-values). Outranks the registry's. |
 
 ### `token_blocks`
 
@@ -161,6 +162,7 @@ stated value the scenario's validator would refuse is an error. Citations are to
 | `category` | string | no | The workload category that selects an [acceptance profile](acceptance.md). |
 | `thinking` | string | no | `on` or `off`. Selects the profile with `category`. |
 | `acceptance` | mapping | no | The run's own acceptance, an [inline value](acceptance.md#inline-values). |
+| `routing` | mapping | no | The traffic's own measured routing imbalance, an [inline value](routing.md#inline-values). Outranks the registry's. |
 
 ### Catalog replay workload
 
@@ -238,6 +240,7 @@ the catalog's `chatbot`:
 | `category` | string | no | The workload category that selects an [acceptance profile](acceptance.md), such as `coding`. |
 | `thinking` | string | no | Whether the model reasons: `on` or `off`. Selects the profile with `category`. |
 | `acceptance` | mapping | no | The traffic's own measured acceptance, an [inline value](acceptance.md#inline-values). Outranks the registry's. |
+| `routing` | mapping | no | The traffic's own measured routing imbalance, an [inline value](routing.md#inline-values). Outranks the registry's. |
 
 ### `prompt` and `output`
 

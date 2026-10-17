@@ -45,6 +45,9 @@ func (s *Scenario) Validate() *validate.Problems {
 	if s.Acceptance != nil {
 		p.Merge("acceptance", s.Acceptance.Validate())
 	}
+	if s.Routing != nil {
+		p.Merge("routing", s.Routing.Validate())
+	}
 
 	s.validateCluster(p)
 	return p
