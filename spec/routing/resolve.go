@@ -59,6 +59,8 @@ type Resolution struct {
 	Reason string
 	// MeasuredOn is the hardware the profile was captured on when it differs from the run's.
 	MeasuredOn string
+	// FallbackFrom is the workload's category when the pin's fallback replaced it.
+	FallbackFrom string
 }
 
 // Lookup is a point read off a resolution, and whether the batch lay outside the curve's
@@ -140,6 +142,17 @@ func Resolve(req Request) (Resolution, error) {
 		r, ok, err := lookup(LayerScenario, []*ProfileSet{req.ScenarioSet}, req)
 		if err != nil {
 			return Resolution{}, err
+		}
+		if fb := pin.FallbackCategory; !ok && fb != "" && fb != req.Workload.Category {
+			from := req.Workload.Category
+			if from == "" {
+				from = "(none)"
+			}
+			req.Workload.Category = fb
+			if r, ok, err = lookup(LayerScenario, []*ProfileSet{req.ScenarioSet}, req); err != nil {
+				return Resolution{}, err
+			}
+			r.FallbackFrom = from
 		}
 		if !ok {
 			return Resolution{}, fmt.Errorf("routing profile set %q has no profile for %s",

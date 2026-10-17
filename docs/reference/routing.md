@@ -81,6 +81,7 @@ the step size.
 |---|---|---|---|
 | `profiles` | string | one of two | A routing-profile set under `routing/` in the registry, default or sensitivity. A set without the run's key is refused. |
 | `value` | mapping | one of two | An inline value, above. |
+| `fallback_category` | string | no | With `profiles`, the category whose curves to use when the workload's has none. The substitution is recorded. Not with `value`. |
 
 ## Resolution
 

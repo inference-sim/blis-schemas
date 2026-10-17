@@ -177,6 +177,24 @@ func TestLookup(t *testing.T) {
 	}
 }
 
+// A coding workload may borrow another category's curve only when the pin asks, and the
+// substitution is recorded.
+func TestScenarioFallbackCategory(t *testing.T) {
+	req := Request{Model: "m", ExpertParallel: 8, Workload: Workload{Category: "coding"},
+		Scenario: &Pin{Profiles: "capture"}, ScenarioSet: dsv41()}
+	if _, err := Resolve(req); err == nil {
+		t.Fatal("a category with no curve resolved without a fallback")
+	}
+	req.Scenario.FallbackCategory = "chat"
+	r, err := Resolve(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.FallbackFrom != "coding" || r.Decode == nil || r.Decode.Category != "chat" {
+		t.Fatalf("fallback not applied or not recorded: %+v", r)
+	}
+}
+
 func TestValueUnknownKeyRejected(t *testing.T) {
 	var v Value
 	if err := yaml.Unmarshal([]byte("token_imbalance: 1.2\ntoken_imbalence: 2\n"), &v); err == nil {

@@ -120,8 +120,13 @@ func (pin *Pin) Validate() *validate.Problems {
 		p.Errorf("a pin names a profile set or states a value")
 	case pin.Profiles != "" && pin.Value != nil:
 		p.Errorf("a pin names a profile set or states a value, not both")
+	case pin.Value != nil && pin.FallbackCategory != "":
+		p.Field("fallback_category", "applies to a named set, not to a value")
 	case pin.Value != nil:
 		p.Merge("value", pin.Value.Validate())
+	}
+	if pin.FallbackCategory != "" && !ValidCategory(pin.FallbackCategory) {
+		p.Field("fallback_category", "%q is not a workload category", pin.FallbackCategory)
 	}
 	return p
 }

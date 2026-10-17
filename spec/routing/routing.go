@@ -184,4 +184,7 @@ func (v Value) Expert() float64 {
 type Pin struct {
 	Profiles string `yaml:"profiles,omitempty"`
 	Value    *Value `yaml:"value,omitempty"`
+	// FallbackCategory, with Profiles, names the category whose curves to use when the
+	// workload's has none. The substitution is recorded.
+	FallbackCategory string `yaml:"fallback_category,omitempty"`
 }
