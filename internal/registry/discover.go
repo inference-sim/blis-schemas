@@ -31,6 +31,10 @@ func SetPaths(root string) ([]string, error) { return yamlPaths(root, "coefficie
 // the same predicate as SetPaths. Empty with no error when the directory is absent.
 func AcceptancePaths(root string) ([]string, error) { return yamlPaths(root, "acceptance") }
 
+// RoutingPaths returns every routing-profile set file under <root>/routing, by the same
+// discovery rule.
+func RoutingPaths(root string) ([]string, error) { return yamlPaths(root, "routing") }
+
 func yamlPaths(root, namespace string) ([]string, error) {
 	dir := filepath.Join(root, namespace)
 	if _, err := os.Stat(dir); err != nil {

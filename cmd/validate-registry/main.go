@@ -85,6 +85,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
+	routePaths, err := registry.RoutingPaths(root)
+	if err != nil {
+		fmt.Fprintf(stderr, "scanning %s: %v\n", filepath.Join(root, "routing"), err)
+		return 2
+	}
+
 	failed := 0
 	for _, path := range paths {
 		failed += check(stdout, stderr, coeffDir, path, func() (int, string, *validate.Problems, error) {
@@ -107,7 +113,17 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return len(s.Profiles), "profile(s)", s.Validate(), nil
 		})
 	}
-	total := len(paths) + len(accPaths)
+	// Routing-profile sets are optional too, and named relative to the root (routing/<file>).
+	for _, path := range routePaths {
+		failed += check(stdout, stderr, root, path, func() (int, string, *validate.Problems, error) {
+			s, err := blisschemas.LoadRoutingProfileSet(path)
+			if err != nil {
+				return 0, "", nil, err
+			}
+			return len(s.Profiles), "profile(s)", s.Validate(), nil
+		})
+	}
+	total := len(paths) + len(accPaths) + len(routePaths)
 	if failed > 0 {
 		fmt.Fprintf(stderr, "\n%d of %d set(s) failed\n", failed, total)
 		return 1
