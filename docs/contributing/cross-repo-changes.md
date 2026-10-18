@@ -209,7 +209,9 @@ Commits, code, comments, documentation, issue and pull request text are public.
 - **Never write internal project, customer or colleague names in a public artifact.** Refer to
   private measurements by what they are ("internal deployment measurements"), not by where they
   came from. A name scan of the diff, the commit messages and every tracked file runs before
-  each push.
+  each push. A private-names check (`.github/workflows/private-names.yml`) reads its pattern
+  from a repository secret and fails a pull request whose files, paths, commit messages, title
+  or body match it.
 - **Never redistribute third-party data.** Measurements, traces and benchmark dumps stay where
   their owner publishes them. A repository commits derived values only, each with its
   provenance: the source URL and its commit or sha256.
