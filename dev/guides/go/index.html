@@ -945,6 +945,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -1174,6 +1180,62 @@
   
   
     <li class="md-nav__item">
+      <a href="../../reference/acceptance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Acceptance profiles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/routing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Routing profiles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../reference/evaluation/" class="md-nav__link">
         
   
@@ -1182,6 +1244,34 @@
     
   
     Evaluation run
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/measurement/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Measured run
   
 
     
@@ -1495,6 +1585,8 @@
       
         
       
+        
+      
     
     
     
@@ -1592,6 +1684,34 @@
     
   
     Documentation and releases
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/cross-repo-changes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changes across the repositories
   
 
     
@@ -1825,11 +1945,23 @@ through different channels.</p>
 <td>an evaluation run</td>
 <td>its <code>name</code> key</td>
 </tr>
+<tr>
+<td><code>LoadMeasuredRun</code></td>
+<td><code>measurements/&lt;license_ref&gt;/&lt;name&gt;.yaml</code></td>
+<td>its <code>name</code> key</td>
+</tr>
+<tr>
+<td><code>LoadMeasurementSources</code></td>
+<td><code>measurements/sources.yaml</code></td>
+<td>each source's <code>id</code></td>
+</tr>
 </tbody>
 </table>
 <p>Each decodes one YAML document and rejects keys its type does not declare. The loaders do
 not compare a <code>name</code> key with the directory or file it sits in; <code>validate-catalog</code> does that
-for model entries.</p>
+for model entries and measured runs. A measured run is validated with
+<code>ValidateWithSources(registry)</code>, which also computes its verdict; it is not part of a
+bundle.</p>
 <h3 id="the-bundle">The bundle<a class="headerlink" href="#the-bundle" title="Permanent link">&para;</a></h3>
 <p>A <code>Bundle</code> holds any subset of documents: a chip alone, or everything a run needs. Every
 document present is checked on its own. A deployment is also checked against its

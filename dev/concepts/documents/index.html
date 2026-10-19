@@ -614,10 +614,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-ten-kinds" class="md-nav__link">
+  <a href="#the-eleven-kinds" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The ten kinds
+        The eleven kinds
       
     </span>
   </a>
@@ -928,6 +928,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -1157,6 +1163,62 @@
   
   
     <li class="md-nav__item">
+      <a href="../../reference/acceptance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Acceptance profiles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/routing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Routing profiles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../reference/evaluation/" class="md-nav__link">
         
   
@@ -1165,6 +1227,34 @@
     
   
     Evaluation run
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/measurement/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Measured run
   
 
     
@@ -1478,6 +1568,8 @@
       
         
       
+        
+      
     
     
     
@@ -1588,6 +1680,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/cross-repo-changes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changes across the repositories
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1633,10 +1753,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-ten-kinds" class="md-nav__link">
+  <a href="#the-eleven-kinds" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The ten kinds
+        The eleven kinds
       
     </span>
   </a>
@@ -1702,7 +1822,7 @@
 
 
 <h1 id="documents">Documents<a class="headerlink" href="#documents" title="Permanent link">&para;</a></h1>
-<p class="lede">blis-schemas defines ten kinds of YAML document. A run needs two that its
+<p class="lede">blis-schemas defines eleven kinds of YAML document. A run needs two that its
 user writes, a scenario and a deployment. They refer by name to documents committed in the
 catalog and the registry.</p>
 
@@ -1813,7 +1933,7 @@ and recorded with its results.</p>
 <a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="w">      </span><span class="nt">max_num_batched_tokens</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">8192</span>
 <a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="w">      </span><span class="nt">gpu_memory_utilization</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.9</span>
 </code></pre></div>
-<h2 id="the-ten-kinds">The ten kinds<a class="headerlink" href="#the-ten-kinds" title="Permanent link">&para;</a></h2>
+<h2 id="the-eleven-kinds">The eleven kinds<a class="headerlink" href="#the-eleven-kinds" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
@@ -1867,7 +1987,7 @@ and recorded with its results.</p>
 <td><a href="../../reference/hardware/#storage-classes">Hardware</a></td>
 </tr>
 <tr>
-<td>Workload shape</td>
+<td>Workload shape or replay workload</td>
 <td>catalog, <code>workloads/&lt;name&gt;.yaml</code></td>
 <td>the file name</td>
 <td><a href="../../reference/workload/#shape">Workload</a></td>
@@ -1879,10 +1999,28 @@ and recorded with its results.</p>
 <td><a href="../../reference/coefficients/">Coefficient set</a></td>
 </tr>
 <tr>
+<td>Acceptance-profile set</td>
+<td>registry, <code>acceptance/&lt;name&gt;.yaml</code></td>
+<td>the file name, which a scenario's <code>acceptance.profiles</code> uses; its <code>name</code> key matches by convention</td>
+<td><a href="../../reference/acceptance/">Acceptance profiles</a></td>
+</tr>
+<tr>
 <td>Evaluation run</td>
 <td>wherever its user keeps it</td>
 <td>its <code>name</code> key</td>
 <td><a href="../../reference/evaluation/">Evaluation run</a></td>
+</tr>
+<tr>
+<td>Measured run</td>
+<td>catalog, <code>measurements/&lt;license_ref&gt;/&lt;name&gt;.yaml</code></td>
+<td>its <code>name</code> key, which must match the file name</td>
+<td><a href="../../reference/measurement/">Measured run</a></td>
+</tr>
+<tr>
+<td>Licence registry</td>
+<td>catalog, <code>measurements/sources.yaml</code></td>
+<td>each source's <code>id</code></td>
+<td><a href="../../reference/measurement/#licence-registry">Measured run</a></td>
 </tr>
 </tbody>
 </table>

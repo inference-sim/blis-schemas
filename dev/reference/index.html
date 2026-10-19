@@ -823,6 +823,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -1055,6 +1061,62 @@
   
   
     <li class="md-nav__item">
+      <a href="acceptance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Acceptance profiles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="routing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Routing profiles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="evaluation/" class="md-nav__link">
         
   
@@ -1063,6 +1125,34 @@
     
   
     Evaluation run
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="measurement/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Measured run
   
 
     
@@ -1376,6 +1466,8 @@
       
         
       
+        
+      
     
     
     
@@ -1486,6 +1578,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contributing/cross-repo-changes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changes across the repositories
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1537,84 +1657,59 @@
 
 
 <h1 id="reference">Reference<a class="headerlink" href="#reference" title="Permanent link">&para;</a></h1>
+<p>| <a href="acceptance/">Acceptance profiles</a> | <code>AcceptanceProfileSet</code>, inline acceptance values, a scenario's pin | <a href="https://github.com/inference-sim/blis-schemas/tree/main/spec/acceptance"><code>spec/acceptance</code></a> |</p>
+<p>| <a href="acceptance/">Acceptance profiles</a> | <code>AcceptanceProfileSet</code>, inline acceptance values, a scenario's pin | <a href="https://github.com/inference-sim/blis-schemas/tree/main/spec/acceptance"><code>spec/acceptance</code></a> |</p>
 <p class="lede">One page per document kind, plus the kernel interface, the closed
+| [Acceptance profiles](acceptance.md) | `AcceptanceProfileSet`, inline acceptance values, a scenario's pin | [`spec/acceptance`](https://github.com/inference-sim/blis-schemas/tree/main/spec/acceptance) |
 vocabularies, the rules packs and the two commands. Each document page opens with an
+| [Acceptance profiles](acceptance.md) | `AcceptanceProfileSet`, inline acceptance values, a scenario's pin | [`spec/acceptance`](https://github.com/inference-sim/blis-schemas/tree/main/spec/acceptance) |
 example, then lists every key the document may contain, then every check its validator
+| [Acceptance profiles](acceptance.md) | `AcceptanceProfileSet`, inline acceptance values, a scenario's pin | [`spec/acceptance`](https://github.com/inference-sim/blis-schemas/tree/main/spec/acceptance) |
 makes.</p>
-
-<p>The key tables are tested against the Go types: a key the type declares and the table
+<p>| <a href="acceptance/">Acceptance profiles</a> | <code>AcceptanceProfileSet</code>, inline acceptance values, a scenario's pin | <a href="https://github.com/inference-sim/blis-schemas/tree/main/spec/acceptance"><code>spec/acceptance</code></a> |</p>
+<p>| <a href="acceptance/">Acceptance profiles</a> | <code>AcceptanceProfileSet</code>, inline acceptance values, a scenario's pin | <a href="https://github.com/inference-sim/blis-schemas/tree/main/spec/acceptance"><code>spec/acceptance</code></a> |
+The key tables are tested against the Go types: a key the type declares and the table
+| <a href="acceptance/">Acceptance profiles</a> | <code>AcceptanceProfileSet</code>, inline acceptance values, a scenario's pin | <a href="https://github.com/inference-sim/blis-schemas/tree/main/spec/acceptance"><code>spec/acceptance</code></a> |
 omits, or a key the table lists and the type does not declare, fails the build. The
+| <a href="acceptance/">Acceptance profiles</a> | <code>AcceptanceProfileSet</code>, inline acceptance values, a scenario's pin | <a href="https://github.com/inference-sim/blis-schemas/tree/main/spec/acceptance"><code>spec/acceptance</code></a> |
 vocabularies and the rules pack listings are generated from the code. For anything finer
-than these pages, read the source; each page links to it.</p>
-<table>
-<thead>
-<tr>
-<th>Page</th>
-<th>Documents</th>
-<th>Package</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><a href="scenario/">Scenario</a></td>
-<td><code>Scenario</code></td>
-<td><a href="https://github.com/inference-sim/blis-schemas/tree/main/spec/scenario"><code>spec/scenario</code></a></td>
-</tr>
-<tr>
-<td><a href="deployment/">Deployment</a></td>
-<td><code>Deployment</code></td>
-<td><a href="https://github.com/inference-sim/blis-schemas/tree/main/spec/deployment"><code>spec/deployment</code></a></td>
-</tr>
-<tr>
-<td><a href="workload/">Workload</a></td>
-<td>a scenario's <code>workload</code>, a catalog workload shape</td>
-<td><a href="https://github.com/inference-sim/blis-schemas/tree/main/spec/workload"><code>spec/workload</code></a></td>
-</tr>
-<tr>
-<td><a href="model/">Model graph</a></td>
-<td><code>ModelGraph</code>, a model's identity manifest</td>
-<td><a href="https://github.com/inference-sim/blis-schemas/tree/main/spec/model"><code>spec/model</code></a></td>
-</tr>
-<tr>
-<td><a href="hardware/">Hardware</a></td>
-<td>chip, fabric, storage classes</td>
-<td><a href="https://github.com/inference-sim/blis-schemas/tree/main/spec/hardware"><code>spec/hardware</code></a></td>
-</tr>
-<tr>
-<td><a href="coefficients/">Coefficient set</a></td>
-<td><code>CoefficientSet</code></td>
-<td><a href="https://github.com/inference-sim/blis-schemas/tree/main/spec/coefficient"><code>spec/coefficient</code></a></td>
-</tr>
-<tr>
-<td><a href="evaluation/">Evaluation run</a></td>
-<td><code>EvaluationRun</code></td>
-<td><a href="https://github.com/inference-sim/blis-schemas/tree/main/spec/evaluation"><code>spec/evaluation</code></a></td>
-</tr>
-<tr>
-<td><a href="kernel/">Kernel interface</a></td>
-<td>the <code>Kernel</code> a cost model implements</td>
-<td><a href="https://github.com/inference-sim/blis-schemas/tree/main/kernel"><code>kernel</code></a></td>
-</tr>
-<tr>
-<td><a href="vocabularies/">Vocabularies</a></td>
-<td>units, methods, scope keys, dtypes, and the rest</td>
-<td><a href="https://github.com/inference-sim/blis-schemas/tree/main/vocab"><code>vocab</code></a> and <code>spec/</code></td>
-</tr>
-<tr>
-<td><a href="rules/">Rules packs</a></td>
-<td>the checks for each engine version</td>
-<td><a href="https://github.com/inference-sim/blis-schemas/tree/main/rules"><code>rules</code></a></td>
-</tr>
-<tr>
-<td><a href="cli/">Command line</a></td>
-<td><code>validate-catalog</code>, <code>validate-registry</code></td>
-<td><a href="https://github.com/inference-sim/blis-schemas/tree/main/cmd"><code>cmd</code></a></td>
-</tr>
-</tbody>
-</table>
-<p>In the key tables, <strong>Type</strong> is the YAML type. <em>Required</em> means that if the key is absent,
+| <a href="acceptance/">Acceptance profiles</a> | <code>AcceptanceProfileSet</code>, inline acceptance values, a scenario's pin | <a href="https://github.com/inference-sim/blis-schemas/tree/main/spec/acceptance"><code>spec/acceptance</code></a> |
+than these pages, read the source; each page links to it.
+| <a href="acceptance/">Acceptance profiles</a> | <code>AcceptanceProfileSet</code>, inline acceptance values, a scenario's pin | <a href="https://github.com/inference-sim/blis-schemas/tree/main/spec/acceptance"><code>spec/acceptance</code></a> |</p>
+<p>| <a href="acceptance/">Acceptance profiles</a> | <code>AcceptanceProfileSet</code>, inline acceptance values, a scenario's pin | <a href="https://github.com/inference-sim/blis-schemas/tree/main/spec/acceptance"><code>spec/acceptance</code></a> |
+| Page | Documents | Package |
+| <a href="acceptance/">Acceptance profiles</a> | <code>AcceptanceProfileSet</code>, inline acceptance values, a scenario's pin | <a href="https://github.com/inference-sim/blis-schemas/tree/main/spec/acceptance"><code>spec/acceptance</code></a> |
+|---|---|---|
+| <a href="acceptance/">Acceptance profiles</a> | <code>AcceptanceProfileSet</code>, inline acceptance values, a scenario's pin | <a href="https://github.com/inference-sim/blis-schemas/tree/main/spec/acceptance"><code>spec/acceptance</code></a> |
+| <a href="scenario/">Scenario</a> | <code>Scenario</code> | <a href="https://github.com/inference-sim/blis-schemas/tree/main/spec/scenario"><code>spec/scenario</code></a> |
+| <a href="acceptance/">Acceptance profiles</a> | <code>AcceptanceProfileSet</code>, inline acceptance values, a scenario's pin | <a href="https://github.com/inference-sim/blis-schemas/tree/main/spec/acceptance"><code>spec/acceptance</code></a> |
+| <a href="deployment/">Deployment</a> | <code>Deployment</code> | <a href="https://github.com/inference-sim/blis-schemas/tree/main/spec/deployment"><code>spec/deployment</code></a> |
+| <a href="acceptance/">Acceptance profiles</a> | <code>AcceptanceProfileSet</code>, inline acceptance values, a scenario's pin | <a href="https://github.com/inference-sim/blis-schemas/tree/main/spec/acceptance"><code>spec/acceptance</code></a> |
+| <a href="workload/">Workload</a> | a scenario's <code>workload</code>, a catalog workload shape | <a href="https://github.com/inference-sim/blis-schemas/tree/main/spec/workload"><code>spec/workload</code></a> |
+| <a href="acceptance/">Acceptance profiles</a> | <code>AcceptanceProfileSet</code>, inline acceptance values, a scenario's pin | <a href="https://github.com/inference-sim/blis-schemas/tree/main/spec/acceptance"><code>spec/acceptance</code></a> |
+| <a href="model/">Model graph</a> | <code>ModelGraph</code>, a model's identity manifest | <a href="https://github.com/inference-sim/blis-schemas/tree/main/spec/model"><code>spec/model</code></a> |
+| <a href="acceptance/">Acceptance profiles</a> | <code>AcceptanceProfileSet</code>, inline acceptance values, a scenario's pin | <a href="https://github.com/inference-sim/blis-schemas/tree/main/spec/acceptance"><code>spec/acceptance</code></a> |
+| <a href="hardware/">Hardware</a> | chip, fabric, storage classes | <a href="https://github.com/inference-sim/blis-schemas/tree/main/spec/hardware"><code>spec/hardware</code></a> |
+| <a href="acceptance/">Acceptance profiles</a> | <code>AcceptanceProfileSet</code>, inline acceptance values, a scenario's pin | <a href="https://github.com/inference-sim/blis-schemas/tree/main/spec/acceptance"><code>spec/acceptance</code></a> |
+| <a href="coefficients/">Coefficient set</a> | <code>CoefficientSet</code> | <a href="https://github.com/inference-sim/blis-schemas/tree/main/spec/coefficient"><code>spec/coefficient</code></a> |
+| <a href="acceptance/">Acceptance profiles</a> | <code>AcceptanceProfileSet</code>, inline acceptance values, a scenario's pin | <a href="https://github.com/inference-sim/blis-schemas/tree/main/spec/acceptance"><code>spec/acceptance</code></a> |
+| <a href="evaluation/">Evaluation run</a> | <code>EvaluationRun</code> | <a href="https://github.com/inference-sim/blis-schemas/tree/main/spec/evaluation"><code>spec/evaluation</code></a> |
+| <a href="acceptance/">Acceptance profiles</a> | <code>AcceptanceProfileSet</code>, inline acceptance values, a scenario's pin | <a href="https://github.com/inference-sim/blis-schemas/tree/main/spec/acceptance"><code>spec/acceptance</code></a> |
+| <a href="kernel/">Kernel interface</a> | the <code>Kernel</code> a cost model implements | <a href="https://github.com/inference-sim/blis-schemas/tree/main/kernel"><code>kernel</code></a> |
+| <a href="acceptance/">Acceptance profiles</a> | <code>AcceptanceProfileSet</code>, inline acceptance values, a scenario's pin | <a href="https://github.com/inference-sim/blis-schemas/tree/main/spec/acceptance"><code>spec/acceptance</code></a> |
+| <a href="vocabularies/">Vocabularies</a> | units, methods, scope keys, dtypes, and the rest | <a href="https://github.com/inference-sim/blis-schemas/tree/main/vocab"><code>vocab</code></a> and <code>spec/</code> |
+| <a href="acceptance/">Acceptance profiles</a> | <code>AcceptanceProfileSet</code>, inline acceptance values, a scenario's pin | <a href="https://github.com/inference-sim/blis-schemas/tree/main/spec/acceptance"><code>spec/acceptance</code></a> |
+| <a href="rules/">Rules packs</a> | the checks for each engine version | <a href="https://github.com/inference-sim/blis-schemas/tree/main/rules"><code>rules</code></a> |
+| <a href="acceptance/">Acceptance profiles</a> | <code>AcceptanceProfileSet</code>, inline acceptance values, a scenario's pin | <a href="https://github.com/inference-sim/blis-schemas/tree/main/spec/acceptance"><code>spec/acceptance</code></a> |
+| <a href="cli/">Command line</a> | <code>validate-catalog</code>, <code>validate-registry</code> | <a href="https://github.com/inference-sim/blis-schemas/tree/main/cmd"><code>cmd</code></a> |
+| <a href="acceptance/">Acceptance profiles</a> | <code>AcceptanceProfileSet</code>, inline acceptance values, a scenario's pin | <a href="https://github.com/inference-sim/blis-schemas/tree/main/spec/acceptance"><code>spec/acceptance</code></a> |</p>
+<p>| <a href="acceptance/">Acceptance profiles</a> | <code>AcceptanceProfileSet</code>, inline acceptance values, a scenario's pin | <a href="https://github.com/inference-sim/blis-schemas/tree/main/spec/acceptance"><code>spec/acceptance</code></a> |
+In the key tables, <strong>Type</strong> is the YAML type. <em>Required</em> means that if the key is absent,
+| <a href="acceptance/">Acceptance profiles</a> | <code>AcceptanceProfileSet</code>, inline acceptance values, a scenario's pin | <a href="https://github.com/inference-sim/blis-schemas/tree/main/spec/acceptance"><code>spec/acceptance</code></a> |
 the validator reports an error or the loader fails. A key marked <em>no</em> may be omitted, and
-the table says what omitting it means.</p>
+| <a href="acceptance/">Acceptance profiles</a> | <code>AcceptanceProfileSet</code>, inline acceptance values, a scenario's pin | <a href="https://github.com/inference-sim/blis-schemas/tree/main/spec/acceptance"><code>spec/acceptance</code></a> |
+the table says what omitting it means.
+| <a href="acceptance/">Acceptance profiles</a> | <code>AcceptanceProfileSet</code>, inline acceptance values, a scenario's pin | <a href="https://github.com/inference-sim/blis-schemas/tree/main/spec/acceptance"><code>spec/acceptance</code></a> |</p>
 
 
 

@@ -821,6 +821,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -1050,6 +1056,62 @@
   
   
     <li class="md-nav__item">
+      <a href="../reference/acceptance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Acceptance profiles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/routing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Routing profiles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../reference/evaluation/" class="md-nav__link">
         
   
@@ -1058,6 +1120,34 @@
     
   
     Evaluation run
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/measurement/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Measured run
   
 
     
@@ -1373,6 +1463,8 @@
       
         
       
+        
+      
     
     
     
@@ -1473,6 +1565,34 @@
     
   
     Documentation and releases
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="cross-repo-changes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changes across the repositories
   
 
     
@@ -1609,6 +1729,9 @@ place in the tree, and only one of them changes what a document may contain.</p>
 </table>
 <p>Every change reaches consumers through a release, because they pin versions. Publishing a
 release is described in <a href="documentation/#making-a-release">Documentation and releases</a>.</p>
+<p>A change that also touches the catalog, the registry, the kernel or the simulator follows
+<a href="cross-repo-changes/">Changes across the repositories</a>, which sets the order of pushes and
+pin bumps, and the evidence a pull request carries.</p>
 <p>Once a rules pack is released, what it accepts and refuses changes only to correct it, so
 that it describes its engine release accurately. Any other change would alter, after the
 fact, what a scenario pinned to that engine version means. A release that behaves

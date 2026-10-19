@@ -823,6 +823,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -1055,6 +1061,62 @@
   
   
     <li class="md-nav__item">
+      <a href="../acceptance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Acceptance profiles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../routing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Routing profiles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../evaluation/" class="md-nav__link">
         
   
@@ -1063,6 +1125,34 @@
     
   
     Evaluation run
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../measurement/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Measured run
   
 
     
@@ -1242,6 +1332,17 @@
     <span class="md-ellipsis">
       
         validate-registry
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#validate-measurements" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        validate-measurements
       
     </span>
   </a>
@@ -1456,6 +1557,8 @@
       
         
       
+        
+      
     
     
     
@@ -1566,6 +1669,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/cross-repo-changes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changes across the repositories
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1622,6 +1753,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#validate-measurements" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        validate-measurements
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#exit-codes" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1658,12 +1800,13 @@
 
 
 <h1 id="command-line">Command line<a class="headerlink" href="#command-line" title="Permanent link">&para;</a></h1>
-<p class="lede">Two commands, one for each data repository. Each takes the root of a
-checkout, validates every committed document in it, and exits with a code a CI step can
-read.</p>
+<p class="lede">One command for each data repository, and one for measured runs before
+they are committed. Each validates every document under the path it is given and exits
+with a code a CI step can read.</p>
 
-<div class="language-sh highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>go<span class="w"> </span>run<span class="w"> </span>github.com/inference-sim/blis-schemas/cmd/validate-catalog@&lt;version&gt;<span class="w">  </span>&lt;catalog<span class="w"> </span>root&gt;
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>go<span class="w"> </span>run<span class="w"> </span>github.com/inference-sim/blis-schemas/cmd/validate-registry@&lt;version&gt;<span class="w"> </span>&lt;registry<span class="w"> </span>root&gt;
+<div class="language-sh highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>go<span class="w"> </span>run<span class="w"> </span>github.com/inference-sim/blis-schemas/cmd/validate-catalog@&lt;version&gt;<span class="w">      </span>&lt;catalog<span class="w"> </span>root&gt;
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>go<span class="w"> </span>run<span class="w"> </span>github.com/inference-sim/blis-schemas/cmd/validate-registry@&lt;version&gt;<span class="w">     </span>&lt;registry<span class="w"> </span>root&gt;
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>go<span class="w"> </span>run<span class="w"> </span>github.com/inference-sim/blis-schemas/cmd/validate-measurements@&lt;version&gt;<span class="w"> </span><span class="o">[</span>-local<span class="o">]</span><span class="w"> </span>&lt;measurements<span class="w"> </span>dir&gt;
 </code></pre></div>
 <p>Both write every problem to standard error. <code>validate-catalog</code> writes to standard output a
 heading for each kind of file and one line for each artifact that validates: each file, or
@@ -1707,18 +1850,36 @@ documents name no engine version, so no rules pack applies.</p>
 </tr>
 <tr>
 <td><code>workloads/*.yaml</code></td>
-<td>a <a href="../workload/#shape">workload shape</a></td>
+<td>a <a href="../workload/#shape">workload shape</a>, or a <a href="../workload/#catalog-replay-workload">replay workload</a> when its top-level key is <code>replay:</code></td>
+</tr>
+<tr>
+<td><code>measurements/</code></td>
+<td>as <a href="#validate-measurements">validate-measurements</a> does, without <code>-local</code>. Optional.</td>
 </tr>
 </tbody>
 </table>
 <p>Only files ending in <code>.yaml</code> are read in the flat directories. A path is treated as a
-catalog if it contains at least one of <code>models/</code>, <code>hardware/</code>, <code>networks/</code>, <code>workloads/</code> and
-<code>devices/</code>.</p>
+catalog if it contains at least one of <code>models/</code>, <code>hardware/</code>, <code>networks/</code>, <code>workloads/</code>,
+<code>devices/</code> and <code>measurements/</code>.</p>
 <h2 id="validate-registry">validate-registry<a class="headerlink" href="#validate-registry" title="Permanent link">&para;</a></h2>
 <p>Every file under <code>coefficients/</code> whose extension is <code>.yaml</code> or <code>.yml</code>, in any letter case
 and at any depth, is validated as a <a href="../coefficients/">coefficient set</a>. Symbolic links to directories are
 not followed. A scenario can refer only to a set at the top level of <code>coefficients/</code> with a
 <code>.yaml</code> extension, by its file name; a set elsewhere validates but cannot be named.</p>
+<p>Files under <code>acceptance/</code>, found the same way, are validated as
+<a href="../acceptance/#profile-set">acceptance-profile sets</a>, each reported as
+<code>acceptance/&lt;file&gt;</code>. The directory is optional.</p>
+<h2 id="validate-measurements">validate-measurements<a class="headerlink" href="#validate-measurements" title="Permanent link">&para;</a></h2>
+<p><code>sources.yaml</code> is validated as the <a href="../measurement/#licence-registry">licence registry</a>, and
+every <code>&lt;license_ref&gt;/*.yaml</code> as a <a href="../measurement/">measured run</a> against it. A run's <code>name</code>
+must equal its file name, its <code>license_ref</code> its directory, and its stated verdict the
+computed one. <code>duplicate_of</code> and <code>supersedes</code> must name another run in the directory. A YAML
+file at the top level other than <code>sources.yaml</code> fails. Without <code>-local</code>, every run's
+licence must permit <code>redistribute</code>; with it, scoring alone suffices, for output that stays
+out of the repository.</p>
+<p>It writes one line per file to standard output, the verdict for a run, and exits <code>0</code> when
+every file validates, <code>1</code> when any fails, and <code>2</code> on wrong arguments or a path that is not a
+directory.</p>
 <h2 id="exit-codes">Exit codes<a class="headerlink" href="#exit-codes" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -1737,17 +1898,18 @@ not followed. A scenario can refer only to a set at the top level of <code>coeff
 <tr>
 <td><code>1</code></td>
 <td>an artifact failed to load or validate</td>
-<td>a set failed to load or validate</td>
+<td>a coefficient or acceptance set failed to load or validate</td>
 </tr>
 <tr>
 <td><code>2</code></td>
-<td>wrong arguments; the root does not exist; none of the five directories is present; or nothing was found to validate</td>
-<td>wrong arguments; the root does not exist; <code>coefficients/</code> could not be read; or it holds no sets</td>
+<td>wrong arguments; the root does not exist; none of the six directories is present; or nothing was found to validate</td>
+<td>wrong arguments; the root does not exist; <code>coefficients/</code> could not be read; or it holds no coefficient sets</td>
 </tr>
 </tbody>
 </table>
 <p>Source: <a href="https://github.com/inference-sim/blis-schemas/tree/main/cmd/validate-catalog"><code>cmd/validate-catalog</code></a>,
-<a href="https://github.com/inference-sim/blis-schemas/tree/main/cmd/validate-registry"><code>cmd/validate-registry</code></a>.</p>
+<a href="https://github.com/inference-sim/blis-schemas/tree/main/cmd/validate-registry"><code>cmd/validate-registry</code></a>,
+<a href="https://github.com/inference-sim/blis-schemas/tree/main/cmd/validate-measurements"><code>cmd/validate-measurements</code></a>.</p>
 
 
 

@@ -823,6 +823,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -1141,6 +1147,62 @@
   
   
     <li class="md-nav__item">
+      <a href="../acceptance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Acceptance profiles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../routing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Routing profiles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../evaluation/" class="md-nav__link">
         
   
@@ -1149,6 +1211,34 @@
     
   
     Evaluation run
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../measurement/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Measured run
   
 
     
@@ -1462,6 +1552,8 @@
       
         
       
+        
+      
     
     
     
@@ -1559,6 +1651,34 @@
     
   
     Documentation and releases
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/cross-repo-changes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changes across the repositories
   
 
     
@@ -1742,7 +1862,19 @@ them.</p>
 <td><code>workload</code></td>
 <td>mapping</td>
 <td>no</td>
-<td>The traffic, as a shape or a trace. See <a href="../workload/">Workload</a>. Omitted for a question about capacity alone.</td>
+<td>The traffic, as a shape, a trace or a replay. See <a href="../workload/">Workload</a>. Omitted for a question about capacity alone.</td>
+</tr>
+<tr>
+<td><code>routing</code></td>
+<td>mapping</td>
+<td>no</td>
+<td>Pins expert-parallel routing imbalance for the run, by a routing-profile set in the registry or an inline value. See <a href="../routing/#scenario-pin">Scenario pin</a>. Omitted, the workload and the registry's default sets decide, else evenly loaded.</td>
+</tr>
+<tr>
+<td><code>acceptance</code></td>
+<td>mapping</td>
+<td>no</td>
+<td>Pins speculative acceptance for the run, by a profile set in the registry or an inline value. See <a href="../acceptance/#scenario-pin">Scenario pin</a>. Omitted, the workload and the registry decide.</td>
 </tr>
 <tr>
 <td><code>cluster</code></td>
@@ -1813,6 +1945,7 @@ them.</p>
 <li>the cluster has more than one node and names no <code>fabric</code>;</li>
 <li>a <code>storage</code> entry is empty or appears twice;</li>
 <li><code>workload</code> is present and is not a valid <a href="../workload/#binding">binding</a>.</li>
+<li><code>acceptance</code> is present and is not a valid <a href="../acceptance/#scenario-pin">pin</a>.</li>
 </ul>
 <p>Whether the names resolve is checked by <code>ValidateAgainstCatalog</code>, not by <code>Validate</code>; see
 <a href="../../concepts/validation/#do-the-names-resolve">Validation</a>.</p>

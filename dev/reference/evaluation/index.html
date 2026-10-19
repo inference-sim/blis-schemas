@@ -13,10 +13,10 @@
         <link rel="canonical" href="https://inference-sim.github.io/blis-schemas/latest/reference/evaluation/">
       
       
-        <link rel="prev" href="../coefficients/">
+        <link rel="prev" href="../routing/">
       
       
-        <link rel="next" href="../kernel/">
+        <link rel="next" href="../measurement/">
       
       
         
@@ -823,6 +823,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -1052,6 +1058,62 @@
                 
   
   
+  
+  
+    <li class="md-nav__item">
+      <a href="../acceptance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Acceptance profiles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../routing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Routing profiles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
     
   
   
@@ -1157,6 +1219,34 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../measurement/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Measured run
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -1462,6 +1552,8 @@
       
         
       
+        
+      
     
     
     
@@ -1559,6 +1651,34 @@
     
   
     Documentation and releases
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/cross-repo-changes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changes across the repositories
   
 
     
@@ -1674,6 +1794,8 @@
 prediction for the same scenario can be compared with it. The fields follow what
 benchmark harnesses already report.</p>
 
+<p>For a validation case, use a <a href="../measurement/">measured run</a>, which also records
+provenance, licence terms and metric definitions.</p>
 <div class="language-yaml highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">EvaluationRun</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">llama-3.1-8b-on-h100-tp2-dp4</span>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="nt">scenario</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">llama-3.1-8b-on-h100</span>
@@ -1899,7 +2021,7 @@ prediction can be compared with it.</p>
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../coefficients/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Coefficient set">
+          <a href="../routing/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Routing profiles">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
@@ -1909,20 +2031,20 @@ prediction can be compared with it.</p>
                 Previous
               </span>
               <div class="md-ellipsis">
-                Coefficient set
+                Routing profiles
               </div>
             </div>
           </a>
         
         
           
-          <a href="../kernel/" class="md-footer__link md-footer__link--next" aria-label="Next: Kernel interface">
+          <a href="../measurement/" class="md-footer__link md-footer__link--next" aria-label="Next: Measured run">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Kernel interface
+                Measured run
               </div>
             </div>
             <div class="md-footer__button md-icon">

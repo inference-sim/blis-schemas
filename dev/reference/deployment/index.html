@@ -823,6 +823,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -1280,6 +1286,62 @@
   
   
     <li class="md-nav__item">
+      <a href="../acceptance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Acceptance profiles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../routing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Routing profiles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../evaluation/" class="md-nav__link">
         
   
@@ -1288,6 +1350,34 @@
     
   
     Evaluation run
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../measurement/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Measured run
   
 
     
@@ -1601,6 +1691,8 @@
       
         
       
+        
+      
     
     
     
@@ -1698,6 +1790,34 @@
     
   
     Documentation and releases
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/cross-repo-changes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changes across the repositories
   
 
     
@@ -2111,6 +2231,12 @@ beside a <code>colocated</code> pool.</p>
 <td>Data-parallel replicas resident on one node. Must divide <code>gpus_per_node</code> and not exceed <code>dp</code>. Zero means the launch decides.</td>
 </tr>
 <tr>
+<td><code>data_parallel_load_balancing</code></td>
+<td>string</td>
+<td>no</td>
+<td>How the data-parallel ranks are exposed, which decides what a router chooses between. One of the <a href="../vocabularies/#data-parallel-load-balancing">load-balancing modes</a>. Omitted, <code>internal</code>. <code>hybrid</code> and <code>external</code> need <code>dp</code> &gt; 1. The rules pack refuses <code>external</code> on a model without experts and <code>hybrid</code> without <code>dp_local</code>, and names the mode that runs when the engine resolves <code>hybrid</code> to another. <code>--api-server-count</code> is not part of it: it sets how many frontend processes share an endpoint, not which ranks a router can reach.</td>
+</tr>
+<tr>
 <td><code>pcp</code></td>
 <td>integer</td>
 <td>no</td>
@@ -2211,6 +2337,12 @@ on the engine release and is checked by its <a href="../rules/">rules pack</a>.<
 <td>Sequence cap per step.</td>
 </tr>
 <tr>
+<td><code>long_prefill_token_threshold</code></td>
+<td>integer</td>
+<td>no</td>
+<td>The most tokens of one prefill scheduled in a step, so a long prompt cannot take the whole token budget from the decodes beside it. Not negative; omitted or 0 leaves prefills uncapped. The engine refuses one above <code>max_model_len</code>. 0.31.0 waives it for a request alone in the scheduler; 0.29.0 does not.</td>
+</tr>
+<tr>
 <td><code>max_model_len</code></td>
 <td>integer or <code>auto</code></td>
 <td>no</td>
@@ -2235,10 +2367,28 @@ on the engine release and is checked by its <a href="../rules/">rules pack</a>.<
 <td>Omitted means the engine decides through its own disqualifying conditions.</td>
 </tr>
 <tr>
+<td><code>frontend</code></td>
+<td>string</td>
+<td>no</td>
+<td>The API server that renders and tokenizes each prompt: one of the <a href="../vocabularies/#frontends">frontends</a>. Omitted, <code>python</code>. <code>rust</code> is vLLM's vllm-rs frontend, selected by the environment variable <code>VLLM_USE_RUST_FRONTEND=1</code>, not a flag. It changes how long a request waits for admission, per prompt token.</td>
+</tr>
+<tr>
 <td><code>cudagraph_mode</code></td>
 <td>string</td>
 <td>no</td>
 <td>CUDA graph capture strategy.</td>
+</tr>
+<tr>
+<td><code>max_cudagraph_capture_size</code></td>
+<td>integer</td>
+<td>no</td>
+<td><code>compilation_config.max_cudagraph_capture_size</code>: the largest step, in tokens, a CUDA graph is captured for; a larger step runs eager. At least 1. Omitted, the release default, min(<code>max_num_seqs</code> x decode query length x 2, 512), or 1024 on SM100. The engine caps it at <code>max_num_batched_tokens</code> and truncates it to the largest size it generates. <code>cudagraph_mode: NONE</code>, or <code>--enforce-eager</code>, which has no field here, captures nothing.</td>
+</tr>
+<tr>
+<td><code>cudagraph_capture_sizes</code></td>
+<td>list of integers</td>
+<td>no</td>
+<td><code>compilation_config.cudagraph_capture_sizes</code>: the exact step sizes to capture, each at least 1, not empty. Sizes above <code>max_num_batched_tokens</code> are dropped. With <code>max_cudagraph_capture_size</code> too, that must be the largest kept, or the engine refuses the pair.</td>
 </tr>
 </tbody>
 </table>
@@ -2278,6 +2428,12 @@ on the engine release and is checked by its <a href="../rules/">rules pack</a>.<
 <td>boolean</td>
 <td>no</td>
 <td>Omitted means true, vLLM's default. <code>false</code> describes a deployment without prefix caching.</td>
+</tr>
+<tr>
+<td><code>swa_bounded_replay</code></td>
+<td>boolean</td>
+<td>no</td>
+<td>DeepSeek-V4.1 SWA bounded replay (<code>--swa-bounded-replay</code> / <code>--no-swa-bounded-replay</code>). <code>true</code> keeps the sliding-window cache out of prefix caching and recomputes a hit's last sliding window; <code>false</code> lets the window cache take part in prefix caching (retained window tails). Omitted, the engine's resolution: on in vLLM 0.31.0 under the V2 model runner, without prefill context parallelism and not on ROCm. Only DeepSeek-V4.1 reads it.</td>
 </tr>
 <tr>
 <td><code>mamba_cache_dtype</code></td>
@@ -2620,6 +2776,8 @@ registry coefficient, so it cannot be set here.</p>
   or <code>K</code>/<code>M</code>/<code>G</code>/<code>T</code> suffix fails to load, and so does one that comes to zero or is too
   large to hold;</li>
 <li><code>gpu_memory_utilization</code> is not finite or lies outside [0, 1];</li>
+<li><code>max_cudagraph_capture_size</code> is stated below 1, or <code>cudagraph_capture_sizes</code> is stated
+  empty or lists a size below 1;</li>
 <li><code>disable_custom_all_reduce</code> is true while <code>allreduce_backend</code> is <code>custom</code>;</li>
 <li><code>dbo</code> states a negative threshold, or an enabled <code>eplb</code> a negative
   <code>num_redundant_experts</code>;</li>

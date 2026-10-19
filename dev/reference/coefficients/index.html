@@ -16,7 +16,7 @@
         <link rel="prev" href="../hardware/">
       
       
-        <link rel="next" href="../evaluation/">
+        <link rel="next" href="../acceptance/">
       
       
         
@@ -823,6 +823,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -1196,6 +1202,62 @@
   
   
     <li class="md-nav__item">
+      <a href="../acceptance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Acceptance profiles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../routing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Routing profiles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../evaluation/" class="md-nav__link">
         
   
@@ -1204,6 +1266,34 @@
     
   
     Evaluation run
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../measurement/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Measured run
   
 
     
@@ -1517,6 +1607,8 @@
       
         
       
+        
+      
     
     
     
@@ -1614,6 +1706,34 @@
     
   
     Documentation and releases
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/cross-repo-changes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changes across the repositories
   
 
     
@@ -2060,7 +2180,13 @@ applicable entry supplies.</p>
 <td><code>measured</code></td>
 <td>—</td>
 <td>—</td>
-<td>The only method that allows <code>fitted: true</code>. A source is expected but not required.</td>
+<td>Allows <code>fitted: true</code>. A source is expected but not required.</td>
+</tr>
+<tr>
+<td><code>calibrated</code></td>
+<td>required</td>
+<td>at least one of kind <code>measured_case</code></td>
+<td>Allows <code>fitted: true</code>. <code>validated</code> must name the held-out metrics.</td>
 </tr>
 <tr>
 <td><code>literature</code></td>
@@ -2105,7 +2231,7 @@ does not declare.</p>
 <li>an entry has no name, or repeats another entry's name and scope;</li>
 <li><code>value</code> is not finite, <code>units</code> or <code>method</code> is not recognized, or <code>scope</code> is empty;</li>
 <li><code>value</code> is 0 with a method other than <code>not_charged</code>, or nonzero with <code>not_charged</code>;</li>
-<li><code>fitted</code> is true with a method other than <code>measured</code>;</li>
+<li><code>fitted</code> is true with a method other than <code>measured</code> or <code>calibrated</code>;</li>
 <li>a companion field the method requires, per the table above, is missing;</li>
 <li>a source has an unrecognized <code>kind</code> or <code>role</code>, or an empty <code>cite</code>;</li>
 <li><code>ci95</code> has a non-finite end, has <code>low</code> above <code>high</code>, or does not contain <code>value</code>.</li>
@@ -2163,13 +2289,13 @@ does not declare.</p>
         
         
           
-          <a href="../evaluation/" class="md-footer__link md-footer__link--next" aria-label="Next: Evaluation run">
+          <a href="../acceptance/" class="md-footer__link md-footer__link--next" aria-label="Next: Acceptance profiles">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Evaluation run
+                Acceptance profiles
               </div>
             </div>
             <div class="md-footer__button md-icon">
