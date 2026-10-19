@@ -16,11 +16,15 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/inference-sim/blis-schemas/spec/acceptance"
 	"github.com/inference-sim/blis-schemas/spec/coefficient"
 	"github.com/inference-sim/blis-schemas/spec/deployment"
 	"github.com/inference-sim/blis-schemas/spec/evaluation"
 	"github.com/inference-sim/blis-schemas/spec/hardware"
+	"github.com/inference-sim/blis-schemas/spec/measurement"
 	"github.com/inference-sim/blis-schemas/spec/model"
+	"github.com/inference-sim/blis-schemas/spec/router"
+	"github.com/inference-sim/blis-schemas/spec/routing"
 	"github.com/inference-sim/blis-schemas/spec/scenario"
 	"github.com/inference-sim/blis-schemas/spec/workload"
 )
@@ -67,10 +71,55 @@ func TestDocExamplesValidate(t *testing.T) {
 			Coefficients: []*coefficient.Set{fixture(LoadCoefficientSet(ex("coefficient-set.yaml")))},
 		}))
 	})
+	t.Run("acceptance profile set", func(t *testing.T) {
+		requireSilent(t, "acceptance profile set", Validate(Bundle{
+			AcceptanceProfiles: []*acceptance.ProfileSet{fixture(LoadAcceptanceProfileSet(ex("acceptance-profile-set.yaml")))},
+		}))
+	})
+	t.Run("replay", func(t *testing.T) {
+		requireSilent(t, "replay", Validate(Bundle{
+			Scenario: fixture(LoadScenario(ex("replay-binding.yaml"))),
+		}))
+	})
+	t.Run("catalog replay and a reference to it", func(t *testing.T) {
+		w := fixture(LoadCatalogWorkload(ex("workload-replay.yaml")))
+		requireSilent(t, "catalog replay", Validate(Bundle{ReplayWorkload: w.Replay}))
+		s := fixture(LoadScenario(ex("replay-reference.yaml")))
+		requireSilent(t, "replay reference", Validate(Bundle{Scenario: s}))
+		root := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(root, "workloads"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		b, err := os.ReadFile(ex("workload-replay.yaml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "workloads", "workload-replay.yaml"), b, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ResolveReplay(root, s.Workload.Replay); err != nil {
+			t.Errorf("the reference example does not resolve against the catalog example: %v", err)
+		}
+	})
+	t.Run("acceptance pin", func(t *testing.T) {
+		requireSilent(t, "acceptance pin", Validate(Bundle{
+			Scenario: fixture(LoadScenario(ex("scenario-acceptance.yaml"))),
+		}))
+	})
 	t.Run("evaluation run", func(t *testing.T) {
 		requireSilent(t, "evaluation run", Validate(Bundle{
 			Evaluation: fixture(LoadEvaluationRun(ex("evaluation-run.yaml"))),
 		}))
+	})
+	t.Run("measured run and its licence registry", func(t *testing.T) {
+		reg := fixture(LoadMeasurementSources(ex("measurement-sources.yaml")))
+		for _, p := range reg.Validate().All() {
+			t.Errorf("measurement-sources.yaml: %s", p)
+		}
+		run := fixture(LoadMeasuredRun(ex("measured-run.yaml")))
+		for _, p := range run.ValidateWithSources(reg).All() {
+			t.Errorf("measured-run.yaml: %s", p)
+		}
 	})
 	t.Run("model graph", func(t *testing.T) {
 		requireSilent(t, "model graph", Validate(Bundle{
@@ -89,6 +138,9 @@ func TestDocExamplesValidate(t *testing.T) {
 		"scenario-disaggregated.yaml": true, "deployment-disaggregated.yaml": true,
 		"coefficient-set.yaml": true, "evaluation-run.yaml": true, "trace-binding.yaml": true,
 		"model-graph-deepseek-v4.1.yaml": true,
+		"acceptance-profile-set.yaml":    true, "scenario-acceptance.yaml": true,
+		"replay-binding.yaml": true, "workload-replay.yaml": true, "replay-reference.yaml": true,
+		"measured-run.yaml": true, "measurement-sources.yaml": true,
 	}
 	all, err := filepath.Glob(ex("*"))
 	if err != nil {
@@ -102,7 +154,8 @@ func TestDocExamplesValidate(t *testing.T) {
 
 	// The by-name references the examples make must resolve against the vendored catalog,
 	// or an example would name a chip or a workload the reader cannot find.
-	for _, name := range []string{"scenario.yaml", "scenario-disaggregated.yaml", "trace-binding.yaml"} {
+	for _, name := range []string{"scenario.yaml", "scenario-disaggregated.yaml", "trace-binding.yaml",
+		"scenario-acceptance.yaml", "replay-binding.yaml"} {
 		s := fixture(LoadScenario(ex(name)))
 		rep := ValidateAgainstCatalog(Bundle{Scenario: s}, catalogFixtures, "")
 		for _, p := range rep.Problems() {
@@ -121,50 +174,93 @@ var documented = map[string]struct {
 	typ  reflect.Type
 	omit []string
 }{
-	"scenario.Scenario":       {typ: reflect.TypeOf(scenario.Scenario{})},
-	"scenario.Cluster":        {typ: reflect.TypeOf(scenario.Cluster{})},
-	"workload.Binding":        {typ: reflect.TypeOf(workload.Binding{})},
-	"workload.TraceRef":       {typ: reflect.TypeOf(workload.TraceRef{})},
-	"workload.TraceHeader":    {typ: reflect.TypeOf(workload.TraceHeader{})},
-	"workload.TraceServer":    {typ: reflect.TypeOf(workload.TraceServer{})},
-	"workload.SLODimTargets":  {typ: reflect.TypeOf(workload.SLODimTargets{})},
-	"workload.Shape":          {typ: reflect.TypeOf(workload.Shape{})},
-	"workload.Distribution":   {typ: reflect.TypeOf(workload.Distribution{})},
-	"deployment.Deployment":   {typ: reflect.TypeOf(deployment.Deployment{})},
-	"deployment.Pool":         {typ: reflect.TypeOf(deployment.Pool{})},
-	"deployment.Parallelism":  {typ: reflect.TypeOf(deployment.Parallelism{})},
-	"deployment.Engine":       {typ: reflect.TypeOf(deployment.Engine{})},
-	"deployment.DBO":          {typ: reflect.TypeOf(deployment.DBO{})},
-	"deployment.EPLB":         {typ: reflect.TypeOf(deployment.EPLB{})},
-	"deployment.Speculative":  {typ: reflect.TypeOf(deployment.Speculative{})},
-	"deployment.EngramConfig": {typ: reflect.TypeOf(deployment.EngramConfig{})},
-	"deployment.Offload":      {typ: reflect.TypeOf(deployment.Offload{})},
-	"deployment.Tier":         {typ: reflect.TypeOf(deployment.Tier{})},
-	"deployment.PDTransfer":   {typ: reflect.TypeOf(deployment.PDTransfer{})},
-	"model.Graph":             {typ: reflect.TypeOf(model.Graph{})},
-	"model.Derivation":        {typ: reflect.TypeOf(model.Derivation{})},
-	"model.GlobalShape":       {typ: reflect.TypeOf(model.GlobalShape{})},
-	"model.LayerKind":         {typ: reflect.TypeOf(model.LayerKind{})},
-	"model.Stack":             {typ: reflect.TypeOf(model.Stack{})},
-	"model.Speculator":        {typ: reflect.TypeOf(model.Speculator{})},
-	"model.Node":              {typ: reflect.TypeOf(model.Node{})},
-	"model.Cache":             {typ: reflect.TypeOf(model.Cache{})},
-	"model.ContextWork":       {typ: reflect.TypeOf(model.ContextWork{})},
-	"model.WeightScale":       {typ: reflect.TypeOf(model.WeightScale{})},
-	"model.ArchOverride":      {typ: reflect.TypeOf(model.ArchOverride{})},
-	"model.NodeOverride":      {typ: reflect.TypeOf(model.NodeOverride{})},
-	"model.CacheOverride":     {typ: reflect.TypeOf(model.CacheOverride{})},
-	"model.Identity":          {typ: reflect.TypeOf(model.Identity{})},
-	"model.Source":            {typ: reflect.TypeOf(model.Source{})},
-	"hardware.Chip":           {typ: reflect.TypeOf(hardware.Chip{})},
-	"hardware.Fabric":         {typ: reflect.TypeOf(hardware.Fabric{})},
-	"hardware.StorageDevice":  {typ: reflect.TypeOf(hardware.StorageDevice{}), omit: []string{"name"}},
-	"coefficient.Set":         {typ: reflect.TypeOf(coefficient.Set{})},
-	"coefficient.Entry":       {typ: reflect.TypeOf(coefficient.Entry{}), omit: []string{"name"}},
-	"coefficient.Source":      {typ: reflect.TypeOf(coefficient.Source{})},
-	"coefficient.Scope":       {typ: reflect.TypeOf(coefficient.Scope{})},
-	"evaluation.Run":          {typ: reflect.TypeOf(evaluation.Run{})},
-	"evaluation.Point":        {typ: reflect.TypeOf(evaluation.Point{})},
+	"scenario.Scenario": {typ: reflect.TypeOf(scenario.Scenario{})},
+	"scenario.Cluster":  {typ: reflect.TypeOf(scenario.Cluster{})},
+	"workload.Binding":  {typ: reflect.TypeOf(workload.Binding{})},
+	"workload.TraceRef": {typ: reflect.TypeOf(workload.TraceRef{})},
+	"workload.Replay": {typ: reflect.TypeOf(workload.Replay{}),
+		omit: keyList(reflect.TypeOf(workload.ReplayDefinition{}))},
+	"workload.ReplayDefinition": {typ: reflect.TypeOf(workload.ReplayDefinition{})},
+	"workload.Corpus":           {typ: reflect.TypeOf(workload.Corpus{})},
+	"workload.CorpusSource":     {typ: reflect.TypeOf(workload.CorpusSource{})},
+	"workload.TrajectoryStart":  {typ: reflect.TypeOf(workload.TrajectoryStart{})},
+	"workload.Warmup":           {typ: reflect.TypeOf(workload.Warmup{})},
+	"workload.TraceHeader":      {typ: reflect.TypeOf(workload.TraceHeader{})},
+	"workload.TokenBlocks":      {typ: reflect.TypeOf(workload.TokenBlocks{})},
+	"workload.TraceServer":      {typ: reflect.TypeOf(workload.TraceServer{})},
+	"workload.SLODimTargets":    {typ: reflect.TypeOf(workload.SLODimTargets{})},
+	"workload.Shape":            {typ: reflect.TypeOf(workload.Shape{})},
+	"workload.Distribution":     {typ: reflect.TypeOf(workload.Distribution{})},
+	"deployment.Deployment":     {typ: reflect.TypeOf(deployment.Deployment{})},
+	"deployment.Pool":           {typ: reflect.TypeOf(deployment.Pool{})},
+	"deployment.Parallelism":    {typ: reflect.TypeOf(deployment.Parallelism{})},
+	"deployment.Engine":         {typ: reflect.TypeOf(deployment.Engine{})},
+	"deployment.DBO":            {typ: reflect.TypeOf(deployment.DBO{})},
+	"deployment.EPLB":           {typ: reflect.TypeOf(deployment.EPLB{})},
+	"deployment.Speculative":    {typ: reflect.TypeOf(deployment.Speculative{})},
+	"deployment.EngramConfig":   {typ: reflect.TypeOf(deployment.EngramConfig{})},
+	"deployment.Offload":        {typ: reflect.TypeOf(deployment.Offload{})},
+	"deployment.Tier":           {typ: reflect.TypeOf(deployment.Tier{})},
+	"deployment.PDTransfer":     {typ: reflect.TypeOf(deployment.PDTransfer{})},
+	"model.Graph":               {typ: reflect.TypeOf(model.Graph{})},
+	"model.Derivation":          {typ: reflect.TypeOf(model.Derivation{})},
+	"model.GlobalShape":         {typ: reflect.TypeOf(model.GlobalShape{})},
+	"model.LayerKind":           {typ: reflect.TypeOf(model.LayerKind{})},
+	"model.Stack":               {typ: reflect.TypeOf(model.Stack{})},
+	"model.Speculator":          {typ: reflect.TypeOf(model.Speculator{})},
+	"model.Node":                {typ: reflect.TypeOf(model.Node{})},
+	"model.Cache":               {typ: reflect.TypeOf(model.Cache{})},
+	"model.ContextWork":         {typ: reflect.TypeOf(model.ContextWork{})},
+	"model.WeightScale":         {typ: reflect.TypeOf(model.WeightScale{})},
+	"model.ArchOverride":        {typ: reflect.TypeOf(model.ArchOverride{})},
+	"model.NodeOverride":        {typ: reflect.TypeOf(model.NodeOverride{})},
+	"model.CacheOverride":       {typ: reflect.TypeOf(model.CacheOverride{})},
+	"model.Identity":            {typ: reflect.TypeOf(model.Identity{})},
+	"model.Source":              {typ: reflect.TypeOf(model.Source{})},
+	"hardware.Chip":             {typ: reflect.TypeOf(hardware.Chip{})},
+	"hardware.Fabric":           {typ: reflect.TypeOf(hardware.Fabric{})},
+	"hardware.StorageDevice":    {typ: reflect.TypeOf(hardware.StorageDevice{}), omit: []string{"name"}},
+	"coefficient.Set":           {typ: reflect.TypeOf(coefficient.Set{})},
+	"coefficient.Entry":         {typ: reflect.TypeOf(coefficient.Entry{}), omit: []string{"name"}},
+	"coefficient.Source":        {typ: reflect.TypeOf(coefficient.Source{})},
+	"coefficient.Scope":         {typ: reflect.TypeOf(coefficient.Scope{})},
+	"evaluation.Run":            {typ: reflect.TypeOf(evaluation.Run{})},
+	"evaluation.Point":          {typ: reflect.TypeOf(evaluation.Point{})},
+	"acceptance.ProfileSet":     {typ: reflect.TypeOf(acceptance.ProfileSet{})},
+	"acceptance.Profile":        {typ: reflect.TypeOf(acceptance.Profile{})},
+	"acceptance.Provenance":     {typ: reflect.TypeOf(acceptance.Provenance{})},
+	"acceptance.Sampling":       {typ: reflect.TypeOf(acceptance.Sampling{})},
+	"acceptance.Value":          {typ: reflect.TypeOf(acceptance.Value{})},
+	"acceptance.Pin":            {typ: reflect.TypeOf(acceptance.Pin{})},
+	"routing.ProfileSet":        {typ: reflect.TypeOf(routing.ProfileSet{})},
+	"routing.Profile":           {typ: reflect.TypeOf(routing.Profile{})},
+	"routing.Point":             {typ: reflect.TypeOf(routing.Point{})},
+	"routing.Provenance":        {typ: reflect.TypeOf(routing.Provenance{})},
+	"routing.Value":             {typ: reflect.TypeOf(routing.Value{})},
+	"routing.Pin":               {typ: reflect.TypeOf(routing.Pin{})},
+	"measurement.MeasuredRun":   {typ: reflect.TypeOf(measurement.MeasuredRun{})},
+	"measurement.Source":        {typ: reflect.TypeOf(measurement.Source{})},
+	"measurement.Adapter":       {typ: reflect.TypeOf(measurement.Adapter{})},
+	"measurement.Input":         {typ: reflect.TypeOf(measurement.Input{})},
+	"measurement.Extraction":    {typ: reflect.TypeOf(measurement.Extraction{})},
+	"measurement.ClientSpec":    {typ: reflect.TypeOf(measurement.ClientSpec{})},
+	"measurement.RampUp":        {typ: reflect.TypeOf(measurement.RampUp{})},
+	"measurement.Tokenizer":     {typ: reflect.TypeOf(measurement.Tokenizer{})},
+	"measurement.MetricDef":     {typ: reflect.TypeOf(measurement.MetricDef{})},
+	"measurement.Point":         {typ: reflect.TypeOf(measurement.Point{})},
+	"measurement.Load":          {typ: reflect.TypeOf(measurement.Load{})},
+	"measurement.Value":         {typ: reflect.TypeOf(measurement.Value{})},
+	"measurement.Realized":      {typ: reflect.TypeOf(measurement.Realized{})},
+	"measurement.Noise":         {typ: reflect.TypeOf(measurement.Noise{})},
+	"measurement.ProvenanceRow": {typ: reflect.TypeOf(measurement.ProvenanceRow{})},
+	"measurement.Observed":      {typ: reflect.TypeOf(measurement.Observed{})},
+	"measurement.DiffEntry":     {typ: reflect.TypeOf(measurement.DiffEntry{})},
+	"measurement.Registry":      {typ: reflect.TypeOf(measurement.Registry{})},
+	"measurement.License":       {typ: reflect.TypeOf(measurement.License{})},
+	"measurement.Evidence":      {typ: reflect.TypeOf(measurement.Evidence{})},
+	"router.Router":             {typ: reflect.TypeOf(router.Router{})},
+	"router.EPP":                {typ: reflect.TypeOf(router.EPP{})},
+	"router.ConfigRef":          {typ: reflect.TypeOf(router.ConfigRef{})},
 }
 
 var (
@@ -287,7 +383,10 @@ func TestDocEveryDocumentTypeHasATable(t *testing.T) {
 		reflect.TypeOf(model.Graph{}), reflect.TypeOf(model.Identity{}),
 		reflect.TypeOf(hardware.Chip{}), reflect.TypeOf(hardware.Fabric{}),
 		reflect.TypeOf(hardware.StorageDevice{}), reflect.TypeOf(coefficient.Set{}),
+		reflect.TypeOf(acceptance.ProfileSet{}),
+		reflect.TypeOf(routing.ProfileSet{}),
 		reflect.TypeOf(workload.Shape{}), reflect.TypeOf(evaluation.Run{}),
+		reflect.TypeOf(measurement.MeasuredRun{}), reflect.TypeOf(measurement.Registry{}),
 	}
 	// Types whose wire form is not a mapping, so they have no key table.
 	notMappings := map[reflect.Type]bool{reflect.TypeOf(coefficient.Interval{}): true}
@@ -320,4 +419,15 @@ func TestDocEveryDocumentTypeHasATable(t *testing.T) {
 	for _, r := range roots {
 		walk(r)
 	}
+}
+
+// keyList returns a type's YAML keys, for a table that leaves out an inlined type's keys
+// documented in that type's own table.
+func keyList(t reflect.Type) []string {
+	var out []string
+	for k := range yamlKeys(t) {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }

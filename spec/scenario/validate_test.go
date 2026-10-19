@@ -3,6 +3,7 @@ package scenario
 import (
 	"testing"
 
+	"github.com/inference-sim/blis-schemas/spec/acceptance"
 	"github.com/inference-sim/blis-schemas/spec/workload"
 )
 
@@ -110,6 +111,32 @@ func TestRejects(t *testing.T) {
 			tc.mutate(s)
 			if p := s.Validate(); p.OK() {
 				t.Fatal("expected rejection, got none")
+			}
+		})
+	}
+}
+
+// The acceptance pin is optional, and a present one must be well formed.
+func TestScenarioAcceptancePin(t *testing.T) {
+	length := 2.8
+	for _, c := range []struct {
+		name string
+		pin  *acceptance.Pin
+		ok   bool
+	}{
+		{"omitted", nil, true},
+		{"a named set", &acceptance.Pin{Profiles: "inferencex-golden-al"}, true},
+		{"an inline value", &acceptance.Pin{Value: &acceptance.Value{NumSpecTokens: 3, AcceptanceLength: &length}}, true},
+		{"empty", &acceptance.Pin{}, false},
+		{"set and value", &acceptance.Pin{Profiles: "x",
+			Value: &acceptance.Value{NumSpecTokens: 3, AcceptanceLength: &length}}, false},
+		{"value above K+1", &acceptance.Pin{Value: &acceptance.Value{NumSpecTokens: 1, AcceptanceLength: &length}}, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s := singleNode()
+			s.Acceptance = c.pin
+			if p := s.Validate(); p.OK() != c.ok {
+				t.Errorf("OK = %v, want %v:\n%s", p.OK(), c.ok, p.Error())
 			}
 		})
 	}

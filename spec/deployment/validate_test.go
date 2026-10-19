@@ -662,7 +662,7 @@ func TestRankFitPerNode(t *testing.T) {
 		{"no even split exists", Parallelism{TP: 9, PP: 1, DP: 1, DPLocal: 1}, 2, 8, true},
 		{"three nodes split it evenly", Parallelism{TP: 9, PP: 1, DP: 1, DPLocal: 1}, 3, 8, false},
 
-		// llm-d shapes, from the curvebender manifests: one vLLM per pod, dp_local
+		// llm-d shapes, from internal llm-d deployment manifests: one vLLM per pod, dp_local
 		// replicas of tp each on every node. All must fit.
 		{"llm-d wide-EP decode, LWS size 2", Parallelism{TP: 1, PP: 1, DP: 16, DPLocal: 8,
 			EnableExpertParallel: true}, 2, 8, false},

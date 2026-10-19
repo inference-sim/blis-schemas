@@ -15,13 +15,14 @@ func TestVocabulariesAreClosed(t *testing.T) {
 			"tokens", "us_per_hop", "us_per_layer", "us_per_load",
 			"us_per_request", "us_per_step", "us_per_token", "us_per_transfer"}},
 		{"methods", AllMethods(), []string{
-			"assumed", "copied", "literature", "measured", "not_charged",
-			"vendor_spec"}},
+			"assumed", "calibrated", "copied", "literature", "measured",
+			"not_charged", "vendor_spec"}},
 		{"scope keys", AllScopeKeys(), []string{
 			"ep", "hardware", "model", "nodes_spanned", "tp"}},
 		{"provenances", AllProvenances(), []string{"derived", "vendor_spec"}},
 		{"source kinds", AllSourceKinds(), []string{
-			"datasheet", "discussion", "model", "publication", "vendor_doc"}},
+			"datasheet", "discussion", "measured_case", "model", "publication",
+			"vendor_doc"}},
 		{"source roles", AllSourceRoles(), []string{
 			"primary", "supporting", "upper_bound"}},
 	}
@@ -61,7 +62,7 @@ func TestUnknownValuesRejected(t *testing.T) {
 // judgement. A vendor spec counts as evidenced although it is nominal, which is why
 // the method is not a quality ranking.
 func TestEvidenced(t *testing.T) {
-	for _, m := range []Method{MethodMeasured, MethodLiterature, MethodVendorSpec} {
+	for _, m := range []Method{MethodMeasured, MethodLiterature, MethodVendorSpec, MethodCalibrated} {
 		if !m.Evidenced() {
 			t.Errorf("%s should be evidenced", m)
 		}

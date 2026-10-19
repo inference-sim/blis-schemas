@@ -428,6 +428,16 @@ func validateParallelism(p *validate.Problems, at string, pl Parallelism) {
 	// engine supports it from e6dc16cebd, and llm-d deploys it (DP 4 x PCP 8). A
 	// release that refuses it says so in its rules pack.
 	validateDecodeContextParallel(p, at, pl)
+	// A load-balancing mode other than internal exposes ranks to a router; with one rank
+	// there is nothing to expose. Which layouts each mode accepts beyond that is the
+	// release's (rules packs).
+	switch m := pl.DataParallelLoadBalancing; {
+	case !m.Valid():
+		p.Field(at+".parallel.data_parallel_load_balancing", "%q is not one of %v", m,
+			[]DPLoadBalancing{DPLBInternal, DPLBHybrid, DPLBExternal})
+	case m.Mode() != DPLBInternal && pl.DP <= 1:
+		p.Field(at+".parallel.data_parallel_load_balancing", "%s load balancing needs dp > 1, got dp %d", m, pl.DP)
+	}
 	if pl.DPLocal < 0 {
 		// The engine constrains it ge=0; zero is unset here, as there.
 		p.Field(at+".parallel.dp_local", "must not be negative, got %d", pl.DPLocal)
@@ -533,10 +543,15 @@ func admissibleDCP(pcp int, block *big.Int) []*big.Int {
 }
 
 func validateEngine(p *validate.Problems, at string, e Engine) {
+	if !e.Frontend.Valid() {
+		p.Field(at+".engine.frontend", "%q is not one of %v", e.Frontend,
+			[]Frontend{FrontendPython, FrontendRust})
+	}
 	for field, v := range map[string]int{
 		"block_size": e.BlockSize, "max_num_batched_tokens": e.MaxNumBatchedTokens,
-		"max_num_seqs":                e.MaxNumSeqs,
-		"cp_kv_cache_interleave_size": e.CPKVCacheInterleaveSize,
+		"max_num_seqs":                 e.MaxNumSeqs,
+		"long_prefill_token_threshold": e.LongPrefillTokenThreshold,
+		"cp_kv_cache_interleave_size":  e.CPKVCacheInterleaveSize,
 	} {
 		if v < 0 {
 			p.Field(at+".engine."+field, "must not be negative")
@@ -569,6 +584,20 @@ func validateEngine(p *validate.Problems, at string, e Engine) {
 		(e.GPUMemoryUtilization < 0 || e.GPUMemoryUtilization > 1) {
 		p.Field(at+".engine.gpu_memory_utilization",
 			"must lie in [0, 1] (0 means unset), got %v", e.GPUMemoryUtilization)
+	}
+	// The engine asserts the capture maximum is at least 1 once it is capped at
+	// max_num_batched_tokens, and that a stated size list is non-empty (v0.31.0
+	// vllm/config/vllm.py _set_cudagraph_sizes). A size below 1 captures no step.
+	if m := e.MaxCUDAGraphCaptureSize; m != nil && *m < 1 {
+		p.Field(at+".engine.max_cudagraph_capture_size", "must be at least 1, got %d; omit it for the release default", *m)
+	}
+	if e.CUDAGraphCaptureSizes != nil && len(e.CUDAGraphCaptureSizes) == 0 {
+		p.Field(at+".engine.cudagraph_capture_sizes", "must list at least one size; omit it to generate them")
+	}
+	for i, s := range e.CUDAGraphCaptureSizes {
+		if s < 1 {
+			p.Field(fmt.Sprintf("%s.engine.cudagraph_capture_sizes[%d]", at, i), "must be at least 1, got %d", s)
+		}
 	}
 	// The engine types both thresholds Field(ge=0) whether or not overlap is enabled.
 	if e.DBO != nil {

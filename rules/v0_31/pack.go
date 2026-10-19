@@ -40,6 +40,7 @@
 package v0_31
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -222,6 +223,18 @@ func Pack() *rules.Pack {
 		EngramArchitectures: set(rules.ArchDeepseekV41, "Qwen4ExpForCausalLM",
 			"Qwen4ExpForConditionalGeneration"),
 		EngramCPUOffloadDefault: true,
+
+		// get_kv_cache_groups (vllm/v1/core/kv_cache_utils.py:2300-2398): one uniform-type
+		// group, else _get_packed_kv_cache_groups (:2001-2120), whose is_state_bucket takes
+		// MambaSpec and CircularBufferSpec buckets, and a sliding-window bucket when no
+		// repeat pattern is fixed; _get_kv_cache_bytes_per_block (:1606-1632) rounds the
+		// widest group to the lcm of every block_stride_alignment.
+		// The scheduler waives the cap when the request is the only running or waiting
+		// one (vllm/v1/core/sched/scheduler.py:611-620).
+		LongPrefillExemptsLoneRequest: true,
+
+		KVCachePacking: rules.KVCachePacking{Modeled: true, StateCacheBuckets: true,
+			LoneWindowIsState: true, BlockStrideAlignment: true, StateRingFromSpecTokens: true},
 	}
 	p.Rules = ruleList(p)
 	return p
@@ -892,6 +905,94 @@ func ruleList(p *rules.Pack) []rules.Rule {
 					out.RuleWarnf("sequence-parallel-moe-implied",
 						"%s: engine %s makes the MoE input sequence-parallel here (backend %q, tp %d, dp %d), so the model graph must emit a reduce-scatter and all-gather pair rather than an all-reduce",
 						at, p.Version, backend, pl.TP, pl.DP)
+				})
+			},
+		},
+		{
+			Name:    "data-parallel-load-balancing",
+			Because: "this release refuses external data-parallel load balancing for a model without experts and hybrid without data_parallel_size_local, switches hybrid with one rank per node to external, and runs hybrid with every rank on one node as internal (vllm/engine/arg_utils.py create_engine_config); the mode decides which endpoints a router can choose between",
+			Check: func(in rules.Input, out *validate.Problems) {
+				forEachPool(in, func(at string, pool deployment.Pool) {
+					pl := pool.Parallel
+					stated := pl.DataParallelLoadBalancing.Mode()
+					if stated == deployment.DPLBInternal || pl.DP <= 1 {
+						return
+					}
+					if stated == deployment.DPLBHybrid && pl.DPLocal < 1 {
+						out.RuleErrorf("data-parallel-load-balancing",
+							"%s.parallel: hybrid load balancing needs dp_local, the ranks on each node; engine %s refuses it without --data-parallel-size-local",
+							at, p.Version)
+						return
+					}
+					runs := p.ResolveDPLoadBalancing(pl)
+					if runs != stated {
+						out.RuleWarnf("data-parallel-load-balancing",
+							"%s.parallel: hybrid load balancing with dp_local %d of dp %d runs as %s on engine %s",
+							at, pl.DPLocal, pl.DP, runs, p.Version)
+					}
+					if runs == deployment.DPLBExternal && in.Model != nil && totalExperts(in) == 0 {
+						out.RuleErrorf("data-parallel-load-balancing",
+							"%s.parallel: external data-parallel load balancing on a model without experts; engine %s refuses it and asks for independent instances instead",
+							at, p.Version)
+					}
+				})
+			},
+		},
+		{
+			Name:    "long-prefill-threshold-within-max-model-len",
+			Because: "this release refuses at startup a long_prefill_token_threshold greater than max_model_len (vllm/config/scheduler.py verify_max_model_len)",
+			Check: func(in rules.Input, out *validate.Problems) {
+				forEachEngine(in, func(at string, e deployment.Engine) {
+					n, ok := e.MaxModelLen.Stated()
+					if ok && e.LongPrefillTokenThreshold > n {
+						out.RuleErrorf("long-prefill-threshold-within-max-model-len",
+							"%s.engine: long_prefill_token_threshold %d exceeds max_model_len %d; engine %s refuses it at startup",
+							at, e.LongPrefillTokenThreshold, n, p.Version)
+					}
+				})
+			},
+		},
+		{
+			Name:    "cudagraph-capture-sizes",
+			Because: "this release refuses a stated max_cudagraph_capture_size that is not the largest of the stated cudagraph_capture_sizes it keeps, caps the maximum at max_num_batched_tokens, drops sizes above it, and truncates a maximum off its capture stride to the largest size it generates (vllm/config/vllm.py _set_cudagraph_sizes); a step larger than the size that runs is executed eager, so the size that runs is the one to price",
+			Check: func(in rules.Input, out *validate.Problems) {
+				forEachEngine(in, func(at string, e deployment.Engine) {
+					stated := e.MaxCUDAGraphCaptureSize != nil || e.CUDAGraphCaptureSizes != nil
+					if !stated {
+						return
+					}
+					if e.CUDAGraphMode == "NONE" {
+						out.RuleWarnf("cudagraph-capture-sizes",
+							"%s.engine: cudagraph_mode NONE captures no graph, so engine %s ignores the stated capture sizes",
+							at, p.Version)
+						return
+					}
+					c, _, err := p.CUDAGraphCaptureSizes(e)
+					switch {
+					case errors.Is(err, rules.ErrCUDAGraphCaptureInconsistent):
+						out.RuleErrorf("cudagraph-capture-sizes",
+							"%s.engine: max_cudagraph_capture_size %d is not the largest of the cudagraph_capture_sizes engine %s keeps (%d); it refuses the pair at startup",
+							at, *e.MaxCUDAGraphCaptureSize, p.Version, c.Max)
+						return
+					case err != nil:
+						// max_num_batched_tokens is unstated, so the cap cannot be applied here.
+						return
+					}
+					if c.Capped {
+						out.RuleWarnf("cudagraph-capture-sizes",
+							"%s.engine: max_cudagraph_capture_size %d exceeds max_num_batched_tokens %d; engine %s captures up to %d",
+							at, *e.MaxCUDAGraphCaptureSize, e.MaxNumBatchedTokens, p.Version, c.Max)
+					}
+					if c.Truncated {
+						out.RuleWarnf("cudagraph-capture-sizes",
+							"%s.engine: max_cudagraph_capture_size %d is off the capture stride; engine %s truncates it to %d",
+							at, *e.MaxCUDAGraphCaptureSize, p.Version, c.Max)
+					}
+					if len(c.Dropped) > 0 {
+						out.RuleWarnf("cudagraph-capture-sizes",
+							"%s.engine: cudagraph_capture_sizes %v exceed max_num_batched_tokens %d; engine %s drops them",
+							at, c.Dropped, e.MaxNumBatchedTokens, p.Version)
+					}
 				})
 			},
 		},

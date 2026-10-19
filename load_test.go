@@ -463,8 +463,8 @@ RDMA: true
 
 // TestLoadDeploymentDCPKnobs: a deployment can state each of the engine's three
 // decode-context-parallel knobs under the engine's own names, and an omitted one stays
-// unstated rather than being read as a value. The prefill pool is the shape of the
-// curvebender glm-5.3 canary, which passes --dcp-comm-backend ag_rs.
+// unstated rather than being read as a value. The prefill pool is the shape of a
+// glm-5.3 canary from an internal llm-d deployment, which passes --dcp-comm-backend ag_rs.
 func TestLoadDeploymentDCPKnobs(t *testing.T) {
 	path := write(t, "d.yaml", `
 kind: Deployment

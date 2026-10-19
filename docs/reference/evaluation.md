@@ -4,6 +4,9 @@
 prediction for the same scenario can be compared with it. The fields follow what
 benchmark harnesses already report.</p>
 
+For a validation case, use a [measured run](measurement.md), which also records
+provenance, licence terms and metric definitions.
+
 ```yaml
 --8<-- "docs/examples/evaluation-run.yaml"
 ```

@@ -7,9 +7,12 @@
 // A trace is a concrete corpus — real per-request lengths, arrival timestamps, and a
 // prefix TREE — captured in an external file this package references by path.
 //
-// A Scenario's "what traffic" slot is a Binding: a sum type over those two fidelities.
-// The slot is single on purpose, so a scenario names traffic once, distributional or
-// concrete, rather than carrying two fields that could disagree.
+// A third arm, a Replay, names a harness's agentic trace-replay scenario over a pinned
+// corpus, where the harness decides when each request is sent.
+//
+// A Scenario's "what traffic" slot is a Binding: a sum type over those three. The slot is
+// single on purpose, so a scenario names traffic once rather than carrying fields that
+// could disagree.
 package workload
 
 import (
@@ -18,6 +21,8 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/inference-sim/blis-schemas/internal/validate"
+	"github.com/inference-sim/blis-schemas/spec/acceptance"
+	"github.com/inference-sim/blis-schemas/spec/routing"
 )
 
 // Shape is one traffic class. Token counts are per request.
@@ -45,6 +50,19 @@ type Shape struct {
 
 	Prompt Distribution `yaml:"prompt"`
 	Output Distribution `yaml:"output"`
+
+	// Category and Thinking select the registry's acceptance profile for this traffic
+	// when the deployment speculates: Category names the kind of prompts (SPEED-Bench's
+	// "coding", for one), Thinking whether the model reasons. Acceptance, when set, is
+	// the traffic's own measured acceptance, which outranks the registry's. All three are
+	// optional; a speculative run that needs a profile and finds no category is refused
+	// rather than guessed (see acceptance.Resolve).
+	Category   string              `yaml:"category,omitempty"`
+	Thinking   acceptance.Thinking `yaml:"thinking,omitempty"`
+	Acceptance *acceptance.Value   `yaml:"acceptance,omitempty"`
+	// Routing is the traffic's own measured expert-parallel routing imbalance, which
+	// outranks the registry's profile for its Category (see routing.Resolve).
+	Routing *routing.Value `yaml:"routing,omitempty"`
 }
 
 // UnmarshalYAML accepts the catalog's `_comment`-prefixed provenance keys and strips them
@@ -105,14 +123,14 @@ func (d *Distribution) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-// Binding is a Scenario's "what traffic" slot: a sum type with two arms, exactly one of
-// which is set. Shape references a catalog workload Shape — the distributional arm a
+// Binding is a Scenario's "what traffic" slot: a sum type with three arms, exactly one
+// of which is set. Shape references a catalog workload Shape — the distributional arm a
 // Scenario has always carried; Trace references an external captured trace — the
-// concrete arm. A Scenario that poses a capacity question with no traffic omits the
+// concrete arm; Replay describes a harness-driven agentic replay (see Replay). A Scenario that poses a capacity question with no traffic omits the
 // binding entirely (a nil *Binding on the Scenario); a Binding that is present must
 // choose one arm.
 //
-// The two arms answer one question — what traffic a deployment is measured against — at
+// The arms answer one question — what traffic a deployment is measured against — at
 // different fidelities, which is why they share a single slot rather than sitting as two
 // independent fields that could both be set or both omitted. A Shape is distributional:
 // a cost model draws prompt and output lengths from it and shares one scalar prefix
@@ -130,6 +148,11 @@ type Binding struct {
 	// per-request rows stay in the file it names; only the reference and the small header
 	// metadata are carried in the document.
 	Trace *TraceRef `yaml:"trace,omitempty"`
+
+	// Replay describes a named agentic trace-replay scenario over a pinned corpus -- the
+	// harness-defined arm, where the harness, not a file of arrival times, decides when
+	// each request is sent.
+	Replay *Replay `yaml:"replay,omitempty"`
 }
 
 // TraceRef references a captured TraceV2 trace by PATH, never by value. A real trace is a
@@ -157,6 +180,28 @@ type TraceRef struct {
 	// Header is the small trace header metadata: the few structured fields that describe
 	// the trace as a whole, as distinct from its per-request rows.
 	Header TraceHeader `yaml:"header"`
+
+	// TokenBlocks is the optional sidecar of per-request token block hashes, which lets a
+	// replay reproduce the prefix-cache hits of a materialized request stream rather than
+	// approximate them from prefix groups.
+	TokenBlocks *TokenBlocks `yaml:"token_blocks,omitempty"`
+
+	// Category, Thinking and Acceptance state the trace's acceptance terms, as a Shape's
+	// do. A trace whose server log recorded its acceptance carries it here.
+	Category   string              `yaml:"category,omitempty"`
+	Thinking   acceptance.Thinking `yaml:"thinking,omitempty"`
+	Acceptance *acceptance.Value   `yaml:"acceptance,omitempty"`
+	// Routing is the traffic's own measured expert-parallel routing imbalance, which
+	// outranks the registry's profile for its Category (see routing.Resolve).
+	Routing *routing.Value `yaml:"routing,omitempty"`
+}
+
+// TokenBlocks references a trace's block-hash sidecar by path and digest. The digest is
+// required: a sidecar that changed under its reference would silently move every
+// prefix-cache hit.
+type TokenBlocks struct {
+	Path   string `yaml:"path"`
+	SHA256 string `yaml:"sha256"`
 }
 
 // TraceHeader is the metadata a TraceV2 carries alongside its data CSV: what produced the
@@ -313,4 +358,24 @@ type SLODimTargets struct {
 	TTFTMs float64 `yaml:"ttft_ms,omitempty"`
 	ITLMs  float64 `yaml:"itl_ms,omitempty"`
 	E2EMs  float64 `yaml:"e2e_ms,omitempty"`
+}
+
+// AcceptanceTerms returns what the shape states about acceptance, for acceptance.Resolve.
+func (s *Shape) AcceptanceTerms() acceptance.Workload {
+	return acceptance.Workload{Category: s.Category, Thinking: s.Thinking, Value: s.Acceptance}
+}
+
+// RoutingTerms returns what the shape states about routing, for routing.Resolve.
+func (s *Shape) RoutingTerms() routing.Workload {
+	return routing.Workload{Category: s.Category, Value: s.Routing}
+}
+
+// RoutingTerms returns what the trace states about routing, for routing.Resolve.
+func (t *TraceRef) RoutingTerms() routing.Workload {
+	return routing.Workload{Category: t.Category, Value: t.Routing}
+}
+
+// AcceptanceTerms returns what the trace states about acceptance, for acceptance.Resolve.
+func (t *TraceRef) AcceptanceTerms() acceptance.Workload {
+	return acceptance.Workload{Category: t.Category, Thinking: t.Thinking, Value: t.Acceptance}
 }

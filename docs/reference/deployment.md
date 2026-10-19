@@ -48,6 +48,7 @@ beside a `colocated` pool.
 | `pp` | integer | yes | Pipeline-parallel width, at least 1. |
 | `dp` | integer | yes | Data-parallel width, at least 1. |
 | `dp_local` | integer | no | Data-parallel replicas resident on one node. Must divide `gpus_per_node` and not exceed `dp`. Zero means the launch decides. |
+| `data_parallel_load_balancing` | string | no | How the data-parallel ranks are exposed, which decides what a router chooses between. One of the [load-balancing modes](vocabularies.md#data-parallel-load-balancing). Omitted, `internal`. `hybrid` and `external` need `dp` > 1. The rules pack refuses `external` on a model without experts and `hybrid` without `dp_local`, and names the mode that runs when the engine resolves `hybrid` to another. `--api-server-count` is not part of it: it sets how many frontend processes share an endpoint, not which ranks a router can reach. |
 | `pcp` | integer | no | Prefill-context-parallel width. Zero or 1 means off. |
 | `dcp` | integer | no | Decode-context-parallel width. Reuses the tensor-parallel ranks; see below. Zero or 1 means off. |
 | `enable_expert_parallel` | boolean | no | Shard MoE experts across ranks. Default false. |
@@ -85,11 +86,15 @@ Scheduling and memory:
 | `block_size` | integer | no | KV block size in tokens. |
 | `max_num_batched_tokens` | integer | no | Token budget per step. |
 | `max_num_seqs` | integer | no | Sequence cap per step. |
+| `long_prefill_token_threshold` | integer | no | The most tokens of one prefill scheduled in a step, so a long prompt cannot take the whole token budget from the decodes beside it. Not negative; omitted or 0 leaves prefills uncapped. The engine refuses one above `max_model_len`. 0.31.0 waives it for a request alone in the scheduler; 0.29.0 does not. |
 | `max_model_len` | integer or `auto` | no | Context length. `auto` (or `-1`) asks the engine to fit the window to the KV memory it has left, which is a different request from omitting the key: omitted, the engine uses the model's whole window and refuses to start if it does not fit. |
 | `gpu_memory_utilization` | number | no | Fraction of GPU memory the engine may use, in [0, 1]. Zero means the engine's default. |
 | `scheduling_policy` | string | no | `fcfs` or `priority` in vLLM 0.29.0. |
 | `async_scheduling` | boolean | no | Omitted means the engine decides through its own disqualifying conditions. |
+| `frontend` | string | no | The API server that renders and tokenizes each prompt: one of the [frontends](vocabularies.md#frontends). Omitted, `python`. `rust` is vLLM's vllm-rs frontend, selected by the environment variable `VLLM_USE_RUST_FRONTEND=1`, not a flag. It changes how long a request waits for admission, per prompt token. |
 | `cudagraph_mode` | string | no | CUDA graph capture strategy. |
+| `max_cudagraph_capture_size` | integer | no | `compilation_config.max_cudagraph_capture_size`: the largest step, in tokens, a CUDA graph is captured for; a larger step runs eager. At least 1. Omitted, the release default, min(`max_num_seqs` x decode query length x 2, 512), or 1024 on SM100. The engine caps it at `max_num_batched_tokens` and truncates it to the largest size it generates. `cudagraph_mode: NONE`, or `--enforce-eager`, which has no field here, captures nothing. |
+| `cudagraph_capture_sizes` | list of integers | no | `compilation_config.cudagraph_capture_sizes`: the exact step sizes to capture, each at least 1, not empty. Sizes above `max_num_batched_tokens` are dropped. With `max_cudagraph_capture_size` too, that must be the largest kept, or the engine refuses the pair. |
 
 Weights and caches:
 
@@ -101,6 +106,7 @@ Weights and caches:
 | `moe_backend` | string | no | The expert-kernel backend, `--moe-backend`. Omitted means `auto`. A mega-MoE backend is one of the conditions under which DeepSeek-V4.1 turns on its own sequence parallelism. |
 | `cache_dtype` | string | no | KV cache format. |
 | `enable_prefix_caching` | boolean | no | Omitted means true, vLLM's default. `false` describes a deployment without prefix caching. |
+| `swa_bounded_replay` | boolean | no | DeepSeek-V4.1 SWA bounded replay (`--swa-bounded-replay` / `--no-swa-bounded-replay`). `true` keeps the sliding-window cache out of prefix caching and recomputes a hit's last sliding window; `false` lets the window cache take part in prefix caching (retained window tails). Omitted, the engine's resolution: on in vLLM 0.31.0 under the V2 model runner, without prefill context parallelism and not on ROCm. Only DeepSeek-V4.1 reads it. |
 | `mamba_cache_dtype` | string | no | Format of a recurrent layer's state. |
 | `mamba_ssm_cache_dtype` | string | no | Format of the SSM state alone, where it differs. |
 | `mamba_cache_mode` | string | no | Whether recurrent state is fixed per sequence or grows with context. |
@@ -223,6 +229,8 @@ A deployment is invalid if
   or `K`/`M`/`G`/`T` suffix fails to load, and so does one that comes to zero or is too
   large to hold;
 - `gpu_memory_utilization` is not finite or lies outside [0, 1];
+- `max_cudagraph_capture_size` is stated below 1, or `cudagraph_capture_sizes` is stated
+  empty or lists a size below 1;
 - `disable_custom_all_reduce` is true while `allreduce_backend` is `custom`;
 - `dbo` states a negative threshold, or an enabled `eplb` a negative
   `num_redundant_experts`;

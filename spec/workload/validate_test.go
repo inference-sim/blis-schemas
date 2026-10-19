@@ -116,6 +116,15 @@ func TestTraceRefRejects(t *testing.T) {
 		{"short sha256", func(tr *TraceRef) { tr.SHA256 = "abc" }},
 		{"non-hex sha256", func(tr *TraceRef) { tr.SHA256 = strRepeat("g", 64) }},
 		{"negative rows", func(tr *TraceRef) { tr.Rows = -1 }},
+		{"token blocks without a path", func(tr *TraceRef) {
+			tr.TokenBlocks = &TokenBlocks{SHA256: strRepeat("a", 64)}
+		}},
+		{"token blocks without a digest", func(tr *TraceRef) {
+			tr.TokenBlocks = &TokenBlocks{Path: "blocks.jsonl.zst"}
+		}},
+		{"token blocks with an uppercase digest", func(tr *TraceRef) {
+			tr.TokenBlocks = &TokenBlocks{Path: "blocks.jsonl.zst", SHA256: strRepeat("A", 64)}
+		}},
 		{"zero trace version", func(tr *TraceRef) { tr.Header.Version = 0 }},
 		{"no time unit", func(tr *TraceRef) { tr.Header.TimeUnit = "" }},
 		{"unknown time unit", func(tr *TraceRef) { tr.Header.TimeUnit = "fortnights" }},
@@ -158,4 +167,12 @@ func strRepeat(s string, n int) string {
 		out = append(out, s...)
 	}
 	return string(out)
+}
+
+func TestTraceRefWithTokenBlocksPasses(t *testing.T) {
+	tr := traceRef()
+	tr.TokenBlocks = &TokenBlocks{Path: "blocks.jsonl.zst", SHA256: strRepeat("a", 64)}
+	if p := (&Binding{Trace: tr}).Validate(); !p.OK() {
+		t.Fatalf("a trace with a block-hash sidecar was rejected:\n%s", p.Error())
+	}
 }

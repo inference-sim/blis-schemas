@@ -1,6 +1,7 @@
 package blisschemas
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,11 +10,15 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/inference-sim/blis-schemas/internal/validate"
+	"github.com/inference-sim/blis-schemas/spec/acceptance"
 	"github.com/inference-sim/blis-schemas/spec/coefficient"
 	"github.com/inference-sim/blis-schemas/spec/deployment"
 	"github.com/inference-sim/blis-schemas/spec/evaluation"
 	"github.com/inference-sim/blis-schemas/spec/hardware"
+	"github.com/inference-sim/blis-schemas/spec/measurement"
 	"github.com/inference-sim/blis-schemas/spec/model"
+	"github.com/inference-sim/blis-schemas/spec/routing"
 	"github.com/inference-sim/blis-schemas/spec/scenario"
 	"github.com/inference-sim/blis-schemas/spec/workload"
 )
@@ -104,24 +109,133 @@ func LoadCoefficientSet(path string) (*coefficient.Set, error) {
 	return &s, nil
 }
 
+// LoadAcceptanceProfileSet reads an acceptance-profile set from blis-registry's
+// acceptance namespace. It does not validate; call Validate.
+func LoadAcceptanceProfileSet(path string) (*acceptance.ProfileSet, error) {
+	var s acceptance.ProfileSet
+	if err := decodeStrict(path, &s); err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
+// LoadRoutingProfileSet reads a routing-profile set from blis-registry's routing
+// namespace. It does not validate; call Validate.
+func LoadRoutingProfileSet(path string) (*routing.ProfileSet, error) {
+	var s routing.ProfileSet
+	if err := decodeStrict(path, &s); err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
 // LoadWorkload reads a traffic shape from blis-catalog's workloads namespace. The file
 // carries no name — identity is the filename — so the loader stamps Shape.Name from the
 // path stem. The Shape type tags Name `yaml:"-"`, so the stamp is the field's only
 // source: there is no in-file name to prefer, hence no `if Name == ""` guard, and an
 // in-file `name` is rejected under strict decode. Chip and Fabric now follow this same
 // rule (#27), so the three by-filename entities are single-sourced identically.
+//
+// A replay workload (a file whose top-level key is replay:) is not a shape; it is refused
+// here with a pointer to LoadCatalogWorkload, which reads either form.
 func LoadWorkload(path string) (*workload.Shape, error) {
-	var w workload.Shape
-	if err := decodeStrict(path, &w); err != nil {
+	w, err := LoadCatalogWorkload(path)
+	if err != nil {
 		return nil, err
 	}
-	w.Name = stem(path)
-	return &w, nil
+	if w.Shape == nil {
+		return nil, fmt.Errorf("%s is a replay workload, not a shape; load it with LoadCatalogWorkload", path)
+	}
+	return w.Shape, nil
+}
+
+// LoadCatalogWorkload reads one catalog workloads/<name>.yaml in either form: a traffic
+// shape, or a replay workload when the file's top-level key is replay:. Both are named
+// from the path stem, and both decode strictly. A replay file may carry the catalog's
+// `_comment` keys at its top level, as a shape may.
+func LoadCatalogWorkload(path string) (*workload.CatalogWorkload, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("opening %s: %w", path, err)
+	}
+	var doc yaml.Node
+	if err := yaml.Unmarshal(b, &doc); err != nil {
+		return nil, fmt.Errorf("decoding %s: %w", path, err)
+	}
+	if !topLevelKey(&doc, "replay") {
+		var s workload.Shape
+		if err := decodeStrict(path, &s); err != nil {
+			return nil, err
+		}
+		s.Name = stem(path)
+		return &workload.CatalogWorkload{Shape: &s}, nil
+	}
+	top := doc.Content[0]
+	if err := validate.RejectUnknownKeys(top, catalogReplayFile{}, validate.IgnoreCatalogComments); err != nil {
+		return nil, fmt.Errorf("decoding %s: %w", path, err)
+	}
+	validate.StripCatalogComments(top)
+	// The comment keys are gone; decode what remains with the strict decoder, so a typo
+	// nested anywhere in the replay is still an unknown field.
+	clean, err := yaml.Marshal(top)
+	if err != nil {
+		return nil, fmt.Errorf("decoding %s: %w", path, err)
+	}
+	var f catalogReplayFile
+	dec := yaml.NewDecoder(bytes.NewReader(clean))
+	dec.KnownFields(true)
+	if err := dec.Decode(&f); err != nil {
+		return nil, fmt.Errorf("decoding %s: %w", path, err)
+	}
+	if f.Replay == nil {
+		return nil, fmt.Errorf("decoding %s: replay: is empty", path)
+	}
+	return &workload.CatalogWorkload{Replay: &workload.CatalogReplay{
+		Name: stem(path), ReplayDefinition: *f.Replay}}, nil
+}
+
+// catalogReplayFile is the catalog replay file form.
+type catalogReplayFile struct {
+	Replay *workload.ReplayDefinition `yaml:"replay"`
+}
+
+// topLevelKey reports whether a document's top-level mapping has key.
+func topLevelKey(doc *yaml.Node, key string) bool {
+	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
+		return false
+	}
+	m := doc.Content[0]
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Value == key {
+			return true
+		}
+	}
+	return false
 }
 
 // LoadEvaluationRun reads a measured run.
 func LoadEvaluationRun(path string) (*evaluation.Run, error) {
 	var r evaluation.Run
+	if err := decodeStrict(path, &r); err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+// LoadMeasuredRun reads a measured run from blis-catalog's measurements/<source>/. It
+// does not validate; call ValidateWithSources with the registry beside it.
+func LoadMeasuredRun(path string) (*measurement.MeasuredRun, error) {
+	var r measurement.MeasuredRun
+	if err := decodeStrict(path, &r); err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+// LoadMeasurementSources reads the licence registry, blis-catalog's
+// measurements/sources.yaml.
+func LoadMeasurementSources(path string) (*measurement.Registry, error) {
+	var r measurement.Registry
 	if err := decodeStrict(path, &r); err != nil {
 		return nil, err
 	}

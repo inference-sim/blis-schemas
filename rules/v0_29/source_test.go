@@ -1,6 +1,8 @@
 package v0_29
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -607,5 +609,155 @@ func TestEffectiveBlockMatchSource(t *testing.T) {
 	if !strings.Contains(src, "g.kv_cache_spec.block_size for g in kv_cache_groups") ||
 		strings.Contains(src, "if g.kv_cache_spec.prefix_cacheable") {
 		t.Error("the block-size replacement changed; effectiveBlocks encodes the minimum over every group")
+	}
+}
+
+// pyFunction returns a top-level Python function's text, from its def line to the next
+// top-level def, one newline per line.
+func pyFunction(t *testing.T, src, name string) string {
+	t.Helper()
+	var b strings.Builder
+	in := false
+	for _, line := range strings.Split(src, "\n") {
+		if strings.HasPrefix(line, "def ") {
+			in = strings.HasPrefix(line, "def "+name+"(")
+		}
+		if in {
+			b.WriteString(line + "\n")
+		}
+	}
+	if b.Len() == 0 {
+		t.Fatalf("no top-level def %s", name)
+	}
+	return b.String()
+}
+
+// KVCacheGroups transcribes these three functions; each is pinned by digest. This
+// release's compressor state is a SlidingWindowMLASpec, which is why the pack refuses a
+// state cache.
+func TestKVCachePackingMatchSource(t *testing.T) {
+	root := vllmSource(t)
+	src := readSource(t, root, "vllm", "v1", "core", "kv_cache_utils.py")
+	for fn, want := range map[string]string{
+		"_approximate_gcd":              "22370757cf8c20dba515cf9452594dfc484f3057a709c704214ebb68328b4f1c",
+		"_get_packed_kv_cache_groups":   "01798d12fbaf3a13915eb5fb499662bd68d1d23eb8b44ffa7cc0a9c5d439a392",
+		"_get_kv_cache_bytes_per_block": "27a19eeafec8a0f63e4b73a6c2d272211aab97da82673a7b8a6f6d598a4fdb94",
+	} {
+		sum := sha256.Sum256([]byte(pyFunction(t, src, fn)))
+		if got := hex.EncodeToString(sum[:]); got != want {
+			t.Errorf("%s changed (sha256 %s); re-derive KVCacheGroups", fn, got)
+		}
+	}
+	comp := readSource(t, root, "vllm", "models", "deepseek_v4", "compressor.py")
+	if !strings.Contains(comp, "return SlidingWindowMLASpec(") {
+		t.Error("DeepSeek-V4's compressor state is no longer a SlidingWindowMLASpec")
+	}
+}
+
+// Pack.CUDAGraphCaptureSizes and the cudagraph-capture-sizes rule transcribe
+// _set_cudagraph_sizes; the defaults the documentation states are its too. Each
+// transcribed line must still be in the release's source.
+func TestCUDAGraphCaptureSizesMatchSource(t *testing.T) {
+	root := vllmSource(t)
+	src := readSource(t, root, "vllm", "config", "vllm.py")
+	for _, want := range []string{
+		"1024 if current_platform.is_device_capability_family(100) else 512",
+		"max_num_seqs * decode_query_len * 2, default_max_graph_size",
+		"max_cudagraph_capture_size = min(max_num_tokens, max_cudagraph_capture_size)",
+		"dedup_sizes = list(set(self.compilation_config.cudagraph_capture_sizes))",
+		"i for i in dedup_sizes if i <= max_num_tokens",
+		"cudagraph_capture_sizes = [\n                        i for i in [1, 2, 4] if i <= max_cudagraph_capture_size\n                    ]",
+		"range(8, min(max_cudagraph_capture_size + 1, 256), 8)",
+		"range(256, max_cudagraph_capture_size + 1, 16)",
+		"max_num_tokens <= max_cudagraph_capture_size",
+		"cudagraph_capture_sizes[-1] if cudagraph_capture_sizes else 0",
+		"\"customized max_cudagraph_capture_size\"",
+		"and self.compilation_config.cudagraph_mode != CUDAGraphMode.NONE",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("_set_cudagraph_sizes changed: %q is gone", want)
+		}
+	}
+	// The stated-maximum path adds no uniform decode sizes: they are populated only when
+	// the default is computed.
+	if !strings.Contains(src, "uniform_decode_sizes: list[int] = []") {
+		t.Error("the uniform decode sizes are no longer empty for a stated maximum")
+	}
+}
+
+// long_prefill_token_threshold: its default and floor, the startup refusal above
+// max_model_len, and the per-step cap, which this release applies even to a lone request.
+func TestLongPrefillTokenThresholdMatchSource(t *testing.T) {
+	root := vllmSource(t)
+	cfg := readSource(t, root, "vllm", "config", "scheduler.py")
+	for _, want := range []string{
+		"long_prefill_token_threshold: int = Field(default=0, ge=0)",
+		"if self.long_prefill_token_threshold > max_model_len:",
+	} {
+		if !strings.Contains(cfg, want) {
+			t.Errorf("scheduler.py changed: %q is gone", want)
+		}
+	}
+	sched := readSource(t, root, "vllm", "v1", "core", "sched", "scheduler.py")
+	if !strings.Contains(sched, "if 0 < self.scheduler_config.long_prefill_token_threshold < num_new_tokens:") {
+		t.Error("the scheduler's cap changed")
+	}
+	if strings.Contains(sched, "num_eligible_reqs") || Pack().LongPrefillExemptsLoneRequest {
+		t.Error("this release now waives the cap for a lone request; record it in the pack")
+	}
+}
+
+// The three load-balancing modes, how the engine resolves hybrid, the refusals the
+// data-parallel-load-balancing rule encodes, and which client each mode gets.
+func TestDataParallelLoadBalancingMatchSource(t *testing.T) {
+	root := vllmSource(t)
+	args := readSource(t, root, "vllm", "engine", "arg_utils.py")
+	for _, want := range []string{
+		"data_parallel_hybrid_lb: bool = False",
+		"data_parallel_external_lb: bool = False",
+		`"--data-parallel-multi-port-external-lb",`,
+		"Non-MoE models do not support external data parallel mode.",
+		"`--data-parallel-hybrid-lb` requires ",
+		"data_parallel_hybrid_lb is not eligible when ",
+		"if data_parallel_size_local == self.data_parallel_size:",
+		"`--data-parallel-external-lb` cannot be enabled together.",
+	} {
+		if !strings.Contains(args, want) {
+			t.Errorf("arg_utils.py changed: %q is gone", want)
+		}
+	}
+	client := readSource(t, root, "vllm", "v1", "engine", "core_client.py")
+	ext := strings.Index(client, "if parallel_config.data_parallel_external_lb:")
+	if ext < 0 || !strings.Contains(client[ext:ext+300], "DPAsyncMPClient(") ||
+		!strings.Contains(client[ext:ext+600], "DPLBAsyncMPClient(") {
+		t.Error("core_client.py no longer gives external a per-rank client and internal the balancing one")
+	}
+	serve := readSource(t, root, "vllm", "entrypoints", "cli", "serve.py")
+	if !strings.Contains(serve, "Cannot use more than one data parallel load balancing mode.") {
+		t.Error("serve.py no longer refuses two load-balancing modes at once")
+	}
+	// The api server count only defaults per mode; it is not part of the mode.
+	if !strings.Contains(serve, "# Default api_server_count if not explicitly set.") {
+		t.Error("serve.py no longer defaults api_server_count per mode")
+	}
+}
+
+// The frontend is chosen by VLLM_USE_RUST_FRONTEND, off by default, and serve launches
+// the Rust binary only when it is set: what deployment.Engine.Frontend's python default
+// and rust value transcribe.
+func TestFrontendMatchSource(t *testing.T) {
+	root := vllmSource(t)
+	env := readSource(t, root, "vllm", "envs.py")
+	for _, want := range []string{
+		"VLLM_USE_RUST_FRONTEND: bool = False",
+		`int(os.getenv("VLLM_USE_RUST_FRONTEND", "0"))`,
+	} {
+		if !strings.Contains(env, want) {
+			t.Errorf("envs.py changed: %q is gone", want)
+		}
+	}
+	serve := readSource(t, root, "vllm", "entrypoints", "cli", "serve.py")
+	if !strings.Contains(serve, "envs.VLLM_RUST_FRONTEND_PATH if envs.VLLM_USE_RUST_FRONTEND else None") {
+		t.Error("serve.py no longer launches the Rust frontend only when VLLM_USE_RUST_FRONTEND is set")
 	}
 }

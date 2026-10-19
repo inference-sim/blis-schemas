@@ -1,6 +1,8 @@
 package v0_31
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -808,5 +810,214 @@ func TestCacheDTypeResolutionsMatchSource(t *testing.T) {
 		if !strings.Contains(c.src, c.text) {
 			t.Errorf("%s changed: %q is gone", c.what, c.text)
 		}
+	}
+}
+
+// pyFunction returns a top-level Python function's text, from its def line to the next
+// top-level def, one newline per line.
+func pyFunction(t *testing.T, src, name string) string {
+	t.Helper()
+	var b strings.Builder
+	in := false
+	for _, line := range strings.Split(src, "\n") {
+		if strings.HasPrefix(line, "def ") {
+			in = strings.HasPrefix(line, "def "+name+"(")
+		}
+		if in {
+			b.WriteString(line + "\n")
+		}
+	}
+	if b.Len() == 0 {
+		t.Fatalf("no top-level def %s", name)
+	}
+	return b.String()
+}
+
+// KVCacheGroups transcribes these three functions, and its goldens were computed by
+// running them (rules/testdata/kvgroups/golden.py). A changed body is a changed grouping,
+// so each is pinned by digest; re-derive the transcription and the goldens when one moves.
+// The specs it maps caches to are pinned too: a state cache is a CircularBufferSpec.
+func TestKVCachePackingMatchSource(t *testing.T) {
+	root := vllmSource(t)
+	src := readSource(t, root, "vllm", "v1", "core", "kv_cache_utils.py")
+	for fn, want := range map[string]string{
+		"_approximate_gcd":              "22370757cf8c20dba515cf9452594dfc484f3057a709c704214ebb68328b4f1c",
+		"_get_packed_kv_cache_groups":   "5f0f15282481429cf5939d3d63a201c95b01363079ee3021c9cfe2e14f718ff3",
+		"_get_kv_cache_bytes_per_block": "169b900872e70e8bcd132d27bde67480512caa16e67784d13f20ff5ca8afb733",
+	} {
+		sum := sha256.Sum256([]byte(pyFunction(t, src, fn)))
+		if got := hex.EncodeToString(sum[:]); got != want {
+			t.Errorf("%s changed (sha256 %s); re-derive KVCacheGroups and its goldens", fn, got)
+		}
+	}
+	comp := readSource(t, root, "vllm", "models", "deepseek_v41", "compressor.py")
+	if !strings.Contains(comp, "return CircularBufferSpec(") {
+		t.Error("DeepSeek-V4.1's compressor state is no longer a CircularBufferSpec")
+	}
+	for _, want := range []string{
+		"rows_per_step = get_current_vllm_config().num_speculative_tokens + 2",
+		"self.block_size = max(8, 1 << (rows_per_step - 1).bit_length())",
+	} {
+		if !strings.Contains(comp, want) {
+			t.Errorf("the compressor ring size changed: %q is gone; re-derive CompressorRingRows", want)
+		}
+	}
+	// Only the MLA specs pad a page to an alignment; a circular buffer never does, which
+	// is why a state cache's page_alignment is refused.
+	iface := readSource(t, root, "vllm", "v1", "kv_cache_interface.py")
+	for _, class := range []string{"class MLAAttentionSpec(", "class SlidingWindowMLASpec("} {
+		body := classBody(iface, class)
+		if !strings.Contains(body, "_apply_alignment_padding(self)") {
+			t.Errorf("%s no longer pads its page", class)
+		}
+	}
+	if body := classBody(iface, "class CircularBufferSpec("); body == "" || strings.Contains(body, "_apply_alignment_padding") || strings.Contains(body, "    alignment:") {
+		t.Error("CircularBufferSpec now carries an alignment; re-derive the state-cache page")
+	}
+}
+
+// Pack.CUDAGraphCaptureSizes and the cudagraph-capture-sizes rule transcribe
+// _set_cudagraph_sizes; the defaults the documentation states are its too. Each
+// transcribed line must still be in the release's source.
+func TestCUDAGraphCaptureSizesMatchSource(t *testing.T) {
+	root := vllmSource(t)
+	src := readSource(t, root, "vllm", "config", "vllm.py")
+	for _, want := range []string{
+		"1024 if current_platform.is_device_capability_family(100) else 512",
+		"max_num_seqs * decode_query_len * 2, default_max_graph_size",
+		"max_cudagraph_capture_size = min(max_num_tokens, max_cudagraph_capture_size)",
+		"dedup_sizes = list(set(self.compilation_config.cudagraph_capture_sizes))",
+		"i for i in dedup_sizes if i <= max_num_tokens",
+		"cudagraph_capture_sizes = [\n                        i for i in [1, 2, 4] if i <= max_cudagraph_capture_size\n                    ]",
+		"range(8, min(max_cudagraph_capture_size + 1, 256), 8)",
+		"range(256, max_cudagraph_capture_size + 1, 16)",
+		"max_num_tokens <= max_cudagraph_capture_size",
+		"cudagraph_capture_sizes[-1] if cudagraph_capture_sizes else 0",
+		"\"customized max_cudagraph_capture_size\"",
+		"and self.compilation_config.cudagraph_mode != CUDAGraphMode.NONE",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("_set_cudagraph_sizes changed: %q is gone", want)
+		}
+	}
+	// The stated-maximum path adds no uniform decode sizes: they are populated only when
+	// the default is computed.
+	if !strings.Contains(src, "uniform_decode_sizes: list[int] = []") {
+		t.Error("the uniform decode sizes are no longer empty for a stated maximum")
+	}
+}
+
+// classBody returns a top-level Python class's text, from its class line to the next
+// top-level definition or decorator.
+func classBody(src, header string) string {
+	i := strings.Index(src, "\n"+header)
+	if i < 0 {
+		return ""
+	}
+	rest := src[i+1:]
+	lines := strings.Split(rest, "\n")
+	var b strings.Builder
+	for j, line := range lines {
+		if j > 0 && line != "" && line[0] != ' ' && line[0] != '\t' && line[0] != ')' {
+			break
+		}
+		b.WriteString(line + "\n")
+	}
+	return b.String()
+}
+
+// long_prefill_token_threshold: its default and floor, the startup refusal above
+// max_model_len, the per-step cap, and this release's waiver for a lone request.
+func TestLongPrefillTokenThresholdMatchSource(t *testing.T) {
+	root := vllmSource(t)
+	cfg := readSource(t, root, "vllm", "config", "scheduler.py")
+	for _, want := range []string{
+		"long_prefill_token_threshold: int = Field(default=0, ge=0)",
+		"if self.long_prefill_token_threshold > max_model_len:",
+	} {
+		if !strings.Contains(cfg, want) {
+			t.Errorf("scheduler.py changed: %q is gone", want)
+		}
+	}
+	sched := readSource(t, root, "vllm", "v1", "core", "sched", "scheduler.py")
+	for _, want := range []string{
+		"if 0 < long_prefill_token_threshold < num_new_tokens:",
+		"if num_eligible_reqs > 1\n            else 0",
+	} {
+		if !strings.Contains(sched, want) {
+			t.Errorf("the scheduler's cap changed: %q is gone", want)
+		}
+	}
+	if !Pack().LongPrefillExemptsLoneRequest {
+		t.Error("the pack no longer records the lone-request waiver the source states")
+	}
+}
+
+// The three load-balancing modes, how the engine resolves hybrid, the refusals the
+// data-parallel-load-balancing rule encodes, and which client each mode gets.
+func TestDataParallelLoadBalancingMatchSource(t *testing.T) {
+	root := vllmSource(t)
+	args := readSource(t, root, "vllm", "engine", "arg_utils.py")
+	for _, want := range []string{
+		"data_parallel_hybrid_lb: bool = False",
+		"data_parallel_external_lb: bool = False",
+		`"--data-parallel-multi-port-external-lb",`,
+		"Non-MoE models do not support external data parallel mode.",
+		"`--data-parallel-hybrid-lb` requires ",
+		"data_parallel_hybrid_lb is not eligible when ",
+		"if data_parallel_size_local == self.data_parallel_size:",
+		"`--data-parallel-external-lb` cannot be enabled together.",
+	} {
+		if !strings.Contains(args, want) {
+			t.Errorf("arg_utils.py changed: %q is gone", want)
+		}
+	}
+	client := readSource(t, root, "vllm", "v1", "engine", "core_client.py")
+	ext := strings.Index(client, "if parallel_config.data_parallel_external_lb:")
+	if ext < 0 || !strings.Contains(client[ext:ext+300], "DPAsyncMPClient(") ||
+		!strings.Contains(client[ext:ext+600], "DPLBAsyncMPClient(") {
+		t.Error("core_client.py no longer gives external a per-rank client and internal the balancing one")
+	}
+	serve := readSource(t, root, "vllm", "entrypoints", "cli", "serve.py")
+	if !strings.Contains(serve, "Cannot use more than one data parallel load balancing mode.") {
+		t.Error("serve.py no longer refuses two load-balancing modes at once")
+	}
+	// The api server count only defaults per mode; it is not part of the mode.
+	if !strings.Contains(serve, "# Default api_server_count if not explicitly set.") {
+		t.Error("serve.py no longer defaults api_server_count per mode")
+	}
+}
+
+// The frontend is chosen by VLLM_USE_RUST_FRONTEND, off by default, and serve launches
+// the Rust binary only when it is set: what deployment.Engine.Frontend's python default
+// and rust value transcribe.
+func TestFrontendMatchSource(t *testing.T) {
+	root := vllmSource(t)
+	env := readSource(t, root, "vllm", "envs.py")
+	for _, want := range []string{
+		"VLLM_USE_RUST_FRONTEND: bool = False",
+		`int(os.getenv("VLLM_USE_RUST_FRONTEND", "0"))`,
+	} {
+		if !strings.Contains(env, want) {
+			t.Errorf("envs.py changed: %q is gone", want)
+		}
+	}
+	serve := readSource(t, root, "vllm", "entrypoints", "cli", "serve.py")
+	if !strings.Contains(serve, "envs.VLLM_RUST_FRONTEND_PATH if envs.VLLM_USE_RUST_FRONTEND else None") {
+		t.Error("serve.py no longer launches the Rust frontend only when VLLM_USE_RUST_FRONTEND is set")
+	}
+}
+
+// swa_bounded_replay defaults to true and is the --swa-bounded-replay flag: what
+// deployment.Engine.SWABoundedReplay's unstated (engine-resolved) value and name transcribe.
+func TestSWABoundedReplayMatchSource(t *testing.T) {
+	root := vllmSource(t)
+	cache := readSource(t, root, "vllm", "config", "cache.py")
+	if !strings.Contains(cache, "swa_bounded_replay: bool = True") {
+		t.Error("cache.py changed: swa_bounded_replay no longer defaults to True")
+	}
+	args := readSource(t, root, "vllm", "engine", "arg_utils.py")
+	if !strings.Contains(args, `"--swa-bounded-replay", **cache_kwargs["swa_bounded_replay"]`) {
+		t.Error("arg_utils.py no longer exposes swa_bounded_replay as --swa-bounded-replay")
 	}
 }

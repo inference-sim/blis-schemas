@@ -8,7 +8,7 @@ terms below are used with one meaning throughout.</p>
 :   What each of the five repositories owns, and what each takes from this one.
 
 [Documents](documents.md)
-:   The ten kinds of document, where each lives, and how they refer to each other.
+:   The eleven kinds of document, where each lives, and how they refer to each other.
 
 [Validation](validation.md)
 :   The two questions a validator asks, why they are kept apart, and what a report holds.

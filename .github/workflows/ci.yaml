@@ -104,4 +104,26 @@ jobs:
         env:
           VLLM_SOURCE: ${{ github.workspace }}/vllm-source
           VLLM_SOURCE_REQUIRED: "1"
-        run: go test -v -run MatchSource ./rules/v0_31/
+        run: go test -v -run MatchSource ./rules/v0_31/ ./spec/acceptance/ ./kernel/
+
+  # The replay descriptor's aiperf constants, re-derived from the aiperf release the
+  # inferencex-agentx-mvp scenario is transcribed from.
+  constants-against-aiperf:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      - name: check out aiperf at the pinned release
+        uses: actions/checkout@v4
+        with:
+          repository: ai-dynamo/aiperf
+          ref: v0.12.0
+          path: aiperf-source
+          fetch-depth: 1
+      - name: verify replay constants
+        env:
+          AIPERF_SOURCE: ${{ github.workspace }}/aiperf-source/src/aiperf
+          AIPERF_SOURCE_REQUIRED: "1"
+        run: go test -v -run MatchSource ./spec/workload/

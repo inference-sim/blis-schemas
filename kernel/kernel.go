@@ -15,6 +15,9 @@
 package kernel
 
 import (
+	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/inference-sim/blis-schemas/spec/deployment"
@@ -219,6 +222,20 @@ type Batch struct {
 	// withheld by a concurrent offload fetch. It is absorbed entirely when a step is
 	// bandwidth-bound, which is the per-stage max rule working as intended.
 	SMBudget int
+
+	// PadTokens are the tokens this data-parallel rank pads its step with under vLLM's DP
+	// lockstep. Every rank of a data-parallel group runs each step at the group's largest
+	// token count (v0.31.0 vllm/v1/worker/dp_utils.py:99-111 _post_process_dp_padding),
+	// passed to the forward context as num_tokens (vllm/v1/worker/gpu_model_runner.py:
+	// 4407-4413); a rank with nothing scheduled runs a dummy batch of
+	// num_tokens_unpadded = 0 (:6090, _dummy_run from :5784). Pad tokens run the GEMMs, the
+	// MoE dispatch and combine, and the expert paths, but never the logits, the LM head,
+	// the vocabulary all-gather or sampling, which read only the real requests' rows
+	// (logits_indices, :2231). They are not requests, and pricing them as decode requests
+	// overstates the work after the last layer and the attention.
+	//
+	// Zero means none. It must not be negative (Validate).
+	PadTokens int
 }
 
 // ReqShape is one request's contribution. The three token counts are what an
@@ -363,4 +380,36 @@ type Override struct {
 	Requested string
 	Resolved  string
 	Reason    string
+}
+
+// PaddedTokens returns the tokens the step runs through the layers: the scheduled tokens
+// plus the data-parallel pad, the count the forward context carries as num_tokens.
+func (b Batch) PaddedTokens() int { return b.Tokens() + b.PadTokens }
+
+// Validate reports a batch no step can have: a negative pad, budget, threshold or
+// per-request count.
+func (b Batch) Validate() error {
+	var bad []string
+	for field, v := range map[string]int{
+		"PadTokens": b.PadTokens, "SMBudget": b.SMBudget, "DecodeThreshold": b.DecodeThreshold,
+	} {
+		if v < 0 {
+			bad = append(bad, fmt.Sprintf("%s %d", field, v))
+		}
+	}
+	for i, r := range b.Reqs {
+		for field, v := range map[string]int{
+			"Scheduled": r.Scheduled, "Computed": r.Computed, "PromptLen": r.PromptLen,
+			"CachedTokens": r.CachedTokens,
+		} {
+			if v < 0 {
+				bad = append(bad, fmt.Sprintf("Reqs[%d].%s %d", i, field, v))
+			}
+		}
+	}
+	if len(bad) == 0 {
+		return nil
+	}
+	sort.Strings(bad)
+	return fmt.Errorf("batch: must not be negative: %s", strings.Join(bad, ", "))
 }

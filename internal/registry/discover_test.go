@@ -72,3 +72,31 @@ func TestSetPathsAbsentDirIsEmpty(t *testing.T) {
 		t.Fatalf("want no paths for an absent coefficients/, got %v", got)
 	}
 }
+
+// AcceptancePaths applies SetPaths' predicate to acceptance/, and an absent directory is
+// no sets rather than an error.
+func TestAcceptancePaths(t *testing.T) {
+	root := t.TempDir()
+	if got, err := AcceptancePaths(root); err != nil || len(got) != 0 {
+		t.Fatalf("absent acceptance/: got %v, %v", got, err)
+	}
+	for _, rel := range []string{"a.yaml", "B.YML", filepath.Join("sub", "c.yaml"), "notes.txt"} {
+		p := filepath.Join(root, "acceptance", rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := AcceptancePaths(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 {
+		t.Errorf("found %v, want the three YAML files", got)
+	}
+	if sets, _ := SetPaths(root); len(sets) != 0 {
+		t.Errorf("SetPaths found acceptance files: %v", sets)
+	}
+}
