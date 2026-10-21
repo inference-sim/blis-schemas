@@ -42,6 +42,32 @@ type Deployment struct {
 
 	Offload    *Offload    `yaml:"offload,omitempty"`
 	PDTransfer *PDTransfer `yaml:"pd_transfer,omitempty"`
+
+	// Router names the inputs of the llm-d router (the Endpoint Picker) that routes the
+	// deployment's requests. Absent means the router's built-in configuration in standalone
+	// mode over every pod of the deployment.
+	Router *Router `yaml:"router,omitempty"`
+}
+
+// Router names the llm-d router's own inputs, exactly as a real deployment gives them to the
+// router, so one set of files configures both the real router and the simulated one. Paths are
+// relative to the directory of the file that holds the deployment.
+//
+// There is deliberately no field for a routing decision: scorers, weights, admission and flow
+// control are the router's configuration, carried by the files named here and never
+// restated in this schema.
+type Router struct {
+	// EPPFlags are the router's command-line flags, verbatim, one entry per flag (a Helm chart's
+	// epp.flags map rendered as --name=value). They select the pool (--pool-name or
+	// --endpoint-selector) and may name the configuration with --config-file. The schema checks
+	// their form only; a consumer refuses flags it cannot honor.
+	EPPFlags []string `yaml:"epp_flags,omitempty"`
+	// EndpointPickerConfig is the EndpointPickerConfig file, as the router reads it with
+	// --config-file. Naming the file here and in EPPFlags is an error.
+	EndpointPickerConfig string `yaml:"endpoint_picker_config,omitempty"`
+	// Manifests are Kubernetes manifest files. The router reads the InferencePool,
+	// InferenceObjective and InferenceModelRewrite objects in them; other kinds are ignored.
+	Manifests []string `yaml:"manifests,omitempty"`
 }
 
 // Role distinguishes the engines of a disaggregated deployment.
@@ -58,6 +84,19 @@ var roles = map[Role]bool{RoleColocated: true, RolePrefill: true, RoleDecode: tr
 // Valid reports whether r is a recognized role.
 func (r Role) Valid() bool { return roles[r] }
 
+// RoleLabel is llm-d's pod label for an engine's disaggregation role. It is derived from the
+// pool's Role (RoleLabelValue); a pool's labels may repeat it only with that value.
+const RoleLabel = "llm-d.ai/role"
+
+// RoleLabelValue is the llm-d.ai/role value of a pool of role r: prefill-decode for a colocated
+// pool (it serves both phases), else the role itself.
+func (r Role) RoleLabelValue() string {
+	if r == RoleColocated {
+		return "prefill-decode"
+	}
+	return string(r)
+}
+
 // Pool is the nodes serving one role: a role, a node count, a parallelism layout, and
 // settings. It may hold more than one engine, each running that layout with those
 // settings — llm-d runs a LeaderWorkerSet of `replicas` groups, each group one engine
@@ -68,6 +107,11 @@ type Pool struct {
 	Nodes    int         `yaml:"nodes"`
 	Parallel Parallelism `yaml:"parallel"`
 	Engine   Engine      `yaml:"engine"`
+	// Labels are the Kubernetes labels on the pool's model-server pods, as the pool's pod
+	// template sets them. The router selects and filters endpoints by them (an InferencePool
+	// selector, the llm-d.ai/role label of a disaggregated deployment). llm-d.ai/role is derived
+	// from Role (RoleLabelValue); given here, it must have that value.
+	Labels map[string]string `yaml:"labels,omitempty"`
 }
 
 // Parallelism is the layout. EP is absent: see the package comment.
