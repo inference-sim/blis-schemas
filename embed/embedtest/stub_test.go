@@ -1,0 +1,444 @@
+package embedtest_test
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"fmt"
+	"hash/fnv"
+	"io"
+	"maps"
+	"net/http"
+	"slices"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/inference-sim/blis-schemas/embed"
+	"github.com/inference-sim/blis-schemas/embed/embedtest"
+)
+
+// stubConfig is the stub router's configuration file (embed.Config.Config), in its own JSON.
+type stubConfig struct {
+	Plugins     []string `json:"plugins"`
+	FlowControl bool     `json:"flowControl"`
+	TTL         string   `json:"ttl"`      // queue-wait budget
+	Capacity    int      `json:"capacity"` // held requests at most
+	Evict       bool     `json:"evict"`
+	KV          bool     `json:"kv"`
+}
+
+// mutation breaks one rule of the contract, to show that the checks notice.
+type mutation string
+
+const (
+	correct             mutation = ""
+	saturatedAsAdmit    mutation = "Saturated reported as Admission"
+	ttlAsCancelled      mutation = "TTLExpired reported as ContextCancelled"
+	noEndpointsAsUnavl  mutation = "NoEndpoints reported as Unavailable"
+	admitNotShed        mutation = "sheddable requests admitted under saturation"
+	badBodyDispatched   mutation = "malformed body dispatched"
+	randAtConstruction  mutation = "randomness drawn at construction"
+	wallClockSeed       mutation = "picks seeded from a counter, not the Runtime"
+	leakOnStop          mutation = "Stop leaves a held request's goroutine parked"
+	loopAfterStop       mutation = "Stop leaves the scrape loop running"
+	headersDropped      mutation = "ResponseHeaders drops the headers passed in"
+	ignoresAllow        mutation = "Allow not consulted"
+	ignoresClear        mutation = "ClearKVEvents ignored"
+	ignoresRemoved      mutation = "BlockRemoved ignored"
+	neverEvicts         mutation = "eviction signal never closed"
+	routesNotReady      mutation = "not-ready endpoints served"
+	removeKeeps         mutation = "RemoveEndpoint ignored"
+	doneTwice           mutation = "done called twice"
+	noFlowControlFacts  mutation = "FlowControl() reports nothing"
+	evictSignalNoEvict  mutation = "EvictionSignal without eviction"
+	scoresForStrangers  mutation = "a score for an address that is no endpoint"
+	failedConstructLeak mutation = "a refused construction leaves its loop running"
+	parkedForever       mutation = "a goroutine parked on nothing Stop ends"
+)
+
+var stubCounter int // wallClockSeed's process-wide "randomness"
+
+// newStub returns a Constructor for the stub router with mutation m.
+func newStub(m mutation) embed.Constructor {
+	return func(ctx context.Context, rt embed.Runtime, cfg embed.Config) (embed.Router, error) {
+		var c stubConfig
+		if len(cfg.Config) > 0 {
+			if err := json.Unmarshal(cfg.Config, &c); err != nil {
+				return nil, fmt.Errorf("stub: configuration: %w", err)
+			}
+		}
+		ttl := 30 * time.Second
+		if c.TTL != "" {
+			d, err := time.ParseDuration(c.TTL)
+			if err != nil {
+				return nil, err
+			}
+			ttl = d
+		}
+		s := &stub{m: m, rt: rt, cfg: c, ttl: ttl, eps: map[string]*stubEndpoint{}}
+		s.ctx, s.cancel = context.WithCancel(ctx)
+		if m == randAtConstruction {
+			rt.Rand("picker").Float64()
+		}
+		s.startScrape()
+		if m == parkedForever {
+			rt.Go(func() { rt.Park(func() bool { return false }) })
+		}
+		for _, typ := range c.Plugins {
+			if cfg.Allow == nil || m == ignoresAllow {
+				continue
+			}
+			if ok, reason := cfg.Allow(typ); !ok {
+				if m != failedConstructLeak {
+					s.cancel()
+				}
+				return nil, fmt.Errorf("stub: %w", &embed.RefusalError{Plugin: typ, Type: typ, Reason: reason})
+			}
+		}
+		return s, nil
+	}
+}
+
+type stub struct {
+	m      mutation
+	rt     embed.Runtime
+	cfg    stubConfig
+	ttl    time.Duration
+	ctx    context.Context
+	cancel context.CancelFunc
+
+	eps     map[string]*stubEndpoint // by name
+	order   []string                 // endpoint names in the order they were added
+	held    int
+	flights []*stubFlight
+}
+
+type stubEndpoint struct {
+	ep    embed.Endpoint
+	ready bool
+	busy  bool
+	// blocks maps an engine block key to its chain key (the prefix up to and including it).
+	blocks map[uint64]uint64
+	chains map[uint64]bool
+}
+
+func (s *stub) startScrape() {
+	scrapeCtx := s.ctx
+	if s.m == loopAfterStop || s.m == failedConstructLeak {
+		scrapeCtx = context.Background()
+	}
+	s.rt.Every(scrapeCtx, "metrics", 500*time.Millisecond, func(context.Context) {
+		for _, name := range s.order {
+			e := s.eps[name]
+			if e == nil {
+				continue
+			}
+			e.busy = s.scrape(e.ep)
+		}
+	})
+}
+
+// scrape reports whether the engine at ep says it is saturated (requests are waiting).
+func (s *stub) scrape(ep embed.Endpoint) bool {
+	srv, ok := s.rt.(embed.RoundTripper)
+	if !ok {
+		return false
+	}
+	req, _ := http.NewRequestWithContext(s.ctx, http.MethodGet, "http://"+ep.Address()+"/metrics", nil)
+	resp, err := srv.RoundTrip(req)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		return false
+	}
+	defer resp.Body.Close()
+	sc := bufio.NewScanner(resp.Body)
+	for sc.Scan() {
+		line := sc.Text()
+		if strings.HasPrefix(line, "vllm:num_requests_waiting{") {
+			f := strings.Fields(line)
+			v, _ := strconv.ParseFloat(f[len(f)-1], 64)
+			return v > 0
+		}
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return false
+}
+
+func (s *stub) Requirements() embed.Requirements {
+	r := embed.Requirements{
+		Extractors: []embed.MetricsExtractor{{Name: "metrics", Implicit: true, EngineLabelKey: "engine", DefaultEngine: "vllm"}},
+	}
+	if s.cfg.KV {
+		r.PrefixIndexes = []embed.PrefixIndex{{Name: "prefix", BlockSize: 16, EngineType: "vllm"}}
+	}
+	return r
+}
+
+func (s *stub) Pool() embed.Pool {
+	return embed.Pool{Namespace: "default", Name: "stub", Group: "apps", Kind: "Deployment", TargetPorts: []int{8000}}
+}
+
+func (s *stub) FlowControl() embed.FlowControl {
+	if !s.cfg.FlowControl || s.m == noFlowControlFacts {
+		return embed.FlowControl{}
+	}
+	return embed.FlowControl{Enabled: true, MaxQueueTTL: s.ttl}
+}
+
+func (s *stub) IdleSkippable() bool { return true }
+
+func (s *stub) SetEndpoint(ep embed.Endpoint, ready bool) error {
+	e, ok := s.eps[ep.Name]
+	if !ok {
+		e = &stubEndpoint{blocks: map[uint64]uint64{}, chains: map[uint64]bool{}}
+		s.eps[ep.Name] = e
+		s.order = append(s.order, ep.Name)
+	}
+	e.ep, e.ready = ep, ready
+	return nil
+}
+
+func (s *stub) RemoveEndpoint(name string) error {
+	if s.m == removeKeeps {
+		return nil
+	}
+	delete(s.eps, name)
+	s.order = slices.DeleteFunc(s.order, func(n string) bool { return n == name })
+	return nil
+}
+
+func (s *stub) candidates() []*stubEndpoint {
+	var out []*stubEndpoint
+	for _, name := range s.order {
+		if e := s.eps[name]; e.ready || s.m == routesNotReady {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+func (s *stub) saturated(c []*stubEndpoint) bool {
+	for _, e := range c {
+		if !e.busy {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *stub) Route(ctx context.Context, req embed.Request, done func(embed.Flight, embed.Decision, *embed.Rejection)) {
+	var body struct {
+		Model  string   `json:"model"`
+		Prompt []uint32 `json:"prompt"`
+	}
+	if err := json.Unmarshal(req.Body, &body); err != nil && s.m != badBodyDispatched {
+		done(nil, embed.Decision{}, &embed.Rejection{Kind: embed.Unclassified, Msg: "inference error: BadRequest - " + err.Error()})
+		return
+	}
+	reject := func(kind embed.RejectKind, msg string) {
+		done(nil, embed.Decision{}, &embed.Rejection{Kind: kind, Msg: msg})
+	}
+	s.rt.Go(func() {
+		c := s.candidates()
+		switch {
+		case len(c) == 0:
+			kind := embed.NoEndpoints
+			if s.m == noEndpointsAsUnavl {
+				kind = embed.Unavailable
+			}
+			reject(kind, "no endpoints available")
+			return
+		case s.saturated(c) && !s.cfg.FlowControl && req.Objective == embedtest.Sheddable && s.m != admitNotShed:
+			reject(embed.Admission, "system saturated, sheddable request dropped")
+			return
+		case s.saturated(c) && s.cfg.FlowControl:
+			if s.held >= max(1, s.cfg.Capacity) {
+				kind := embed.Saturated
+				if s.m == saturatedAsAdmit {
+					kind = embed.Admission
+				}
+				reject(kind, "queue at capacity")
+				return
+			}
+			s.held++
+			wait, stop := s.rt.WithTimeout(ctx, s.ttl)
+			if s.cfg.Evict {
+				s.evictOne()
+			}
+			stopped := s.ctx
+			if s.m == leakOnStop {
+				stopped = context.Background()
+			}
+			s.rt.Park(func() bool {
+				return wait.Err() != nil || stopped.Err() != nil || !s.saturated(s.candidates())
+			})
+			s.held--
+			expired := wait.Err() != nil
+			stop()
+			switch {
+			case stopped.Err() != nil:
+				return // never decided
+			case ctx.Err() != nil:
+				reject(embed.ContextCancelled, "client disconnected")
+				return
+			case expired:
+				kind := embed.TTLExpired
+				if s.m == ttlAsCancelled {
+					kind = embed.ContextCancelled
+				}
+				reject(kind, "request timed out in queue")
+				return
+			}
+			c = s.candidates()
+		}
+		e := s.pick(c, body.Prompt)
+		d := embed.Decision{Endpoint: e.ep.Address(), IncomingModel: body.Model, Scores: map[string]float64{e.ep.Address(): 1}}
+		if s.m == scoresForStrangers {
+			d.Scores["192.0.2.1:8000"] = 0
+		}
+		f := &stubFlight{s: s, sheddable: req.Objective == embedtest.Sheddable}
+		if s.cfg.Evict || s.m == evictSignalNoEvict {
+			f.evict = make(chan struct{})
+		}
+		s.flights = append(s.flights, f)
+		done(f, d, nil)
+		if s.m == doneTwice {
+			done(f, d, nil)
+		}
+	})
+}
+
+// pick is the endpoint holding the longest published prefix of prompt, among idle ones when
+// any is idle; ties, and every pick without KV events, go to a random one.
+func (s *stub) pick(c []*stubEndpoint, prompt []uint32) *stubEndpoint {
+	if idle := slices.DeleteFunc(slices.Clone(c), func(e *stubEndpoint) bool { return e.busy }); len(idle) > 0 {
+		c = idle
+	}
+	if s.cfg.KV {
+		keys := chainKeys(prompt, 16)
+		best, bestN := []*stubEndpoint(nil), -1
+		for _, e := range c {
+			n := 0
+			for n < len(keys) && e.chains[keys[n]] {
+				n++
+			}
+			switch {
+			case n > bestN:
+				best, bestN = []*stubEndpoint{e}, n
+			case n == bestN:
+				best = append(best, e)
+			}
+		}
+		c = best
+	}
+	if s.m == wallClockSeed {
+		stubCounter++
+		return c[stubCounter%len(c)]
+	}
+	return c[s.rt.Rand("picker").IntN(len(c))]
+}
+
+func (s *stub) evictOne() {
+	if s.m == neverEvicts {
+		return
+	}
+	for _, f := range s.flights {
+		if f.sheddable && !f.ended && f.evict != nil && !f.evicted {
+			f.evicted = true
+			close(f.evict)
+			return
+		}
+	}
+}
+
+func chainKeys(tokens []uint32, blockSize int) []uint64 {
+	var out []uint64
+	var parent uint64
+	for i := 0; i+blockSize <= len(tokens); i += blockSize {
+		parent = chainKey(parent, tokens[i:i+blockSize])
+		out = append(out, parent)
+	}
+	return out
+}
+
+func chainKey(parent uint64, block []uint32) uint64 {
+	h := fnv.New64a()
+	fmt.Fprint(h, parent, block)
+	return h.Sum64()
+}
+
+func (s *stub) WantsKVEvents() bool { return s.cfg.KV }
+
+func (s *stub) endpointAt(addr string) *stubEndpoint {
+	for _, name := range s.order {
+		if e := s.eps[name]; e.ep.Address() == addr {
+			return e
+		}
+	}
+	return nil
+}
+
+func (s *stub) IngestKVEvents(_ context.Context, endpoint, _ string, b embed.KVBatch) error {
+	e := s.endpointAt(endpoint)
+	if e == nil {
+		return fmt.Errorf("stub: no endpoint %s", endpoint)
+	}
+	for _, ev := range b.Events {
+		switch ev := ev.(type) {
+		case embed.BlockStored:
+			parent := e.blocks[ev.Parent]
+			for i, h := range ev.Hashes {
+				parent = chainKey(parent, ev.Tokens[i*ev.BlockSize:(i+1)*ev.BlockSize])
+				e.blocks[h] = parent
+				e.chains[parent] = true
+			}
+		case embed.BlockRemoved:
+			if s.m == ignoresRemoved {
+				continue
+			}
+			for _, h := range ev.Hashes {
+				delete(e.chains, e.blocks[h])
+				delete(e.blocks, h)
+			}
+		}
+	}
+	return nil
+}
+
+func (s *stub) ClearKVEvents(_ context.Context, endpoint string) error {
+	if e := s.endpointAt(endpoint); e != nil && s.m != ignoresClear {
+		e.blocks, e.chains = map[uint64]uint64{}, map[uint64]bool{}
+	}
+	return nil
+}
+
+func (s *stub) Stop() { s.cancel() }
+
+type stubFlight struct {
+	s         *stub
+	sheddable bool
+	evict     chan struct{}
+	evicted   bool
+	ended     bool
+}
+
+func (f *stubFlight) ResponseHeaders(h map[string]string) map[string]string {
+	out := maps.Clone(h)
+	if f.s.m == headersDropped {
+		out = map[string]string{}
+	}
+	out["x-stub-served"] = "true"
+	return out
+}
+
+func (f *stubFlight) ResponseBody(_ []byte, endOfStream bool) {
+	if endOfStream {
+		f.ended = true
+	}
+}
+
+func (f *stubFlight) Terminate(embed.Termination) { f.ended = true }
+
+func (f *stubFlight) EvictionSignal() <-chan struct{} {
+	return f.evict
+}

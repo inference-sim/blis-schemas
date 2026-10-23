@@ -22,9 +22,9 @@
 //
 // # Calls
 //
-// The host calls Router and Flight methods from one goroutine at a time, never concurrently.
-// The router never calls back into the host from inside one of those methods, except that
-// Route may call its done callback before it returns (see Route).
+// The host calls Router and Flight methods from one goroutine at a time, never concurrently,
+// and never from inside a callback the router is running. The router calls back into the host
+// only through Runtime and through Route's done (see Route).
 //
 // # Compatibility
 //
@@ -193,15 +193,18 @@ type Router interface {
 	// RemoveEndpoint removes the named endpoint. Removing an unknown name is not an error.
 	RemoveEndpoint(name string) error
 
-	// Route asks the router where req goes. ctx is the request's lifetime: cancelling it
-	// while the router holds the request is the client giving up (a ContextCancelled
-	// rejection). done is called exactly once: with a Flight and a Decision when the router
-	// dispatches the request, or with a nil Flight, a zero Decision and a Rejection when it
-	// does not.
+	// Route asks the router where req goes. ctx is the request's lifetime and carries only
+	// that: cancelling it while the router holds the request is the client giving up (a
+	// ContextCancelled rejection). done is called exactly once: with a Flight and a Decision
+	// when the router dispatches the request, or with a nil Flight, a zero Decision and a
+	// Rejection when it does not. A request still undecided when the router stops is never
+	// decided.
 	//
-	// A request the router refuses before it reaches the router's scheduling (malformed
-	// headers or body) may call done before Route returns. Any other outcome is delivered
-	// later, from work the router runs on its Runtime, never from inside Route.
+	// done may be called before Route returns: a request refused before scheduling (a
+	// malformed body) is, and on a Runtime whose Go runs fn before returning so is any
+	// request the router decides without waiting. Otherwise it is called later, from work the
+	// router runs on its Runtime (a goroutine started with Go, resumed by the host). A host
+	// that must not be re-entered from Route defers what done does to its own next event.
 	Route(ctx context.Context, req Request, done func(Flight, Decision, *Rejection))
 
 	// WantsKVEvents reports whether the configuration consumes engines' KV events. When it
