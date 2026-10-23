@@ -10,6 +10,7 @@ import (
 	"runtime/debug"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -18,12 +19,6 @@ import (
 
 // Epoch is the instant a Runtime's clock starts at.
 var Epoch = time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC)
-
-// watchdog bounds the wall-clock time a router goroutine may run without parking or
-// finishing. Router work takes no runtime time, so one that runs this long is blocked on a
-// wait the runtime cannot see, and the test would otherwise hang. It can fail a check, never
-// change one that passes.
-const watchdog = time.Minute
 
 // maxEvents bounds the events one Advance runs, so a loop that reschedules itself at the
 // current instant fails instead of hanging.
@@ -35,7 +30,9 @@ const maxEvents = 1_000_000
 // router's outbound HTTP with Engines.
 //
 // A Runtime is driven from one goroutine: the test's. Router goroutines started with Go run
-// only while that goroutine waits for them, inside a call into the router, Advance or Settle.
+// only while that goroutine waits for them, inside a call into the router, Advance or Settle,
+// so exactly one of them runs at a time. Every function a Runtime returns (a cancel function,
+// a timer's Stop) is called under that discipline too.
 type Runtime struct {
 	// Engines serves the router's outbound HTTP requests. nil answers each with 404.
 	Engines func(*http.Request) (*http.Response, error)
@@ -211,14 +208,21 @@ func (r *Runtime) WithDeadlineCause(parent context.Context, deadline time.Time, 
 	}
 	inner, cancelCause := context.WithCancelCause(parent)
 	dc := &deadlineCtx{Context: inner, deadline: deadline}
+	// mu makes expiring and cancelling exclusive, so Err reports DeadlineExceeded only when
+	// the deadline, and not an earlier cancel, ended the context.
+	var mu sync.Mutex
 	stop := r.schedule(deadline.Sub(r.Now()), func() {
+		mu.Lock()
+		defer mu.Unlock()
 		if inner.Err() == nil {
-			dc.expired.Store(true)
 			cancelCause(cause)
+			dc.expired.Store(true)
 		}
 	})
 	return dc, func() {
 		stop()
+		mu.Lock()
+		defer mu.Unlock()
 		cancelCause(context.Canceled)
 	}
 }
@@ -332,12 +336,10 @@ func (r *Runtime) run(c *coroutine) {
 	prev := r.current
 	r.current = c
 	c.resume <- struct{}{}
-	select {
-	case <-c.yielded:
-	case <-time.After(watchdog):
-		panic(fmt.Sprintf("embedtest: router goroutine %d ran %v without parking or finishing: it blocks on a "+
-			"wait the runtime cannot see (a channel, lock or sleep not guarded by Runtime.Park)", c.id, watchdog))
-	}
+	// No wall-clock timeout: a goroutine that blocks on a wait the runtime cannot see (a
+	// channel, lock or sleep not guarded by Park) hangs the test, and go test's -timeout
+	// reports it with every goroutine's stack. Nothing here depends on how fast the host runs.
+	<-c.yielded
 	r.current = prev
 	if c.done {
 		r.live--
