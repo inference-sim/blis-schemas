@@ -207,9 +207,10 @@ func (r *Runtime) WithDeadlineCause(parent context.Context, deadline time.Time, 
 	}
 	inner, cancelCause := context.WithCancelCause(parent)
 	dc := &deadlineCtx{Context: inner, deadline: deadline}
-	// The deadline event runs on the driving goroutine, as every cancellation does under the
-	// Runtime's discipline, so it never interleaves with one. It marks the context expired
-	// before cancelling it, so no reader sees Canceled first.
+	// The deadline event runs on the driving goroutine. It marks the context expired before
+	// cancelling it, so a reader never sees Canceled and then DeadlineExceeded from the
+	// deadline; and Err keeps the first error it reports, so a parent cancelled from another
+	// goroutine at the same moment can decide which error that is, but never change it.
 	stop := r.schedule(deadline.Sub(r.Now()), func() {
 		if inner.Err() == nil {
 			dc.expired.Store(true)
