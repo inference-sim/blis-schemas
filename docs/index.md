@@ -9,7 +9,8 @@ hide:
 deployment will perform before anyone runs it. blis-schemas defines the documents BLIS
 reasons about and checks them. It is a Go module: types for a model, its hardware, the
 coefficients a cost model uses, a deployment, its traffic and a measured run; a validator
-for each; and the interface a cost model implements. It holds no data.</p>
+for each; the interface a cost model implements; and the contract between a simulator and the
+request router it hosts. It holds no data.</p>
 
 ## The idea in brief
 
@@ -43,7 +44,8 @@ validator reports every problem at once, each naming the field that is wrong.
     Load documents, validate them together, and read the report.
 
     [Validate documents from Go](guides/go.md) ·
-    [Kernel interface](reference/kernel.md)
+    [Kernel interface](reference/kernel.md) ·
+    [Router contract](reference/embed.md)
 
 -   **You want to know why it is built this way**
 

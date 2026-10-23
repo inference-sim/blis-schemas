@@ -8,11 +8,13 @@
 // supplies one configuration per part of the scenario, each with the properties its field
 // documents. A router passes when, so configured, it behaves as the contract says.
 //
-// The scenario covers a routing decision and its fields; endpoint readiness and removal;
+// The scenario covers a routing decision and its fields; endpoint readiness, address updates
+// and removal;
 // every RejectKind a request can earn in it (NoEndpoints, Admission, Saturated,
 // ContextCancelled, TTLExpired, Unclassified for a malformed body, and Unavailable when the
 // Suite supplies a configuration that produces it); response headers and bodies, streamed and
-// not; each Termination; the eviction signal; KV-event ingest, removal and clear; refusal of a
+// not; each Termination; the eviction signal; KV-event ingest, removal and clear (with the index
+// itself for a router that implements embed.KVIndexInspector); refusal of a
 // plugin type through Config.Allow; a host refusal through Config.Check, before any plugin;
 // determinism over a seed; that construction draws no
 // randomness; and that Stop ends every goroutine and loop.

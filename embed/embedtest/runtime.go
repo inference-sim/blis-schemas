@@ -10,7 +10,6 @@ import (
 	"runtime/debug"
 	"slices"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -208,39 +207,44 @@ func (r *Runtime) WithDeadlineCause(parent context.Context, deadline time.Time, 
 	}
 	inner, cancelCause := context.WithCancelCause(parent)
 	dc := &deadlineCtx{Context: inner, deadline: deadline}
-	// mu makes expiring and cancelling exclusive, so Err reports DeadlineExceeded only when
-	// the deadline, and not an earlier cancel, ended the context.
-	var mu sync.Mutex
+	// The deadline event runs on the driving goroutine, as every cancellation does under the
+	// Runtime's discipline, so it never interleaves with one. It marks the context expired
+	// before cancelling it, so no reader sees Canceled first.
 	stop := r.schedule(deadline.Sub(r.Now()), func() {
-		mu.Lock()
-		defer mu.Unlock()
 		if inner.Err() == nil {
-			cancelCause(cause)
 			dc.expired.Store(true)
+			cancelCause(cause)
 		}
 	})
 	return dc, func() {
 		stop()
-		mu.Lock()
-		defer mu.Unlock()
 		cancelCause(context.Canceled)
 	}
 }
 
-// deadlineCtx reports its deadline and, once the deadline has passed, DeadlineExceeded.
+// deadlineCtx reports its deadline and, once the deadline has passed, DeadlineExceeded. Its
+// first non-nil Err is the one it keeps, as context.Context requires.
 type deadlineCtx struct {
 	context.Context
 	deadline time.Time
 	expired  atomic.Bool
+	err      atomic.Pointer[error]
 }
 
 func (c *deadlineCtx) Deadline() (time.Time, bool) { return c.deadline, true }
 
 func (c *deadlineCtx) Err() error {
-	if c.expired.Load() {
-		return context.DeadlineExceeded
+	if e := c.err.Load(); e != nil {
+		return *e
 	}
-	return c.Context.Err()
+	var err error
+	if c.expired.Load() {
+		err = context.DeadlineExceeded
+	} else if err = c.Context.Err(); err == nil {
+		return nil
+	}
+	c.err.CompareAndSwap(nil, &err)
+	return *c.err.Load()
 }
 
 // Rand implements embed.Runtime.

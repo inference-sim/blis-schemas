@@ -61,6 +61,8 @@ const (
 	checkAfterPlugins   mutation = "Check called after Allow"
 	checkIgnored        mutation = "Check never called"
 	checkStalePool      mutation = "Check sees another Pool"
+	inspectorStale      mutation = "KVBlocks reports removed blocks"
+	addressKept         mutation = "SetEndpoint keeps the old address"
 )
 
 var stubCounter int // wallClockSeed's process-wide "randomness"
@@ -222,6 +224,9 @@ func (s *stub) SetEndpoint(ep embed.Endpoint, ready bool) error {
 		e = &stubEndpoint{blocks: map[uint64]uint64{}, chains: map[uint64]bool{}}
 		s.eps[ep.Name] = e
 		s.order = append(s.order, ep.Name)
+	}
+	if ok && s.m == addressKept {
+		ep.IP, ep.Port = e.ep.IP, e.ep.Port
 	}
 	e.ep, e.ready = ep, ready
 	return nil
@@ -449,6 +454,24 @@ func (s *stub) ClearKVEvents(_ context.Context, endpoint string) error {
 }
 
 func (s *stub) Stop() { s.cancel() }
+
+var _ embed.KVIndexInspector = (*stub)(nil)
+
+// KVBlocks implements embed.KVIndexInspector. The stub keeps one tier.
+func (s *stub) KVBlocks(endpoint, _ string) (map[uint64]bool, error) {
+	e := s.endpointAt(endpoint)
+	if e == nil || !s.cfg.KV {
+		return nil, fmt.Errorf("stub: no KV index for %s", endpoint)
+	}
+	out := map[uint64]bool{}
+	for h := range e.blocks {
+		out[h] = true
+	}
+	if s.m == inspectorStale {
+		out[0x1000] = true
+	}
+	return out, nil
+}
 
 type stubFlight struct {
 	s         *stub

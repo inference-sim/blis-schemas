@@ -48,6 +48,10 @@ the router's outbound HTTP (engine metrics, prompt rendering).
 | `WantsKVEvents`, `IngestKVEvents`, `ClearKVEvents` | Engines' KV events, in vLLM's vocabulary (`BlockStored`, `BlockRemoved`). |
 | `Stop()` | Ends every loop and goroutine the router started. |
 
+`KVIndexInspector` is an optional capability, found by type assertion, for a router that can
+report its KV-event index per endpoint and tier (`KVBlocks`). It serves conformance and
+fidelity tests; a host does not depend on it in production.
+
 A `Flight` is a dispatched request. The host hands it the response headers
 (`ResponseHeaders`, which returns the headers after the router's handling) and the body
 (`ResponseBody`), then ends it once: with the last body chunk, or with `Terminate`

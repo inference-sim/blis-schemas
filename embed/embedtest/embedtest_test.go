@@ -1,9 +1,11 @@
 package embedtest_test
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/inference-sim/blis-schemas/embed"
 	"github.com/inference-sim/blis-schemas/embed/embedtest"
@@ -70,6 +72,8 @@ func TestMutationsFail(t *testing.T) {
 		{checkAfterPlugins, "check: Allow was consulted"},
 		{checkIgnored, "check: Check was called 0 times; want once"},
 		{checkStalePool, "check: Check saw Pool"},
+		{inspectorStale, "kv: KVBlocks(10.0.0.2:8000) after its blocks were removed holds 1 blocks; want 0"},
+		{addressKept, "at the address it was updated to"},
 		{parkedForever, "route: 1 goroutines started with Runtime.Go are still live after Stop"},
 	} {
 		t.Run(string(c.m), func(t *testing.T) {
@@ -98,5 +102,35 @@ func TestRuntimeIsDeterministic(t *testing.T) {
 	}
 	if a.Rand("t").Float64() == a.Rand("u").Float64() {
 		t.Error("streams t and u gave the same first draw")
+	}
+}
+
+// TestDeadlineErrIsStable: a deadline context keeps the first error it reports, whichever of
+// its deadline, its cancel function and its parent ends it first.
+func TestDeadlineErrIsStable(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		end  func(rt *embedtest.Runtime, parentCancel, cancel func())
+		want error
+	}{
+		{"deadline", func(rt *embedtest.Runtime, _, _ func()) { rt.Advance(time.Second) }, context.DeadlineExceeded},
+		{"cancel then deadline", func(rt *embedtest.Runtime, _, cancel func()) { cancel(); rt.Advance(time.Second) }, context.Canceled},
+		{"parent then deadline", func(rt *embedtest.Runtime, parent, _ func()) { parent(); rt.Advance(time.Second) }, context.Canceled},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			rt := embedtest.NewRuntime(1)
+			parent, parentCancel := context.WithCancel(context.Background())
+			ctx, cancel := rt.WithTimeout(parent, time.Second)
+			defer cancel()
+			c.end(rt, parentCancel, cancel)
+			if err := ctx.Err(); err != c.want {
+				t.Fatalf("Err() = %v, want %v", err, c.want)
+			}
+			rt.Advance(time.Second)
+			parentCancel()
+			if err := ctx.Err(); err != c.want {
+				t.Errorf("Err() changed to %v after it was %v", err, c.want)
+			}
+		})
 	}
 }

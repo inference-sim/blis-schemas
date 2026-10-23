@@ -73,12 +73,16 @@ func partReadiness(e *env) {
 	only(b, "after it was made not ready")
 	set(a, true)
 	set(a, true) // setting an unchanged endpoint again changes nothing
+	moved := a
+	moved.IP = "10.0.1.1"
+	set(moved, true) // SetEndpoint updates an endpoint by name: its address too
+	e.eps[0] = moved
 	if err := e.r.RemoveEndpoint(b.Name); err != nil {
 		e.fail("RemoveEndpoint(%s): %v", b.Name, err)
 	}
 	e.rt.Settle()
 	e.rt.Advance(e.s.Observe)
-	only(a, "after the other was removed")
+	only(moved, "after the other was removed, at the address it was updated to")
 	if err := e.r.RemoveEndpoint("no-such-endpoint"); err != nil {
 		e.fail("RemoveEndpoint of an unknown name: %v; want no error", err)
 	}
@@ -305,10 +309,32 @@ func partKV(e *env) {
 		o.end(e)
 	}
 
+	inspector, _ := e.r.(embed.KVIndexInspector)
+	holds := func(addr string, want []uint64, when string) {
+		if inspector == nil {
+			return
+		}
+		got, err := inspector.KVBlocks(addr, "")
+		if err != nil {
+			e.fail("KVBlocks(%s) %s: %v", addr, when, err)
+			return
+		}
+		if len(got) != len(want) {
+			e.fail("KVBlocks(%s) %s holds %d blocks; want %d (%v)", addr, when, len(got), len(want), want)
+		}
+		for _, h := range want {
+			if !got[h] {
+				e.fail("KVBlocks(%s) %s lacks block %#x", addr, when, h)
+			}
+		}
+	}
+
 	ingest(b, e.stored(prompt, blocks, 0))
+	holds(b, e.hashes(0, blocks), "after its blocks were stored")
 	goes(b, "the only endpoint that published the prompt's blocks")
 
 	ingest(b, embed.BlockRemoved{Hashes: e.hashes(0, blocks)})
+	holds(b, nil, "after its blocks were removed")
 	ingest(a, e.stored(prompt, 2, 0))
 	goes(a, "the other endpoint removed the blocks it had published")
 
@@ -319,6 +345,7 @@ func partKV(e *env) {
 	}
 	e.rt.Settle()
 	e.rt.Advance(e.s.Observe)
+	holds(b, nil, "after it was cleared")
 	goes(a, "the other endpoint's blocks were cleared")
 }
 

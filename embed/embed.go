@@ -128,6 +128,17 @@ type RoundTripper interface {
 
 // --- What the router implements -------------------------------------------------------
 
+// KVIndexInspector is implemented by a Router that can report its KV-event index, found by
+// type assertion. It is for conformance and fidelity tests; a host must not depend on it in
+// production.
+type KVIndexInspector interface {
+	// KVBlocks returns the engine block keys the router's index holds for the endpoint at
+	// address endpoint (Endpoint.Address), on tier ("" for every tier). Reading does not
+	// perturb the index: no recency, eviction or statistic changes. It returns an error when
+	// the router keeps no index for that endpoint.
+	KVBlocks(endpoint, tier string) (map[uint64]bool, error)
+}
+
 // Config is a router's configuration as a deployment states it. Its bytes are the router's
 // own formats, which the contract does not interpret.
 type Config struct {
