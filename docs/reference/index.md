@@ -2,7 +2,7 @@
 | [Acceptance profiles](acceptance.md) | `AcceptanceProfileSet`, inline acceptance values, a scenario's pin | [`spec/acceptance`](https://github.com/inference-sim/blis-schemas/tree/main/spec/acceptance) |
 
 | [Acceptance profiles](acceptance.md) | `AcceptanceProfileSet`, inline acceptance values, a scenario's pin | [`spec/acceptance`](https://github.com/inference-sim/blis-schemas/tree/main/spec/acceptance) |
-<p class="lede">One page per document kind, plus the kernel interface, the closed
+<p class="lede">One page per document kind, plus the kernel interface, the router contract, the closed
 | [Acceptance profiles](acceptance.md) | `AcceptanceProfileSet`, inline acceptance values, a scenario's pin | [`spec/acceptance`](https://github.com/inference-sim/blis-schemas/tree/main/spec/acceptance) |
 vocabularies, the rules packs and the two commands. Each document page opens with an
 | [Acceptance profiles](acceptance.md) | `AcceptanceProfileSet`, inline acceptance values, a scenario's pin | [`spec/acceptance`](https://github.com/inference-sim/blis-schemas/tree/main/spec/acceptance) |
@@ -41,6 +41,7 @@ than these pages, read the source; each page links to it.
 | [Evaluation run](evaluation.md) | `EvaluationRun` | [`spec/evaluation`](https://github.com/inference-sim/blis-schemas/tree/main/spec/evaluation) |
 | [Acceptance profiles](acceptance.md) | `AcceptanceProfileSet`, inline acceptance values, a scenario's pin | [`spec/acceptance`](https://github.com/inference-sim/blis-schemas/tree/main/spec/acceptance) |
 | [Kernel interface](kernel.md) | the `Kernel` a cost model implements | [`kernel`](https://github.com/inference-sim/blis-schemas/tree/main/kernel) |
+| [Router contract](embed.md) | the `Runtime` a simulator implements, and the `Router` a hosted router implements | [`embed`](https://github.com/inference-sim/blis-schemas/tree/main/embed) |
 | [Acceptance profiles](acceptance.md) | `AcceptanceProfileSet`, inline acceptance values, a scenario's pin | [`spec/acceptance`](https://github.com/inference-sim/blis-schemas/tree/main/spec/acceptance) |
 | [Vocabularies](vocabularies.md) | units, methods, scope keys, dtypes, and the rest | [`vocab`](https://github.com/inference-sim/blis-schemas/tree/main/vocab) and `spec/` |
 | [Acceptance profiles](acceptance.md) | `AcceptanceProfileSet`, inline acceptance values, a scenario's pin | [`spec/acceptance`](https://github.com/inference-sim/blis-schemas/tree/main/spec/acceptance) |
