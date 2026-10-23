@@ -251,6 +251,7 @@ func (e *env) endpoints(n int) {
 			Port:     port,
 		}
 		e.eps = append(e.eps, ep)
+		e.busy[ep.Address()] = false // its engine serves idle metrics from the start
 		if err := e.r.SetEndpoint(ep, true); err != nil {
 			e.fail("SetEndpoint(%s): %v", ep.Name, err)
 		}

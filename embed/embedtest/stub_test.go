@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
-	"io"
 	"maps"
 	"net/http"
 	"slices"
@@ -170,16 +169,18 @@ func (s *stub) startScrape() {
 	})
 }
 
-// scrape reports whether the engine at ep says it is saturated (requests are waiting).
+// scrape reports whether the engine at ep says it is saturated (requests are waiting). An
+// endpoint whose metrics it cannot read counts as saturated, as llm-d's saturation detector
+// treats stale metrics: the stub routes only on metrics it has actually read.
 func (s *stub) scrape(ep embed.Endpoint) bool {
 	srv, ok := s.rt.(embed.RoundTripper)
 	if !ok {
-		return false
+		return true
 	}
 	req, _ := http.NewRequestWithContext(s.ctx, http.MethodGet, "http://"+ep.Address()+"/metrics", nil)
 	resp, err := srv.RoundTrip(req)
 	if err != nil || resp.StatusCode != http.StatusOK {
-		return false
+		return true
 	}
 	defer resp.Body.Close()
 	sc := bufio.NewScanner(resp.Body)
@@ -191,8 +192,7 @@ func (s *stub) scrape(ep embed.Endpoint) bool {
 			return v > 0
 		}
 	}
-	_, _ = io.Copy(io.Discard, resp.Body)
-	return false
+	return true // no waiting series: unreadable
 }
 
 func (s *stub) Requirements() embed.Requirements {
@@ -221,7 +221,8 @@ func (s *stub) IdleSkippable() bool { return true }
 func (s *stub) SetEndpoint(ep embed.Endpoint, ready bool) error {
 	e, ok := s.eps[ep.Name]
 	if !ok {
-		e = &stubEndpoint{blocks: map[uint64]uint64{}, chains: map[uint64]bool{}}
+		// Saturated until its metrics are read, like an endpoint with stale metrics.
+		e = &stubEndpoint{busy: true, blocks: map[uint64]uint64{}, chains: map[uint64]bool{}}
 		s.eps[ep.Name] = e
 		s.order = append(s.order, ep.Name)
 	}
