@@ -617,9 +617,13 @@ func (r *ReplayDefinition) validateInto(p *validate.Problems) {
 		}
 	}
 	if w := r.Warmup; w != nil {
+		// Reject a non-finite duration first: NaN/±Inf must not slip past the
+		// exclusivity/positivity checks below (NaN != 0 is true, NaN < 0 is false), which
+		// would otherwise validate a cache_pressure warmup the reference promises is positive.
 		switch {
 		case !w.Mode.Valid():
 			p.Field("warmup.mode", "%q is not one of %v", w.Mode, AllWarmupModes())
+		case !p.FiniteField("warmup.duration_s", w.DurationS):
 		case w.Mode != WarmupCachePressure && w.DurationS != 0:
 			p.Field("warmup.duration_s", "only a cache_pressure warmup takes a duration")
 		case w.Mode != WarmupCachePressure && w.RequestsPerLane != 0:

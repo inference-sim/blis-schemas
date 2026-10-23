@@ -100,6 +100,12 @@ func TestReplayRefuses(t *testing.T) {
 		{"negative warmup duration", "warmup.duration_s", func(r *Replay) {
 			r.Warmup = &Warmup{Mode: WarmupCachePressure, DurationS: -1}
 		}},
+		{"NaN warmup duration", "warmup.duration_s", func(r *Replay) {
+			r.Warmup = &Warmup{Mode: WarmupCachePressure, DurationS: math.NaN()}
+		}},
+		{"Inf warmup duration", "warmup.duration_s", func(r *Replay) {
+			r.Warmup = &Warmup{Mode: WarmupCachePressure, DurationS: math.Inf(1)}
+		}},
 		{"non-positive per-lane count", "warmup.requests_per_lane", func(r *Replay) {
 			r.Warmup = &Warmup{Mode: WarmupCachePressure, RequestsPerLane: -1}
 		}},
