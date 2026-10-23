@@ -157,7 +157,7 @@ stated value the scenario's validator would refuse is an error. Citations are to
 | `ignore_eos` | boolean | no | Must be true: every request generates its recorded output length. |
 | `ignore_trace_delays` | boolean | no | Must be false. |
 | `synthesis_max_isl` | integer | no | Must be unset: the scenario forbids input truncation. |
-| `trace_idle_gap_cap_s` | number | no | Must be unset: no per-trace idle compression. |
+| `trace_idle_gap_cap_s` | number | no | Positive, or unset. A per-trajectory idle watchdog (the InferenceX fork's `--trace-idle-gap-cap-seconds`); the scenario's default leaves it off. |
 | `inter_turn_delay_cap_s` | number | no | Must be unset: per-turn delays are uncapped. |
 | `category` | string | no | The workload category that selects an [acceptance profile](acceptance.md). |
 | `thinking` | string | no | `on` or `off`. Selects the profile with `category`. |
@@ -219,7 +219,8 @@ in [0, 1]. The scenario fills [0, 1]; unlike its locks, aiperf honours a stated 
 | Key | Type | Required | Meaning |
 |---|---|---|---|
 | `mode` | string | yes | One of the [warmup modes](vocabularies.md#warmup-modes). |
-| `duration_s` | number | with `cache_pressure` | How long the accelerated cache-pressure warmup runs. No other mode takes it. |
+| `duration_s` | number | `cache_pressure`, with one of these | How long the accelerated cache-pressure warmup runs. No other mode takes it. |
+| `requests_per_lane` | integer | `cache_pressure`, with one of these | Request-bounded cache-pressure warmup: each lane sends this many extra one-token warmup requests. Mutually exclusive with `duration_s`; no other mode takes it. |
 
 ## Shape
 
@@ -280,10 +281,11 @@ A replay is invalid if
 - `grace_period_s` is negative or NaN;
 - `cache_bust` is other than `first_turn_prefix`, or `system_idle_gap_cap_s` other than 10;
 - a `trajectory_start` bound lies outside [0, 1], or `min_ratio` exceeds `max_ratio`;
-- `warmup.mode` is unknown, or `duration_s` is missing for `cache_pressure` or stated for
+- `warmup.mode` is unknown; a `cache_pressure` warmup does not state exactly one of
+  `duration_s` or `requests_per_lane`, or states a non-positive one; or either is stated for
   another mode;
-- `streaming` or `ignore_eos` is false, `ignore_trace_delays` true, or any of
-  `synthesis_max_isl`, `trace_idle_gap_cap_s` and `inter_turn_delay_cap_s` is set;
+- `streaming` or `ignore_eos` is false, `ignore_trace_delays` true, `synthesis_max_isl` or
+  `inter_turn_delay_cap_s` is set, or `trace_idle_gap_cap_s` is non-positive;
 - the corpus loader is empty or not one the scenario accepts, is `weka_trace`, or is
   `weka_hf` on another repository, or an alias on a repository other than its own; `format` or `encoding` is unknown; the repository is not
   `owner/name`; `revision` is empty; or `sha256` is missing or not 64 hex digits;

@@ -46,6 +46,14 @@ func TestReplayValid(t *testing.T) {
 	if p := r.Validate(); !p.OK() {
 		t.Fatalf("the scenario's own values were rejected:\n%s", p.Error())
 	}
+	// The InferenceX fork run states the per-trace idle-gap cap and a request-bounded
+	// cache-pressure warmup, both recorded version extensions of the 0.12.0 lock.
+	r = agentX()
+	r.TraceIdleGapCapS = fl(300)
+	r.Warmup = &Warmup{Mode: WarmupCachePressure, RequestsPerLane: 10}
+	if p := r.Validate(); !p.OK() {
+		t.Fatalf("the fork run's extensions were rejected:\n%s", p.Error())
+	}
 }
 
 // Omitted fields read as what aiperf applies for the scenario.
@@ -83,17 +91,31 @@ func TestReplayRefuses(t *testing.T) {
 			r.TrajectoryStart = &TrajectoryStart{MinRatio: fl(0.8), MaxRatio: fl(0.2)}
 		}},
 		{"unknown warmup", "warmup.mode", func(r *Replay) { r.Warmup = &Warmup{Mode: "ten_per_lane"} }},
-		{"cache pressure without duration", "warmup.duration_s", func(r *Replay) {
+		{"cache pressure with neither bound", "warmup", func(r *Replay) {
 			r.Warmup = &Warmup{Mode: WarmupCachePressure}
+		}},
+		{"cache pressure with both bounds", "warmup", func(r *Replay) {
+			r.Warmup = &Warmup{Mode: WarmupCachePressure, DurationS: 600, RequestsPerLane: 10}
+		}},
+		{"negative warmup duration", "warmup.duration_s", func(r *Replay) {
+			r.Warmup = &Warmup{Mode: WarmupCachePressure, DurationS: -1}
+		}},
+		{"non-positive per-lane count", "warmup.requests_per_lane", func(r *Replay) {
+			r.Warmup = &Warmup{Mode: WarmupCachePressure, RequestsPerLane: -1}
 		}},
 		{"synthesized with duration", "warmup.duration_s", func(r *Replay) {
 			r.Warmup = &Warmup{Mode: WarmupSynthesized, DurationS: 60}
+		}},
+		{"synthesized with per-lane count", "warmup.requests_per_lane", func(r *Replay) {
+			r.Warmup = &Warmup{Mode: WarmupSynthesized, RequestsPerLane: 10}
 		}},
 		{"no streaming", "streaming", func(r *Replay) { r.Streaming = bl(false) }},
 		{"eos honoured", "ignore_eos", func(r *Replay) { r.IgnoreEOS = bl(false) }},
 		{"trace delays ignored", "ignore_trace_delays", func(r *Replay) { r.IgnoreTraceDelays = bl(true) }},
 		{"input truncation", "synthesis_max_isl", func(r *Replay) { r.SynthesisMaxISL = 131072 }},
-		{"per-trace idle cap", "trace_idle_gap_cap_s", func(r *Replay) { r.TraceIdleGapCapS = fl(300) }},
+		{"negative per-trace idle cap", "trace_idle_gap_cap_s", func(r *Replay) { r.TraceIdleGapCapS = fl(-1) }},
+		{"zero per-trace idle cap", "trace_idle_gap_cap_s", func(r *Replay) { r.TraceIdleGapCapS = fl(0) }},
+		{"NaN per-trace idle cap", "trace_idle_gap_cap_s", func(r *Replay) { r.TraceIdleGapCapS = fl(math.NaN()) }},
 		{"per-turn delay cap", "inter_turn_delay_cap_s", func(r *Replay) { r.InterTurnDelayCapS = fl(60) }},
 		{"malformed category", "category", func(r *Replay) { r.Category = "Coding" }},
 		{"unknown thinking", "thinking", func(r *Replay) { r.Thinking = "high" }},
