@@ -91,8 +91,11 @@ type Suite struct {
 	Unavailable *embed.Config
 	// EvictWithin bounds how long eviction takes. Default ten seconds.
 	EvictWithin time.Duration
-	// Refuse is a configuration that instantiates a plugin of RefuseType. Check refuses that
-	// type through Allow and expects construction to fail with a *embed.RefusalError naming it.
+	// Refuse is a configuration that instantiates a plugin of RefuseType, a type the router
+	// hosts (audited, with no reason of its own to refuse it). Check refuses that type
+	// through Allow and expects construction to fail with a *embed.RefusalError carrying
+	// Allow's reason, and expects the same configuration to construct and route with no
+	// policy.
 	Refuse     embed.Config
 	RefuseType string
 }

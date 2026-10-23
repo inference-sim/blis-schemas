@@ -150,12 +150,20 @@ type Config struct {
 	// Manifests are the deployment's Kubernetes YAML documents. The router reads the kinds
 	// it reads and ignores the others.
 	Manifests []byte
-	// Allow is the host's plugin policy. The router consults it for every plugin type it
-	// would instantiate — named in the configuration, reached through a reference, or added
-	// as a default — before that plugin's constructor runs, and refuses the configuration
-	// when Allow returns false, with a *RefusalError carrying the reason. Allow is consulted
-	// only for types the router itself can host; a type it cannot host is refused with its own
-	// reason. nil allows every type the router can host.
+	// Allow is the host's plugin policy. For every plugin type the router would instantiate
+	// — named in the configuration, reached through a reference, or added as a default — it
+	// decides before that plugin's constructor runs, in this order, and refuses the
+	// configuration with a *RefusalError carrying the reason:
+	//
+	//  1. a type the router cannot host, for a reason it states, is refused with that reason,
+	//     and Allow is not consulted;
+	//  2. otherwise Allow is consulted, and false refuses the type with Allow's reason;
+	//  3. otherwise a type the router has not audited for hosting is still refused, even
+	//     though Allow permits it.
+	//
+	// So the host's reason reaches the user for any type it refuses that the router has no
+	// reason of its own to refuse, and the router never runs code it has not audited because
+	// the host allows it. nil allows every type the router hosts.
 	Allow func(pluginType string) (ok bool, reason string)
 	// Check is the host's check of the configuration, before the router is built. The
 	// router calls it once, after it has parsed Flags, Config and Manifests and resolved its
@@ -181,8 +189,8 @@ type Config struct {
 // error that wraps a *RefusalError.
 type Constructor func(ctx context.Context, rt Runtime, cfg Config) (Router, error)
 
-// RefusalError is a plugin type the router refused at construction: one it cannot host, or
-// one Config.Allow refused.
+// RefusalError is a plugin type the router refused at construction: one it cannot host, one
+// Config.Allow refused, or one it has not audited (see Config.Allow for the order).
 type RefusalError struct {
 	Plugin string // the plugin's name in the configuration (its type when it has none)
 	Type   string
