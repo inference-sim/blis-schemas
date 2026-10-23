@@ -2584,7 +2584,7 @@ stated value the scenario's validator would refuse is an error. Citations are to
 <td><code>trace_idle_gap_cap_s</code></td>
 <td>number</td>
 <td>no</td>
-<td>Must be unset: no per-trace idle compression.</td>
+<td>Positive, or unset. A per-trajectory idle watchdog (the InferenceX fork's <code>--trace-idle-gap-cap-seconds</code>); the scenario's default leaves it off.</td>
 </tr>
 <tr>
 <td><code>inter_turn_delay_cap_s</code></td>
@@ -2780,8 +2780,14 @@ in [0, 1]. The scenario fills [0, 1]; unlike its locks, aiperf honours a stated 
 <tr>
 <td><code>duration_s</code></td>
 <td>number</td>
-<td>with <code>cache_pressure</code></td>
+<td><code>cache_pressure</code>, with one of these</td>
 <td>How long the accelerated cache-pressure warmup runs. No other mode takes it.</td>
+</tr>
+<tr>
+<td><code>requests_per_lane</code></td>
+<td>integer</td>
+<td><code>cache_pressure</code>, with one of these</td>
+<td>Request-bounded cache-pressure warmup: each lane sends this many extra one-token warmup requests. Mutually exclusive with <code>duration_s</code>; no other mode takes it.</td>
 </tr>
 </tbody>
 </table>
@@ -2919,10 +2925,11 @@ invalid if</p>
 <li><code>grace_period_s</code> is negative or NaN;</li>
 <li><code>cache_bust</code> is other than <code>first_turn_prefix</code>, or <code>system_idle_gap_cap_s</code> other than 10;</li>
 <li>a <code>trajectory_start</code> bound lies outside [0, 1], or <code>min_ratio</code> exceeds <code>max_ratio</code>;</li>
-<li><code>warmup.mode</code> is unknown, or <code>duration_s</code> is missing for <code>cache_pressure</code> or stated for
+<li><code>warmup.mode</code> is unknown; a <code>cache_pressure</code> warmup does not state exactly one of
+  <code>duration_s</code> or <code>requests_per_lane</code>, or states a non-positive one; or either is stated for
   another mode;</li>
-<li><code>streaming</code> or <code>ignore_eos</code> is false, <code>ignore_trace_delays</code> true, or any of
-  <code>synthesis_max_isl</code>, <code>trace_idle_gap_cap_s</code> and <code>inter_turn_delay_cap_s</code> is set;</li>
+<li><code>streaming</code> or <code>ignore_eos</code> is false, <code>ignore_trace_delays</code> true, <code>synthesis_max_isl</code> or
+  <code>inter_turn_delay_cap_s</code> is set, or <code>trace_idle_gap_cap_s</code> is non-positive;</li>
 <li>the corpus loader is empty or not one the scenario accepts, is <code>weka_trace</code>, or is
   <code>weka_hf</code> on another repository, or an alias on a repository other than its own; <code>format</code> or <code>encoding</code> is unknown; the repository is not
   <code>owner/name</code>; <code>revision</code> is empty; or <code>sha256</code> is missing or not 64 hex digits;</li>
