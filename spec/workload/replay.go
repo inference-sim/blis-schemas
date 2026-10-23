@@ -219,10 +219,16 @@ type ReplayDefinition struct {
 	//
 	// Streaming must be true (mvp.py:11; validator.py:234-263), IgnoreEOS true (mvp.py:10;
 	// validator.py:266-300) and IgnoreTraceDelays false (mvp.py:12; validator.py:303-327).
-	// SynthesisMaxISL, TraceIdleGapCapS and InterTurnDelayCapS must be unset: the scenario
-	// forbids input truncation (mvp.py:13; validator.py:364-396), per-trace idle
-	// compression (mvp.py:37; validator.py:696-745) and a per-turn delay cap (mvp.py:38;
+	// SynthesisMaxISL and InterTurnDelayCapS must be unset: the scenario forbids input
+	// truncation (mvp.py:13; validator.py:364-396) and a per-turn delay cap (mvp.py:38;
 	// validator.py:642-693).
+	//
+	// TraceIdleGapCapS is a recorded version extension of the 0.12.0 lock. The scenario's
+	// default forbids per-trace idle compression (mvp.py:37; validator.py:696-745), but the
+	// InferenceX fork run states --trace-idle-gap-cap-seconds, a per-trajectory idle
+	// watchdog that bounds observed runtime idle across a session tree without rewriting its
+	// timestamps or spawn/join gates. The schema allows an explicit positive value;
+	// cross-repo-changes.md §"Version discipline" records such an extension deliberately.
 	Streaming          *bool    `yaml:"streaming,omitempty"`
 	IgnoreEOS          *bool    `yaml:"ignore_eos,omitempty"`
 	IgnoreTraceDelays  *bool    `yaml:"ignore_trace_delays,omitempty"`
@@ -396,8 +402,15 @@ type TrajectoryStart struct {
 // Warmup is how a replay primes the server before profiling.
 type Warmup struct {
 	Mode WarmupMode `yaml:"mode"`
-	// DurationS bounds a cache_pressure warmup, which it requires; no other mode takes it.
+	// DurationS bounds a cache_pressure warmup by wall-clock time
+	// (--agentic-cache-warmup-duration); no other mode takes it. A cache_pressure warmup
+	// states exactly one of DurationS or RequestsPerLane.
 	DurationS float64 `yaml:"duration_s,omitempty"`
+	// RequestsPerLane bounds a cache_pressure warmup by request count: after the snapshot
+	// primers, each lane sends this many additional warmup wire requests, each capped to one
+	// output token (aiperf --warmup-requests-per-lane). The request-bounded alternative to
+	// DurationS; no other mode takes it.
+	RequestsPerLane int `yaml:"requests_per_lane,omitempty"`
 }
 
 // WarmupMode is a replay's warmup.
@@ -504,6 +517,16 @@ func (r *ReplayDefinition) IdleCap() float64 {
 	return 10
 }
 
+// TraceIdleCap returns the per-trace idle cap in seconds and whether it is set. Unlike the
+// global cap it has no default: the scenario's default leaves it off, so a caller must
+// distinguish an unset cap from one stated as a value.
+func (r *ReplayDefinition) TraceIdleCap() (float64, bool) {
+	if r.TraceIdleGapCapS != nil {
+		return *r.TraceIdleGapCapS, true
+	}
+	return 0, false
+}
+
 // StartWindow returns the snapshot window's bounds, [0, 1] where unstated.
 func (r *ReplayDefinition) StartWindow() (float64, float64) {
 	lo, hi := 0.0, 1.0
@@ -594,13 +617,26 @@ func (r *ReplayDefinition) validateInto(p *validate.Problems) {
 		}
 	}
 	if w := r.Warmup; w != nil {
+		// Reject a non-finite duration first: NaN/±Inf must not slip past the
+		// exclusivity/positivity checks below (NaN != 0 is true, NaN < 0 is false), which
+		// would otherwise validate a cache_pressure warmup the reference promises is positive.
 		switch {
 		case !w.Mode.Valid():
 			p.Field("warmup.mode", "%q is not one of %v", w.Mode, AllWarmupModes())
-		case w.Mode == WarmupCachePressure && !(w.DurationS > 0):
-			p.Field("warmup.duration_s", "a cache_pressure warmup needs a positive duration")
+		case !p.FiniteField("warmup.duration_s", w.DurationS):
 		case w.Mode != WarmupCachePressure && w.DurationS != 0:
 			p.Field("warmup.duration_s", "only a cache_pressure warmup takes a duration")
+		case w.Mode != WarmupCachePressure && w.RequestsPerLane != 0:
+			p.Field("warmup.requests_per_lane", "only a cache_pressure warmup takes a per-lane request count")
+		case w.Mode == WarmupCachePressure && (w.DurationS != 0) == (w.RequestsPerLane != 0):
+			// A cache_pressure warmup is bounded by time or by request count, never both and
+			// never neither: --agentic-cache-warmup-duration and --warmup-requests-per-lane are
+			// mutually exclusive.
+			p.Field("warmup", "a cache_pressure warmup states exactly one of duration_s or requests_per_lane")
+		case w.DurationS < 0:
+			p.Field("warmup.duration_s", "a cache_pressure warmup duration must be positive")
+		case w.RequestsPerLane < 0:
+			p.Field("warmup.requests_per_lane", "a cache_pressure per-lane request count must be positive")
 		}
 	}
 	forced := func(field string, v *bool, want bool, cite string) {
@@ -614,8 +650,8 @@ func (r *ReplayDefinition) validateInto(p *validate.Problems) {
 	if r.SynthesisMaxISL != 0 {
 		p.Field("synthesis_max_isl", "the scenario forbids input truncation (mvp.py:13; validator.py:364-396)")
 	}
-	if r.TraceIdleGapCapS != nil {
-		p.Field("trace_idle_gap_cap_s", "the scenario forbids per-trace idle compression (mvp.py:37; validator.py:696-745)")
+	if c := r.TraceIdleGapCapS; c != nil && p.FiniteField("trace_idle_gap_cap_s", *c) && *c <= 0 {
+		p.Field("trace_idle_gap_cap_s", "must be a positive number of seconds, got %v", *c)
 	}
 	if r.InterTurnDelayCapS != nil {
 		p.Field("inter_turn_delay_cap_s", "the scenario forbids a per-turn delay cap (mvp.py:38; validator.py:642-693)")
