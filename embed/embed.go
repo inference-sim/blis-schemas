@@ -146,6 +146,13 @@ type Config struct {
 	// only for types the router itself can host; a type it cannot host is refused with its own
 	// reason. nil allows every type the router can host.
 	Allow func(pluginType string) (ok bool, reason string)
+	// Check is the host's check of the configuration, before the router is built. The
+	// router calls it once, after it has parsed Flags, Config and Manifests and resolved its
+	// pool, and before it instantiates any plugin or consults Allow, with the Requirements
+	// and Pool the returned Router would report. A non-nil error is returned from the
+	// Constructor as is, unwrapped, after the router has released everything it started.
+	// nil means no host check.
+	Check func(Requirements, Pool) error
 	// Logger receives the router's logs. nil discards them.
 	Logger *slog.Logger
 }
@@ -259,6 +266,8 @@ const (
 // Requirements are facts about a router's configuration that a host compares with what it
 // produces. They are facts, not verdicts: the router reports what its configuration reads,
 // with its own defaults applied, and the host decides per endpoint whether it can supply it.
+// They follow from the parsed configuration alone, before any plugin exists (Config.Check
+// receives them then), and do not change over the router's life.
 type Requirements struct {
 	// MetricFlags are the flags naming an engine series that were set, by flag name without
 	// dashes, with their values.
@@ -343,7 +352,9 @@ type TopologyExtractor struct {
 	Region   string
 }
 
-// Pool is the pool a router serves.
+// Pool is the pool a router serves. It follows from the parsed flags and manifests alone,
+// before any plugin exists (Config.Check receives it then), and does not change over the
+// router's life.
 type Pool struct {
 	Namespace string
 	Name      string

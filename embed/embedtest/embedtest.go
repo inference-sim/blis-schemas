@@ -10,11 +10,12 @@
 //
 // The scenario covers a routing decision and its fields; endpoint readiness and removal;
 // every RejectKind a request can earn in it (NoEndpoints, Admission, Saturated,
-// ContextCancelled, TTLExpired, and Unclassified for a malformed body); response headers and
-// bodies, streamed and not; each Termination; the eviction signal; KV-event ingest, removal
-// and clear; refusal of a plugin type through Config.Allow; determinism over a seed; that
-// construction draws no randomness; and that Stop ends every goroutine and loop.
-// Unavailable is not exercised: no part of the scenario calls for it.
+// ContextCancelled, TTLExpired, Unclassified for a malformed body, and Unavailable when the
+// Suite supplies a configuration that produces it); response headers and bodies, streamed and
+// not; each Termination; the eviction signal; KV-event ingest, removal and clear; refusal of a
+// plugin type through Config.Allow; a host refusal through Config.Check, before any plugin;
+// determinism over a seed; that construction draws no
+// randomness; and that Stop ends every goroutine and loop.
 package embedtest
 
 import (
@@ -82,6 +83,10 @@ type Suite struct {
 	// held request without an objective makes the router evict a dispatched Sheddable one
 	// within EvictWithin. nil skips the eviction part.
 	Evict *embed.Config
+	// Unavailable, when set, refuses every request, Unavailable, while its endpoints are ready
+	// and idle: the router can serve none of them and has no more specific reason. A router
+	// with no configuration that does so leaves it nil, and the part is skipped.
+	Unavailable *embed.Config
 	// EvictWithin bounds how long eviction takes. Default ten seconds.
 	EvictWithin time.Duration
 	// Refuse is a configuration that instantiates a plugin of RefuseType. Check refuses that
@@ -123,12 +128,14 @@ func Problems(s Suite) []error {
 		{"no-endpoints", partNoEndpoints},
 		{"admission", partAdmission},
 		{"unclassified", partUnclassified},
+		{"unavailable", partUnavailable},
 		{"responses", partResponses},
 		{"determinism", partDeterminism},
 		{"hold", partHold},
 		{"kv", partKV},
 		{"evict", partEvict},
 		{"refuse", partRefuse},
+		{"check", partCheck},
 	}
 	for _, p := range parts {
 		e := &env{s: &s, part: p.name}

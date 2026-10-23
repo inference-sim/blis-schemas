@@ -26,6 +26,7 @@ type stubConfig struct {
 	Capacity    int      `json:"capacity"` // held requests at most
 	Evict       bool     `json:"evict"`
 	KV          bool     `json:"kv"`
+	Unavailable bool     `json:"unavailable"` // serves nothing
 }
 
 // mutation breaks one rule of the contract, to show that the checks notice.
@@ -55,6 +56,11 @@ const (
 	scoresForStrangers  mutation = "a score for an address that is no endpoint"
 	failedConstructLeak mutation = "a refused construction leaves its loop running"
 	parkedForever       mutation = "a goroutine parked on nothing Stop ends"
+	unavailableAsUncl   mutation = "Unavailable reported as Unclassified"
+	checkWrapped        mutation = "Check's error wrapped"
+	checkAfterPlugins   mutation = "Check called after Allow"
+	checkIgnored        mutation = "Check never called"
+	checkStalePool      mutation = "Check sees another Pool"
 )
 
 var stubCounter int // wallClockSeed's process-wide "randomness"
@@ -81,6 +87,11 @@ func newStub(m mutation) embed.Constructor {
 		if m == randAtConstruction {
 			rt.Rand("picker").Float64()
 		}
+		if cfg.Check != nil && m != checkIgnored && m != checkAfterPlugins {
+			if err := s.check(cfg.Check); err != nil {
+				return nil, err
+			}
+		}
 		s.startScrape()
 		if m == parkedForever {
 			rt.Go(func() { rt.Park(func() bool { return false }) })
@@ -96,8 +107,26 @@ func newStub(m mutation) embed.Constructor {
 				return nil, fmt.Errorf("stub: %w", &embed.RefusalError{Plugin: typ, Type: typ, Reason: reason})
 			}
 		}
+		if cfg.Check != nil && m == checkAfterPlugins {
+			if err := s.check(cfg.Check); err != nil {
+				s.cancel()
+				return nil, err
+			}
+		}
 		return s, nil
 	}
+}
+
+func (s *stub) check(check func(embed.Requirements, embed.Pool) error) error {
+	pool := s.Pool()
+	if s.m == checkStalePool {
+		pool.Name = "other"
+	}
+	err := check(s.Requirements(), pool)
+	if err != nil && s.m == checkWrapped {
+		return fmt.Errorf("stub: %w", err)
+	}
+	return err
 }
 
 type stub struct {
@@ -241,6 +270,13 @@ func (s *stub) Route(ctx context.Context, req embed.Request, done func(embed.Fli
 	s.rt.Go(func() {
 		c := s.candidates()
 		switch {
+		case s.cfg.Unavailable:
+			kind := embed.Unavailable
+			if s.m == unavailableAsUncl {
+				kind = embed.Unclassified
+			}
+			reject(kind, "no serving capacity")
+			return
 		case len(c) == 0:
 			kind := embed.NoEndpoints
 			if s.m == noEndpointsAsUnavl {

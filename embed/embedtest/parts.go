@@ -3,6 +3,7 @@ package embedtest
 import (
 	"context"
 	"errors"
+	"reflect"
 	"slices"
 	"strings"
 
@@ -128,6 +129,19 @@ func partUnclassified(e *env) {
 	req := e.request("", false, nil)
 	req.Body = []byte("{not json")
 	e.wantRejected(e.route(req), embed.Unclassified)
+}
+
+// partUnavailable: a configuration that can serve no request refuses one, Unavailable, and not
+// Unclassified: a host counts the two differently.
+func partUnavailable(e *env) {
+	if e.s.Unavailable == nil {
+		return
+	}
+	if !e.build(*e.s.Unavailable) {
+		return
+	}
+	e.endpoints(2)
+	e.wantRejected(e.route(e.request("", false, e.prompt(1, 1))), embed.Unavailable)
 }
 
 // partResponses: the router sees each response's headers and body, streamed or not, and each
@@ -360,6 +374,71 @@ func partEvict(e *env) {
 	e.rt.Advance(e.s.Observe)
 	if held.flight != nil {
 		held.end(e)
+	}
+}
+
+// partCheck: a host check that fails stops construction before any plugin is built: its
+// error comes back as is, Allow is never consulted, and nothing is left running. A check that
+// passes sees the Requirements and Pool the router then reports.
+func partCheck(e *env) {
+	errHost := errors.New("refused by the embedtest host check")
+	var asked []string
+	calls := 0
+	cfg := e.s.Refuse
+	cfg.Allow = func(typ string) (bool, string) {
+		asked = append(asked, typ)
+		return false, "Allow consulted after a failing Check"
+	}
+	cfg.Check = func(embed.Requirements, embed.Pool) error {
+		calls++
+		return errHost
+	}
+	e.rt = NewRuntime(e.s.Seed)
+	e.rt.Engines = e.serve
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	r, err := e.s.New(ctx, e.rt, cfg)
+	switch {
+	case err == nil:
+		e.fail("construction succeeded although Check failed")
+		e.r, e.cancel = r, cancel
+		e.reset()
+	case err != errHost:
+		e.fail("construction failed with %q; want Check's error, unwrapped", err)
+	}
+	if calls != 1 {
+		e.fail("Check was called %d times; want once", calls)
+	}
+	if len(asked) > 0 {
+		e.fail("Allow was consulted (%v) after Check failed; Check runs before any plugin", asked)
+	}
+	if err != nil {
+		e.rt.stopped = true
+		e.rt.Settle()
+		e.rt.Advance(10 * e.s.Observe)
+		if n := e.rt.Live(); n != 0 {
+			e.fail("a construction Check refused left %d goroutines running", n)
+		}
+		if n := e.rt.loopsStopped; n != 0 {
+			e.fail("a construction Check refused left an Every loop running (%d calls)", n)
+		}
+	}
+
+	var gotReq embed.Requirements
+	var gotPool embed.Pool
+	cfg = e.s.Route
+	cfg.Check = func(r embed.Requirements, p embed.Pool) error {
+		gotReq, gotPool = r, p
+		return nil
+	}
+	if !e.build(cfg) {
+		return
+	}
+	if !reflect.DeepEqual(gotReq, e.r.Requirements()) {
+		e.fail("Check saw Requirements %+v; the router reports %+v", gotReq, e.r.Requirements())
+	}
+	if !reflect.DeepEqual(gotPool, e.r.Pool()) {
+		e.fail("Check saw Pool %+v; the router reports %+v", gotPool, e.r.Pool())
 	}
 }
 

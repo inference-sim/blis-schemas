@@ -17,15 +17,17 @@ func config(c stubConfig) embed.Config {
 // suite is the stub router's Suite, as a router's own test would write one.
 func suite(m mutation) embedtest.Suite {
 	evict := config(stubConfig{FlowControl: true, Capacity: 4, Evict: true})
+	unavailable := config(stubConfig{Unavailable: true})
 	return embedtest.Suite{
-		New:        newStub(m),
-		Seed:       7,
-		Route:      config(stubConfig{}),
-		Hold:       config(stubConfig{FlowControl: true, TTL: "5s", Capacity: 1}),
-		KV:         config(stubConfig{KV: true}),
-		Evict:      &evict,
-		Refuse:     config(stubConfig{Plugins: []string{"scorer", "unhostable"}}),
-		RefuseType: "unhostable",
+		New:         newStub(m),
+		Seed:        7,
+		Route:       config(stubConfig{}),
+		Hold:        config(stubConfig{FlowControl: true, TTL: "5s", Capacity: 1}),
+		KV:          config(stubConfig{KV: true}),
+		Evict:       &evict,
+		Unavailable: &unavailable,
+		Refuse:      config(stubConfig{Plugins: []string{"scorer", "unhostable"}}),
+		RefuseType:  "unhostable",
 	}
 }
 
@@ -63,6 +65,11 @@ func TestMutationsFail(t *testing.T) {
 		{evictSignalNoEvict, "route: request-1: an EvictionSignal from a configuration that does not evict"},
 		{scoresForStrangers, `a score for "192.0.2.1:8000", which is no endpoint`},
 		{failedConstructLeak, "a failed construction left an Every loop running"},
+		{unavailableAsUncl, "unavailable: request-1: want a unavailable rejection, got unclassified"},
+		{checkWrapped, "check: construction failed with \"stub: refused by the embedtest host check\"; want Check's error, unwrapped"},
+		{checkAfterPlugins, "check: Allow was consulted"},
+		{checkIgnored, "check: Check was called 0 times; want once"},
+		{checkStalePool, "check: Check saw Pool"},
 		{parkedForever, "route: 1 goroutines started with Runtime.Go are still live after Stop"},
 	} {
 		t.Run(string(c.m), func(t *testing.T) {
