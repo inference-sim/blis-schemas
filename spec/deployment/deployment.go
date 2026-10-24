@@ -486,10 +486,38 @@ var kvEventPublishers = map[string]bool{"null": true, "zmq": true}
 
 // Speculative is the draft configuration. The method name is engine-version data,
 // validated by a rules pack rather than by this schema.
+//
+// Acceptance is an input supplied by calibration (inference-sim/inference-sim#2021 B3), so
+// the sampling knobs below are carried as the launch gave them and recorded, but they do not
+// change which drafts a simulator accepts.
 type Speculative struct {
 	Method        string `yaml:"method"`
 	NumSpecTokens int    `yaml:"num_spec_tokens"`
+	// DraftModel names the catalog model whose graph is the drafter, where the drafter is a
+	// separate checkpoint, as an EAGLE3 head is: vLLM's speculative_config.model
+	// (vllm/config/speculative.py:396@5df63a72; blis-schemas#97). Empty means the target
+	// graph's own speculator.
+	DraftModel string `yaml:"draft_model,omitempty"`
+	// KVCacheDType is the drafter's KV cache format where it differs from the target's,
+	// speculative_config.kv_cache_dtype, which overrides the draft's cache_config.cache_dtype
+	// (vllm/config/speculative.py:382@5df63a72). Empty means the target's.
+	KVCacheDType string `yaml:"kv_cache_dtype,omitempty"`
+	// DraftSampleMethod is "greedy" or "probabilistic" (vllm/config/speculative.py:85,600@5df63a72).
+	DraftSampleMethod string `yaml:"draft_sample_method,omitempty"`
+	// RejectionSampleMethod is "standard", "synthetic" or "block"
+	// (vllm/config/speculative.py:84,529@5df63a72).
+	RejectionSampleMethod string `yaml:"rejection_sample_method,omitempty"`
+	// EnableAdaptiveVerification sizes the verification budget from per-request confidence;
+	// DSpark only (vllm/config/speculative.py:551@5df63a72). Tri-state: nil is false.
+	EnableAdaptiveVerification *bool `yaml:"enable_adaptive_verification,omitempty"`
 }
+
+// Sample-method vocabularies of vLLM v0.32.0 (vllm/config/speculative.py:84-85@5df63a72).
+// They are closed literals, so an unknown value is a field error rather than a rule.
+var (
+	draftSampleMethods     = map[string]bool{"greedy": true, "probabilistic": true}
+	rejectionSampleMethods = map[string]bool{"standard": true, "synthetic": true, "block": true}
+)
 
 // EngramConfig mirrors the cost-bearing keys of vLLM's --engram-config (v0.31.0
 // vllm/config/engram.py). Each is a tri-state request: nil takes the engine default.
@@ -542,7 +570,42 @@ type Offload struct {
 	Connector string `yaml:"connector,omitempty"`
 	// Spec names the offloading spec, e.g. a CPU-only spec or a tiering spec.
 	Spec string `yaml:"spec,omitempty"`
+	// ConnectorOptions are the connector's own options, as kv_connector_extra_config gives
+	// them to vLLM. See ConnectorOptions.
+	ConnectorOptions *ConnectorOptions `yaml:"connector_options,omitempty"`
 }
+
+// ConnectorOptions are the KV connector options a deployment states, from vLLM's
+// kv_transfer_config (vllm/config/kv_transfer.py@5df63a72) and its kv_connector_extra_config,
+// each read by the connector named. Typed rather than a free map, so a misspelled option fails
+// to load instead of being dropped. Every one is a tri-state request: nil is the connector's
+// default.
+type ConnectorOptions struct {
+	// LoadAsync loads a hit asynchronously (MooncakeStoreConnector, default true:
+	// vllm/distributed/kv_transfer/kv_connector/v1/mooncake/store/worker.py:1397@5df63a72).
+	LoadAsync *bool `yaml:"load_async,omitempty"`
+	// LookupAsync looks a prefix up without blocking the scheduler (MooncakeStoreConnector,
+	// default false: .../mooncake/store/scheduler.py:147@5df63a72).
+	LookupAsync *bool `yaml:"lookup_async,omitempty"`
+	// EnableOffload writes KV to the store as well as reading it (Mooncake's store config,
+	// default false: vllm/distributed/mooncake_store.py:37,66@5df63a72).
+	EnableOffload *bool `yaml:"enable_offload,omitempty"`
+	// EnableCrossLayersBlocks stores one block across all layers rather than per layer
+	// (MooncakeStoreConnector's layout check, .../mooncake/store/worker.py:1553@5df63a72).
+	EnableCrossLayersBlocks *bool `yaml:"enable_cross_layers_blocks,omitempty"`
+	// LazyOffload defers a CPU write until a block is evicted (SimpleCPUOffloadConnector,
+	// default false: .../simple_cpu_offload_connector.py:104@5df63a72).
+	LazyOffload *bool `yaml:"lazy_offload,omitempty"`
+	// BlocksPerChunk groups GPU blocks into one offload chunk (OffloadingConnector,
+	// .../offloading/config.py:99-112@5df63a72). Zero means unset; a stated one is positive.
+	BlocksPerChunk int `yaml:"blocks_per_chunk,omitempty"`
+	// KVLoadFailurePolicy is what a failed KV load does: "recompute" the failed blocks, or
+	// "fail" the request, the default (vllm/config/kv_transfer.py:88@5df63a72).
+	KVLoadFailurePolicy string `yaml:"kv_load_failure_policy,omitempty"`
+}
+
+// kvLoadFailurePolicies is vLLM v0.32.0's closed literal (vllm/config/kv_transfer.py:88@5df63a72).
+var kvLoadFailurePolicies = map[string]bool{"recompute": true, "fail": true}
 
 // Tier is one offload level: a device class from the catalog, and how much of it.
 // Where the Scenario cluster declares a storage inventory, the device class must be one

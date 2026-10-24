@@ -718,6 +718,16 @@ func validateEngine(p *validate.Problems, at string, e Engine) {
 			p.Field(at+".engine.speculative.num_spec_tokens",
 				"must be at least 1; omit the block instead of declaring zero drafts")
 		}
+		sp := e.Speculative
+		if sp.DraftModel != "" && strings.TrimSpace(sp.DraftModel) == "" {
+			p.Field(at+".engine.speculative.draft_model", "must name a catalog model, not be blank")
+		}
+		if m := sp.DraftSampleMethod; m != "" && !draftSampleMethods[m] {
+			p.Field(at+".engine.speculative.draft_sample_method", "%q is not greedy or probabilistic", m)
+		}
+		if m := sp.RejectionSampleMethod; m != "" && !rejectionSampleMethods[m] {
+			p.Field(at+".engine.speculative.rejection_sample_method", "%q is not standard, synthetic or block", m)
+		}
 	}
 	validateSchedulerKnobs(p, at, e)
 }
@@ -831,5 +841,13 @@ func (d *Deployment) validateOffload(p *validate.Problems) {
 	}
 	if o.PrefetchDepth < 0 {
 		p.Field("offload.prefetch_depth", "must not be negative")
+	}
+	if c := o.ConnectorOptions; c != nil {
+		if c.BlocksPerChunk < 0 {
+			p.Field("offload.connector_options.blocks_per_chunk", "must not be negative; omit it, or 0, for the connector's default")
+		}
+		if f := c.KVLoadFailurePolicy; f != "" && !kvLoadFailurePolicies[f] {
+			p.Field("offload.connector_options.kv_load_failure_policy", "%q is not recompute or fail", f)
+		}
 	}
 }

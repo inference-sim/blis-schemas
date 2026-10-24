@@ -182,6 +182,11 @@ Decode-context parallelism. These have no effect when `dcp` is 0 or 1:
 |---|---|---|---|
 | `method` | string | yes | The draft method. Which names are valid depends on the engine release. |
 | `num_spec_tokens` | integer | yes | Draft tokens per step, at least 1. |
+| `draft_model` | string | no | The catalog model whose graph is the drafter, where the drafter is a separate checkpoint, as an EAGLE3 head is (vLLM's `speculative_config.model`). Omitted, the target graph's own speculator. Not blank. |
+| `kv_cache_dtype` | string | no | The drafter's KV cache format where it differs from the target's. |
+| `draft_sample_method` | string | no | `greedy` or `probabilistic`. Recorded: acceptance is supplied, so it does not change which drafts are accepted. |
+| `rejection_sample_method` | string | no | `standard`, `synthetic` or `block`. Recorded, as `draft_sample_method`. |
+| `enable_adaptive_verification` | boolean | no | Size the verification budget from per-request confidence (DSpark only). Omitted means false. |
 
 #### `engine.engram_config`
 
@@ -221,6 +226,24 @@ its prefix cache can serve. A router's precise prefix-cache scorer consumes the 
 | `prefetch_depth` | integer | no | How many steps ahead a fetch is issued. |
 | `connector` | string | no | The KV connector that implements offload. |
 | `spec` | string | no | The offloading spec, such as `CPUOffloadingSpec`. |
+| `connector_options` | mapping | no | The connector's own options, below. |
+
+### `offload.connector_options`
+
+The options vLLM's `kv_transfer_config.kv_connector_extra_config` gives the offload connector.
+Each is optional and takes the connector's default when omitted; a misspelled one fails to load.
+
+<!-- fields: deployment.ConnectorOptions -->
+
+| Key | Type | Required | Meaning |
+|---|---|---|---|
+| `load_async` | boolean | no | Load a hit asynchronously (MooncakeStoreConnector; default true). |
+| `lookup_async` | boolean | no | Look a prefix up without blocking the scheduler (MooncakeStoreConnector; default false). |
+| `enable_offload` | boolean | no | Write KV to the store as well as read it (Mooncake; default false). |
+| `enable_cross_layers_blocks` | boolean | no | Store one block across all layers rather than per layer (MooncakeStoreConnector). |
+| `lazy_offload` | boolean | no | Defer a CPU write until the block is evicted (SimpleCPUOffloadConnector; default false). |
+| `blocks_per_chunk` | integer | no | GPU blocks per offload chunk (OffloadingConnector). Not negative; omitted or 0 is the connector's default. |
+| `kv_load_failure_policy` | string | no | What a failed KV load does: `recompute` the failed blocks, or `fail` the request (the default). |
 
 ### `offload.tiers`
 
@@ -303,8 +326,12 @@ A deployment is invalid if
 - `kv_events.publisher` is not `null` or `zmq`, a `custom_ops` entry is empty, a
   `decoder_replay_cudagraph_capture_sizes` entry is below 1, or an `env` name is not an
   environment-variable name;
+- `speculative.draft_model` is blank, or `speculative.draft_sample_method` or
+  `rejection_sample_method` is not one of vLLM's values;
 - `offload` is present with no tiers, a tier is unnamed or named twice, a tier's `bytes`
-  is below 1, or `prefetch_depth` is negative.
+  is below 1, or `prefetch_depth` is negative;
+- `offload.connector_options.blocks_per_chunk` is negative, or its `kv_load_failure_policy`
+  is not `recompute` or `fail`.
 
 It draws a warning if expert parallelism is enabled but the derived width is 1, or if
 `allreduce_backend` is `nccl` while `disable_custom_all_reduce` is explicitly `false`.
