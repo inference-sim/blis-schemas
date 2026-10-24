@@ -8,10 +8,20 @@ import (
 	"github.com/inference-sim/blis-schemas/spec/model"
 )
 
-// Problems is the accumulating finding list a rule reports into. It is exported here so
-// a rules pack can live in another module: a Rule's Check takes it, and a type in an
-// internal package cannot be named from outside this module.
-type Problems = validate.Problems
+// Problems is the accumulating finding list a rule reports into, and Problem, Severity and
+// its two values the findings in it. They are exported here so a rules pack can live in
+// another module: a Rule's Check takes a Problems, and a type in an internal package cannot
+// be named from outside this module.
+type (
+	Problems = validate.Problems
+	Problem  = validate.Problem
+	Severity = validate.Severity
+)
+
+const (
+	SeverityError   = validate.SeverityError
+	SeverityWarning = validate.SeverityWarning
+)
 
 // EngineRules is everything a consumer asks of one engine release's rules: which values
 // it accepts, how it resolves what a deployment leaves unstated, and its version-scoped
