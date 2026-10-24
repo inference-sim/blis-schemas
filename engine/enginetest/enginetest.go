@@ -5,7 +5,9 @@
 // protocol and same-instant order exactly. Driving an engine through it checks the laws
 // that hold for every engine: no request is lost or finished twice, batch IDs never
 // repeat, batches complete in order, no more batches are in flight than the engine's
-// limit, an engine with work left always has a way to be stepped again, and the same
+// limit, a wake is always after the instant it was asked at, a step always takes time, a
+// batch's output names only its own requests and at most one token plus its accepted
+// drafts each, an engine with work left always has a way to be stepped again, and the same
 // inputs give the same run.
 package enginetest
 
@@ -124,11 +126,13 @@ func (d *driver) push(ev *event) {
 	heap.Push(&d.q, ev)
 }
 
-// rewake applies the wake protocol after a state-changing call.
-func (d *driver) rewake() {
+// rewake applies the wake protocol after a state-changing call. A wake at or before the
+// instant it was asked at breaks the contract (NextWake is the earliest instant after now)
+// and is reported, not moved: a driver that repaired it would hide the bug.
+func (d *driver) rewake() error {
 	at, ok := d.e.NextWake(d.now)
 	if ok && at <= d.now {
-		at = d.now + 1
+		return fmt.Errorf("at %d: NextWake(%d) = %d, want an instant after now", d.now, d.now, at)
 	}
 	if d.wake != nil && (!ok || at != d.wake.at) {
 		d.wake.dead = true
@@ -138,6 +142,7 @@ func (d *driver) rewake() {
 		d.wake = &event{at: at, kind: kindWake}
 		d.push(d.wake)
 	}
+	return nil
 }
 
 // step schedules as many batches as the engine allows at d.now. A batch runs once the
@@ -155,7 +160,9 @@ func (d *driver) step() error {
 		if err != nil {
 			return fmt.Errorf("at %d: Schedule: %w", d.now, err)
 		}
-		d.rewake()
+		if err := d.rewake(); err != nil {
+			return err
+		}
 		// A batch that runs nothing may still start transfers (an asynchronous load
 		// admitted with no compute this step), and those must be priced like any other.
 		for _, tr := range b.TransfersStarted {
@@ -204,6 +211,21 @@ func (d *driver) complete(id engine.BatchID) error {
 	res, err := d.e.Complete(id, out, d.now)
 	if err != nil {
 		return fmt.Errorf("at %d: Complete(%d): %w", d.now, id, err)
+	}
+	// A request emits at most one sampled token plus the drafts it had accepted, and only a
+	// request this batch ran can emit at all.
+	ran := map[string]bool{}
+	for _, s := range b.Reqs {
+		ran[s.ID] = true
+	}
+	for rid, n := range res.Emitted {
+		if !ran[rid] {
+			return fmt.Errorf("at %d: Complete(%d) emitted %d tokens for %s, which the batch did not run", d.now, id, n, rid)
+		}
+		if limit := 1 + out.Accepted[rid]; n < 0 || n > limit {
+			return fmt.Errorf("at %d: Complete(%d) emitted %d tokens for %s, want 0 to %d (one sampled plus %d accepted drafts)",
+				d.now, id, n, rid, limit, out.Accepted[rid])
+		}
 	}
 	d.inFlight = d.inFlight[1:]
 	d.trace.Steps = append(d.trace.Steps, Step{Start: d.started[id], End: d.now, Batch: b, Result: res})
@@ -296,7 +318,9 @@ func Drive(newEngine func() (engine.Engine, error), arrivals []Arrival, opt Opti
 				return Trace{}, err
 			}
 		}
-		d.rewake()
+		if err := d.rewake(); err != nil {
+			return Trace{}, err
+		}
 		// Step once the instant's earlier kinds are processed, as a simulator does: after the
 		// last arrival, transfer or completion at this instant, or at a wake.
 		if next := d.q.peek(); next == nil || next.at > d.now || next.kind >= kindWake {

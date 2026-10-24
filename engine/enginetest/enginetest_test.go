@@ -185,6 +185,41 @@ func (e finishesTwice) Complete(id engine.BatchID, o engine.Outcome, end engine.
 	return r, err
 }
 
+// wakesNow reports a wake at the instant it is asked, which the contract forbids.
+type wakesNow struct{ *FIFO }
+
+func (e wakesNow) NextWake(now engine.Time) (engine.Time, bool) {
+	if _, ok := e.FIFO.NextWake(now); ok {
+		return now, true
+	}
+	return 0, false
+}
+
+// freeSteps prices a step at zero, so time would not advance.
+type freeSteps struct{ *FIFO }
+
+func (freeSteps) StepTime(engine.Batch) engine.Duration { return 0 }
+
+// finishesAStranger reports a request it was never given as finished.
+type finishesAStranger struct{ *FIFO }
+
+func (e finishesAStranger) Complete(id engine.BatchID, o engine.Outcome, end engine.Time) (engine.Result, error) {
+	r, err := e.FIFO.Complete(id, o, end)
+	r.Finished = append(r.Finished, engine.Finished{ID: "stranger", Reason: engine.FinishStop})
+	return r, err
+}
+
+// overEmits reports more output tokens for a request than one step can sample.
+type overEmits struct{ *FIFO }
+
+func (e overEmits) Complete(id engine.BatchID, o engine.Outcome, end engine.Time) (engine.Result, error) {
+	r, err := e.FIFO.Complete(id, o, end)
+	for rid := range r.Emitted {
+		r.Emitted[rid] += 2
+	}
+	return r, err
+}
+
 func TestTheDriverCatchesBrokenEngines(t *testing.T) {
 	held := req("held", 4, 1)
 	held.Tags = map[string]string{"fifo.hold_until": "500"}
@@ -200,6 +235,10 @@ func TestTheDriverCatchesBrokenEngines(t *testing.T) {
 		{"a reused batch ID", func(f *FIFO) engine.Engine { return reusesIDs{f} }, nil, two, "does not follow"},
 		{"the in-flight limit ignored", func(f *FIFO) engine.Engine { return ignoresLimit{f} }, func(c *FIFOConfig) { c.MaxRunning = 1 }, two, "want ErrNoCapacity"},
 		{"a request finished twice", func(f *FIFO) engine.Engine { return finishesTwice{f} }, nil, two, "finished twice"},
+		{"a wake at the instant asked", func(f *FIFO) engine.Engine { return wakesNow{f} }, nil, []Arrival{at(0, held)}, "want an instant after now"},
+		{"a step that takes no time", func(f *FIFO) engine.Engine { return freeSteps{f} }, nil, two, "want at least 1"},
+		{"a never-added request finished", func(f *FIFO) engine.Engine { return finishesAStranger{f} }, nil, two, "never added"},
+		{"more tokens emitted than a step samples", func(f *FIFO) engine.Engine { return overEmits{f} }, nil, two, "one sampled plus"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			cfg := fifoCfg()

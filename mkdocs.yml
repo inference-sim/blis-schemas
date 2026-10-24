@@ -136,6 +136,7 @@ nav:
       - Evaluation run: reference/evaluation.md
       - Measured run: reference/measurement.md
       - Kernel interface: reference/kernel.md
+      - Engine interface: reference/engine.md
       - Vocabularies: reference/vocabularies.md
       - Rules packs: reference/rules.md
       - Command line: reference/cli.md

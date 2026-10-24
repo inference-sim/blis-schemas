@@ -52,6 +52,8 @@ func TestSchedulerAndCacheKnobs(t *testing.T) {
 		{"max_loras negative", Engine{MaxLoRAs: -1}, "max_loras"},
 		{"max_cpu_loras below max_loras", Engine{MaxLoRAs: 4, MaxCPULoRAs: 2}, "max_cpu_loras"},
 		{"max_cpu_loras at max_loras", Engine{MaxLoRAs: 4, MaxCPULoRAs: 4}, ""},
+		// 0 is the engine's "unset" too (vllm/engine/arg_utils.py:2663-2665@5df63a72).
+		{"max_cpu_loras 0 is max_loras", Engine{MaxLoRAs: 4, MaxCPULoRAs: 0}, ""},
 		{"kv_events zmq", Engine{KVEvents: &KVEvents{EnableKVCacheEvents: true, Publisher: "zmq"}}, ""},
 		{"kv_events unknown publisher", Engine{KVEvents: &KVEvents{EnableKVCacheEvents: true, Publisher: "kafka"}}, "kv_events.publisher"},
 		{"custom_ops", Engine{CustomOps: []string{"all"}}, ""},

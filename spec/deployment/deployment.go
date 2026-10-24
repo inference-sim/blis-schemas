@@ -354,8 +354,11 @@ type Engine struct {
 	// of 1.
 	MaxLoRAs int `yaml:"max_loras,omitempty"`
 	// MaxCPULoRAs is how many LoRA adapters are kept loaded in CPU memory, an LRU set
-	// (vllm/config/lora.py:42@5df63a72). Zero means unset: max_loras. The engine refuses one
-	// below max_loras.
+	// (vllm/config/lora.py:42@5df63a72). Zero means unset: max_loras. That is the engine's own
+	// reading of 0, not only this schema's: the launch path passes a non-positive
+	// --max-cpu-loras as None (vllm/engine/arg_utils.py:2663-2665@5df63a72), which LoRAConfig
+	// then sets to max_loras (vllm/config/lora.py:120-121@5df63a72). The engine refuses a
+	// positive value below max_loras.
 	MaxCPULoRAs int `yaml:"max_cpu_loras,omitempty"`
 
 	// Quantization is the weight format the engine serves in, where it differs from
