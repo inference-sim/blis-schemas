@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -127,7 +128,7 @@ func TestProtocolErrors(t *testing.T) {
 // The FIFO engine is built from an opaque spec through the registry, as a simulator builds
 // any engine; its config decodes strictly.
 func TestFIFOBuildsThroughTheRegistry(t *testing.T) {
-	engine.Register(FIFOFactory{})
+	registerFIFO()
 	var node yaml.Node
 	if err := yaml.Unmarshal([]byte("max_running: 2\ntoken_budget: 8\nstep_base_us: 10\nstep_per_token_us: 1\n"), &node); err != nil {
 		t.Fatal(err)
@@ -148,6 +149,10 @@ func TestFIFOBuildsThroughTheRegistry(t *testing.T) {
 		t.Errorf("an unknown kind returned %v; want an error naming the registered kinds", err)
 	}
 }
+
+// registerFIFO registers the FIFO factory once per test binary: engine.Register refuses a
+// duplicate kind, and go test -count=N runs a test N times in one process.
+var registerFIFO = sync.OnceFunc(func() { engine.Register(FIFOFactory{}) })
 
 // --- The driver catches broken engines. Each is FIFO with one law broken. -------------
 
@@ -220,6 +225,39 @@ func (e overEmits) Complete(id engine.BatchID, o engine.Outcome, end engine.Time
 	return r, err
 }
 
+// miscounts reports a finished request's output tokens one higher than it emitted.
+type miscounts struct{ *FIFO }
+
+func (e miscounts) Complete(id engine.BatchID, o engine.Outcome, end engine.Time) (engine.Result, error) {
+	r, err := e.FIFO.Complete(id, o, end)
+	for i := range r.Finished {
+		r.Finished[i].OutputTokens++
+	}
+	return r, err
+}
+
+// schedulesAStranger runs a request it was never given.
+type schedulesAStranger struct{ *FIFO }
+
+func (e schedulesAStranger) Schedule(now engine.Time) (engine.Batch, error) {
+	b, err := e.FIFO.Schedule(now)
+	if !b.Empty() {
+		b.Reqs = append(b.Reqs, engine.Scheduled{ID: "stranger", Tokens: 1, PromptLen: 1})
+	}
+	return b, err
+}
+
+// schedulesTwice puts one request in a batch twice.
+type schedulesTwice struct{ *FIFO }
+
+func (e schedulesTwice) Schedule(now engine.Time) (engine.Batch, error) {
+	b, err := e.FIFO.Schedule(now)
+	if !b.Empty() {
+		b.Reqs = append(b.Reqs, b.Reqs[0])
+	}
+	return b, err
+}
+
 func TestTheDriverCatchesBrokenEngines(t *testing.T) {
 	held := req("held", 4, 1)
 	held.Tags = map[string]string{"fifo.hold_until": "500"}
@@ -239,6 +277,9 @@ func TestTheDriverCatchesBrokenEngines(t *testing.T) {
 		{"a step that takes no time", func(f *FIFO) engine.Engine { return freeSteps{f} }, nil, two, "want at least 1"},
 		{"a never-added request finished", func(f *FIFO) engine.Engine { return finishesAStranger{f} }, nil, two, "never added"},
 		{"more tokens emitted than a step samples", func(f *FIFO) engine.Engine { return overEmits{f} }, nil, two, "one sampled plus"},
+		{"a finish that miscounts its output", func(f *FIFO) engine.Engine { return miscounts{f} }, nil, two, "emitted"},
+		{"a never-added request scheduled", func(f *FIFO) engine.Engine { return schedulesAStranger{f} }, nil, two, "never added"},
+		{"a request scheduled twice in one batch", func(f *FIFO) engine.Engine { return schedulesTwice{f} }, nil, two, "twice in batch"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			cfg := fifoCfg()

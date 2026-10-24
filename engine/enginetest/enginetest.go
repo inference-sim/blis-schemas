@@ -3,12 +3,13 @@
 //
 // Its centre is Drive, a minimal discrete-event driver that follows the contract's wake
 // protocol and same-instant order exactly. Driving an engine through it checks the laws
-// that hold for every engine: no request is lost or finished twice, batch IDs never
-// repeat, batches complete in order, no more batches are in flight than the engine's
-// limit, a wake is always after the instant it was asked at, a step always takes time, a
-// batch's output names only its own requests and at most one token plus its accepted
-// drafts each, an engine with work left always has a way to be stepped again, and the same
-// inputs give the same run.
+// that hold for every engine: no request is lost or finished twice, a batch runs only
+// requests the engine holds, each once, batch IDs never repeat, batches complete in order,
+// no more batches are in flight than the engine's limit, a wake is always after the
+// instant it was asked at, a step always takes time, a batch's output names only its own
+// requests and at most one token plus its accepted drafts each, a finish reports the
+// output its batches emitted, an engine with work left always has a way to be stepped
+// again, and the same inputs give the same run.
 package enginetest
 
 import (
@@ -116,6 +117,7 @@ type driver struct {
 	lastID   engine.BatchID
 	haveID   bool
 	pending  map[string]bool
+	emitted  map[string]int
 	trace    Trace
 	steps    int
 }
@@ -181,6 +183,16 @@ func (d *driver) step() error {
 		if d.haveID && b.ID <= d.lastID {
 			return fmt.Errorf("at %d: batch ID %d does not follow %d", d.now, b.ID, d.lastID)
 		}
+		inBatch := map[string]bool{}
+		for _, s := range b.Reqs {
+			switch {
+			case !d.pending[s.ID]:
+				return fmt.Errorf("at %d: batch %d runs %s, which was never added or has finished", d.now, b.ID, s.ID)
+			case inBatch[s.ID]:
+				return fmt.Errorf("at %d: batch %d runs %s twice in batch", d.now, b.ID, s.ID)
+			}
+			inBatch[s.ID] = true
+		}
 		d.lastID, d.haveID = b.ID, true
 		dur := d.e.StepTime(b)
 		if dur < 1 {
@@ -226,11 +238,16 @@ func (d *driver) complete(id engine.BatchID) error {
 			return fmt.Errorf("at %d: Complete(%d) emitted %d tokens for %s, want 0 to %d (one sampled plus %d accepted drafts)",
 				d.now, id, n, rid, limit, out.Accepted[rid])
 		}
+		d.emitted[rid] += n
 	}
 	d.inFlight = d.inFlight[1:]
 	d.trace.Steps = append(d.trace.Steps, Step{Start: d.started[id], End: d.now, Batch: b, Result: res})
 	delete(d.batches, id)
 	for _, f := range res.Finished {
+		if f.OutputTokens != d.emitted[f.ID] {
+			return fmt.Errorf("at %d: Complete(%d) finished %s with %d output tokens, but its batches emitted %d",
+				d.now, id, f.ID, f.OutputTokens, d.emitted[f.ID])
+		}
 		if err := d.finished(f); err != nil {
 			return err
 		}
@@ -264,7 +281,7 @@ func Drive(newEngine func() (engine.Engine, error), arrivals []Arrival, opt Opti
 	d := &driver{
 		e: e, opt: opt,
 		started: map[engine.BatchID]engine.Time{}, batches: map[engine.BatchID]engine.Batch{},
-		pending: map[string]bool{}, trace: Trace{Finished: map[string]engine.Finished{}},
+		pending: map[string]bool{}, emitted: map[string]int{}, trace: Trace{Finished: map[string]engine.Finished{}},
 	}
 	maxSteps := opt.MaxSteps
 	if maxSteps == 0 {
@@ -314,7 +331,7 @@ func Drive(newEngine func() (engine.Engine, error), arrivals []Arrival, opt Opti
 			if err := e.Finish(ev.request, engine.FinishTimeout, d.now); err != nil {
 				return Trace{}, fmt.Errorf("at %d: Finish(%s): %w", d.now, ev.request, err)
 			}
-			if err := d.finished(engine.Finished{ID: ev.request, Reason: engine.FinishTimeout}); err != nil {
+			if err := d.finished(engine.Finished{ID: ev.request, Reason: engine.FinishTimeout, OutputTokens: d.emitted[ev.request]}); err != nil {
 				return Trace{}, err
 			}
 		}

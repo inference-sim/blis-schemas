@@ -76,11 +76,12 @@ empty or a duplicate kind), `engine.New(spec)` builds an engine through it, and
 `enginetest.Drive` is a minimal discrete-event driver that follows the contract exactly.
 Driving an engine through it checks the laws every engine keeps, and reports the first one
 broken: no request is lost or finished twice, and none is finished that was never added;
-batch IDs never repeat; batches complete in order; no more batches are in flight than the
-limit; a wake is always after the instant it was asked at; a step always takes time; a batch
-emits output only for its own requests, at most one sampled token plus its accepted drafts
-each; an engine with work left always has a way to be stepped again; and the same inputs give
-the same run. `enginetest.TestEngine` runs those checks as a Go test, and
+a batch runs only requests the engine holds, each once; batch IDs never repeat; batches
+complete in order; no more batches are in flight than the limit; a wake is always after the
+instant it was asked at; a step always takes time; a batch emits output only for its own
+requests, at most one sampled token plus its accepted drafts each; a finish reports the output
+tokens its batches emitted; an engine with work left always has a way to be stepped again;
+and the same inputs give the same run. `enginetest.TestEngine` runs those checks as a Go test, and
 `enginetest.CheckProtocolErrors` checks the error values. `enginetest.FIFO` is a deliberately
 simple engine built only through `Spec` and the registry: the proof that a second engine plugs
 in without changing this module.
