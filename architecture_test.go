@@ -79,3 +79,22 @@ func TestRulesPackagesAreVersioned(t *testing.T) {
 		}
 	}
 }
+
+// TestEngineIsEngineNeutral: the engine contract names no engine, so it imports nothing
+// from this module. A document type or a rules pack reaching into it would make a second
+// engine edit this module to plug in, which is what the contract exists to rule out.
+func TestEngineIsEngineNeutral(t *testing.T) {
+	const mod = "github.com/inference-sim/blis-schemas/"
+	for _, pkg := range []string{"./engine", "./engine/enginetest"} {
+		out, err := exec.Command("go", "list", "-deps", pkg).Output()
+		if err != nil {
+			t.Fatalf("go list -deps %s: %v", pkg, err)
+		}
+		for _, dep := range strings.Split(string(out), "\n") {
+			rel, ok := strings.CutPrefix(dep, mod)
+			if ok && !strings.HasPrefix(rel, "engine") {
+				t.Errorf("%s depends on %s; the engine contract must not know any document type or rules pack", pkg, rel)
+			}
+		}
+	}
+}
