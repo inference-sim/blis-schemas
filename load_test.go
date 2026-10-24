@@ -1190,3 +1190,24 @@ nvme_gen4: {read_bandwidth: 7.0e3, write_bandwidth: 5.0e3, base_latency: 80.0}
 		t.Errorf("the error should name an offending old key, got: %v", err)
 	}
 }
+
+// The connector registry fixture loads strictly and validates; a misspelled key fails to load.
+func TestLoadConnectorRegistry(t *testing.T) {
+	r, err := LoadConnectorRegistry("testdata/connectors/builtin-fixture.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := r.Validate(); !p.OK() {
+		t.Fatalf("the fixture does not validate:\n%s", p.Error())
+	}
+	if !r.Serves("MultiConnector", "pd_transfer") || !r.Serves("SimpleCPUOffloadConnector", "offload") {
+		t.Errorf("the fixture's roles did not load: %+v", r.Connectors)
+	}
+	bad := filepath.Join(t.TempDir(), "bad.yaml")
+	if err := os.WriteFile(bad, []byte("kind: ConnectorRegistry\nname: x\nconnectors: {}\nentries: {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadConnectorRegistry(bad); err == nil {
+		t.Error("a document with an unknown key loaded")
+	}
+}

@@ -18,6 +18,7 @@ import (
 
 	"github.com/inference-sim/blis-schemas/spec/acceptance"
 	"github.com/inference-sim/blis-schemas/spec/coefficient"
+	"github.com/inference-sim/blis-schemas/spec/connector"
 	"github.com/inference-sim/blis-schemas/spec/deployment"
 	"github.com/inference-sim/blis-schemas/spec/evaluation"
 	"github.com/inference-sim/blis-schemas/spec/hardware"
@@ -126,6 +127,12 @@ func TestDocExamplesValidate(t *testing.T) {
 			Model: fixture(LoadModelGraph(ex("model-graph-deepseek-v4.1.yaml"))),
 		}))
 	})
+	t.Run("connector registry", func(t *testing.T) {
+		r := fixture(LoadConnectorRegistry(ex("connector-registry.yaml")))
+		for _, p := range r.Validate().All() {
+			t.Errorf("connector-registry.yaml: %s", p)
+		}
+	})
 	t.Run("trace", func(t *testing.T) {
 		requireSilent(t, "trace", Validate(Bundle{
 			Scenario: fixture(LoadScenario(ex("trace-binding.yaml"))),
@@ -141,6 +148,7 @@ func TestDocExamplesValidate(t *testing.T) {
 		"acceptance-profile-set.yaml":    true, "scenario-acceptance.yaml": true,
 		"replay-binding.yaml": true, "workload-replay.yaml": true, "replay-reference.yaml": true,
 		"measured-run.yaml": true, "measurement-sources.yaml": true,
+		"connector-registry.yaml": true,
 	}
 	all, err := filepath.Glob(ex("*"))
 	if err != nil {
@@ -262,6 +270,8 @@ var documented = map[string]struct {
 	"measurement.License":         {typ: reflect.TypeOf(measurement.License{})},
 	"measurement.Evidence":        {typ: reflect.TypeOf(measurement.Evidence{})},
 	"router.Router":               {typ: reflect.TypeOf(router.Router{})},
+	"connector.Registry":          {typ: reflect.TypeOf(connector.Registry{})},
+	"connector.Entry":             {typ: reflect.TypeOf(connector.Entry{})},
 	"router.EPP":                  {typ: reflect.TypeOf(router.EPP{})},
 	"router.ConfigRef":            {typ: reflect.TypeOf(router.ConfigRef{})},
 }
@@ -390,6 +400,7 @@ func TestDocEveryDocumentTypeHasATable(t *testing.T) {
 		reflect.TypeOf(routing.ProfileSet{}),
 		reflect.TypeOf(workload.Shape{}), reflect.TypeOf(evaluation.Run{}),
 		reflect.TypeOf(measurement.MeasuredRun{}), reflect.TypeOf(measurement.Registry{}),
+		reflect.TypeOf(connector.Registry{}),
 	}
 	// Types whose wire form is not a mapping, so they have no key table.
 	notMappings := map[reflect.Type]bool{reflect.TypeOf(coefficient.Interval{}): true}

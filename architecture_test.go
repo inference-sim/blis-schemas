@@ -20,6 +20,7 @@ func TestSpecDoesNotDependOnRules(t *testing.T) {
 		"./spec/model", "./spec/hardware", "./spec/coefficient",
 		"./spec/scenario", "./spec/deployment", "./spec/workload",
 		"./spec/evaluation", "./spec/acceptance", "./spec/routing", "./spec/measurement", "./spec/router",
+		"./spec/connector",
 		"./vocab", "./internal/validate",
 	} {
 		out, err := exec.Command("go", "list", "-deps", pkg).Output()
