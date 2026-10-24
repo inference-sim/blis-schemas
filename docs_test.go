@@ -199,6 +199,7 @@ var documented = map[string]struct {
 	"deployment.EPLB":           {typ: reflect.TypeOf(deployment.EPLB{})},
 	"deployment.Speculative":    {typ: reflect.TypeOf(deployment.Speculative{})},
 	"deployment.EngramConfig":   {typ: reflect.TypeOf(deployment.EngramConfig{})},
+	"deployment.KVEvents":       {typ: reflect.TypeOf(deployment.KVEvents{})},
 	"deployment.Offload":        {typ: reflect.TypeOf(deployment.Offload{})},
 	"deployment.Tier":           {typ: reflect.TypeOf(deployment.Tier{})},
 	"deployment.PDTransfer":     {typ: reflect.TypeOf(deployment.PDTransfer{})},

@@ -213,6 +213,33 @@ type Engine struct {
 	// drops sizes above max_num_batched_tokens, and refuses a stated maximum that is not
 	// the largest size it keeps.
 	CUDAGraphCaptureSizes []int `yaml:"cudagraph_capture_sizes,omitempty"`
+	// DecoderReplayCUDAGraphCaptureSizes is
+	// compilation_config.decoder_replay_cudagraph_capture_sizes, the decoder-replay graph sizes
+	// of a YOCO model such as DeepSeek-V4.1 (vllm/config/compilation.py:565@5df63a72; new in
+	// v0.32.0). Nil generates them from the sliding window.
+	DecoderReplayCUDAGraphCaptureSizes []int `yaml:"decoder_replay_cudagraph_capture_sizes,omitempty"`
+	// CustomOps is compilation_config.custom_ops: which ops run as custom kernels rather than
+	// compiled ones, "all", "none", or +name / -name entries
+	// (vllm/config/compilation.py:480@5df63a72). Nil is the engine default.
+	CustomOps []string `yaml:"custom_ops,omitempty"`
+	// UseTRTLLMAttention is attention_config.use_trtllm_attention: use or skip FlashInfer's
+	// TRT-LLM attention backend (vllm/config/attention.py:74@5df63a72). Tri-state: nil
+	// auto-detects.
+	UseTRTLLMAttention *bool `yaml:"use_trtllm_attention,omitempty"`
+	// MLAPrefillBackend is attention_config.mla_prefill_backend: FLASH_ATTN, FLASHINFER or
+	// TRTLLM_RAGGED in v0.32.0 (vllm/config/attention.py:81@5df63a72). Empty selects
+	// automatically. Which names a release accepts is its rules pack's to say.
+	MLAPrefillBackend string `yaml:"mla_prefill_backend,omitempty"`
+	// LinearBackend is kernel_config.linear_backend, the GEMM backend of linear layers
+	// (vllm/config/kernel.py:350@5df63a72). Empty is the engine's "auto".
+	LinearBackend string `yaml:"linear_backend,omitempty"`
+	// Env is the engine environment variables a deployment sets that change what the engine
+	// runs, such as VLLM_FLASHINFER_ALLREDUCE_BACKEND (vllm/envs.py:225@5df63a72) or
+	// VLLM_MARLIN_USE_ATOMIC_ADD (vllm/envs.py:192@5df63a72), as the launch gave them. This
+	// schema checks only that each name is an environment-variable name. A consumer refuses,
+	// or discloses as an assumption, every key it cannot honour; it never ignores one
+	// silently.
+	Env map[string]string `yaml:"env,omitempty"`
 	// AsyncScheduling is tri-state: nil lets the engine resolve it through its
 	// disqualifying conditions, which is what a real deployment does.
 	AsyncScheduling *bool `yaml:"async_scheduling,omitempty"`
@@ -269,8 +296,67 @@ type Engine struct {
 	//
 	// The field name follows the engine's CLI flag (--long-prefill-token-threshold).
 	LongPrefillTokenThreshold int `yaml:"long_prefill_token_threshold,omitempty"`
+	// LongPrefillTokenThresholdAdaptive floors the long-prefill cap at a fair share of the
+	// token budget, max_num_batched_tokens over the queued and running requests, when the
+	// threshold is nonzero (vllm/config/scheduler.py:86@5df63a72). Tri-state: nil is the
+	// engine default, false.
+	LongPrefillTokenThresholdAdaptive *bool `yaml:"long_prefill_token_threshold_adaptive,omitempty"`
+	// MaxNumScheduledTokens is the most tokens the scheduler may issue in a step, smaller than
+	// max_num_batched_tokens where the model appends tokens to a batch, as speculative decoding
+	// does (vllm/config/scheduler.py:55@5df63a72). Zero means unset: the engine uses
+	// max_num_batched_tokens.
+	MaxNumScheduledTokens int `yaml:"max_num_scheduled_tokens,omitempty"`
+	// MaxNumActiveSeqs caps the requests admitted to RUNNING without shrinking max_num_seqs,
+	// which also sizes the runner and graph capture (vllm/config/scheduler.py:69@5df63a72).
+	// Zero means unset: max_num_seqs is the admission limit. The engine refuses one above
+	// max_num_seqs.
+	MaxNumActiveSeqs int `yaml:"max_num_active_seqs,omitempty"`
+	// Watermark is the fraction of KV blocks kept free when admitting waiting or preempted
+	// requests, in [0, 1) (vllm/config/scheduler.py:196@5df63a72). A pointer, because 0 is a
+	// value the engine accepts and nil means its default (0).
+	Watermark *float64 `yaml:"watermark,omitempty"`
+	// PrefillScheduleInterval admits new prefills only once every N engine steps, aligned
+	// across data-parallel ranks (vllm/config/scheduler.py:203@5df63a72; applied by
+	// _should_throttle_prefills, vllm/v1/engine/core.py:2318-2325@5df63a72). Zero means unset,
+	// which is the engine default of 1: no throttling.
+	PrefillScheduleInterval int `yaml:"prefill_schedule_interval,omitempty"`
+	// StreamInterval is how many tokens the API server buffers before streaming them to the
+	// client (vllm/config/scheduler.py:213@5df63a72, read by the output processor,
+	// vllm/v1/engine/output_processor.py:198@5df63a72). It changes when a client sees tokens,
+	// not what the scheduler does. Zero means unset, the engine default of 1.
+	StreamInterval int `yaml:"stream_interval,omitempty"`
+	// DisableHybridKVCacheManager allocates one KV size for every attention layer even when
+	// they differ, such as full and sliding-window attention
+	// (vllm/config/scheduler.py:182@5df63a72). Tri-state: nil lets the engine decide from the
+	// environment and the configuration.
+	DisableHybridKVCacheManager *bool `yaml:"disable_hybrid_kv_cache_manager,omitempty"`
 	// MaxModelLen is the context length: omitted, auto, or a count. See MaxModelLen.
 	MaxModelLen MaxModelLen `yaml:"max_model_len,omitempty"`
+	// KVCacheMemoryBytes fixes the KV cache's size per GPU in bytes, instead of deriving it
+	// from gpu_memory_utilization (vllm/config/cache.py:257@5df63a72). A run input, not an
+	// engine outcome. Nil derives it; a stated value is positive.
+	KVCacheMemoryBytes *int64 `yaml:"kv_cache_memory_bytes,omitempty"`
+	// PrefixMatchUnit is the finest token boundary a prefix-cache hit can land on, which may
+	// be finer than the KV block size where every group's block size divides by it
+	// (vllm/config/cache.py:90@5df63a72). Zero means unset: the block size.
+	PrefixMatchUnit int `yaml:"prefix_match_unit,omitempty"`
+	// PrefixCacheRetentionInterval is the token interval between retained sliding-window and
+	// Mamba prefix-cache checkpoints; 0 keeps only semantic checkpoints
+	// (vllm/config/cache.py:159@5df63a72). A pointer, because 0 is the engine's default and a
+	// stated value, and nil states nothing.
+	PrefixCacheRetentionInterval *int `yaml:"prefix_cache_retention_interval,omitempty"`
+	// KVEvents is the engine's KV-event publishing, which a router's precise prefix scorer
+	// consumes. See KVEvents.
+	KVEvents *KVEvents `yaml:"kv_events,omitempty"`
+	// MaxLoRAs is the most distinct LoRA adapters one batch may hold; a request whose adapter
+	// does not fit is skipped that step (vllm/config/lora.py:35@5df63a72;
+	// vllm/v1/core/sched/scheduler.py:897-946@5df63a72). Zero means unset, the engine default
+	// of 1.
+	MaxLoRAs int `yaml:"max_loras,omitempty"`
+	// MaxCPULoRAs is how many LoRA adapters are kept loaded in CPU memory, an LRU set
+	// (vllm/config/lora.py:42@5df63a72). Zero means unset: max_loras. The engine refuses one
+	// below max_loras.
+	MaxCPULoRAs int `yaml:"max_cpu_loras,omitempty"`
 
 	// Quantization is the weight format the engine serves in, where it differs from
 	// the format the checkpoint is stored in. A model whose config.json says bfloat16
@@ -382,6 +468,21 @@ type EPLB struct {
 	WindowSize          int  `yaml:"window_size,omitempty"`
 	StepInterval        int  `yaml:"step_interval,omitempty"`
 }
+
+// KVEvents is vLLM's --kv-events-config: whether the engine publishes the changes to the
+// set of KV blocks its prefix cache can serve, and where (vllm/config/kv_events.py:11-47@5df63a72).
+// The router's precise prefix-cache scorer consumes the stream.
+type KVEvents struct {
+	EnableKVCacheEvents bool `yaml:"enable_kv_cache_events"`
+	// Publisher is "null" or "zmq"; empty is the engine's resolution, zmq when events are
+	// enabled.
+	Publisher string `yaml:"publisher,omitempty"`
+	// Topic is the topic a consumer subscribes to.
+	Topic string `yaml:"topic,omitempty"`
+}
+
+// kvEventPublishers are the publishers vLLM v0.32.0 accepts (vllm/config/kv_events.py:18@5df63a72).
+var kvEventPublishers = map[string]bool{"null": true, "zmq": true}
 
 // Speculative is the draft configuration. The method name is engine-version data,
 // validated by a rules pack rather than by this schema.
