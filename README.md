@@ -2,8 +2,8 @@
 
 Go schemas and validators for the BLIS cost model: what a model is, what hardware can do,
 what a coefficient claims, how far speculative decoding advances a request, what a
-deployment specifies, what a measured run recorded, and
-the interface a cost model implements.
+deployment specifies, what a measured run recorded, the
+interface a cost model implements, and the interface an inference-engine model implements.
 
 **Documentation: <https://inference-sim.github.io/blis-schemas/>**
 

@@ -52,6 +52,26 @@ func TestEngineFieldNames(t *testing.T) {
 		"dcp_comm_backend":             "--dcp-comm-backend",
 		"dcp_q_replicate":              "--dcp-q-replicate / --no-dcp-q-replicate",
 		"cp_kv_cache_interleave_size":  "--cp-kv-cache-interleave-size",
+		// inference-sim#2021 B9 and accuracy-dashboard#33, all at v0.32.0.
+		"long_prefill_token_threshold_adaptive":  "--long-prefill-token-threshold-adaptive",
+		"max_num_scheduled_tokens":               "--max-num-scheduled-tokens",
+		"max_num_active_seqs":                    "--max-num-active-seqs",
+		"watermark":                              "--watermark",
+		"prefill_schedule_interval":              "--prefill-schedule-interval",
+		"stream_interval":                        "--stream-interval",
+		"disable_hybrid_kv_cache_manager":        "--disable-hybrid-kv-cache-manager / --no-disable-hybrid-kv-cache-manager",
+		"kv_cache_memory_bytes":                  "--kv-cache-memory-bytes",
+		"prefix_match_unit":                      "--prefix-match-unit",
+		"prefix_cache_retention_interval":        "--prefix-cache-retention-interval",
+		"kv_events":                              "--kv-events-config (enable_kv_cache_events, publisher, topic)",
+		"max_loras":                              "--max-loras",
+		"max_cpu_loras":                          "--max-cpu-loras",
+		"decoder_replay_cudagraph_capture_sizes": "-O/--compilation-config decoder_replay_cudagraph_capture_sizes",
+		"custom_ops":                             "-O/--compilation-config custom_ops",
+		"use_trtllm_attention":                   "--attention-config use_trtllm_attention",
+		"mla_prefill_backend":                    "--attention-config mla_prefill_backend",
+		"linear_backend":                         "--kernel-config linear_backend",
+		"env":                                    "the launch environment (VLLM_* variables), not a flag",
 	}
 	got := yamlNames(reflect.TypeOf(Engine{}))
 	if len(got) != len(want) {
