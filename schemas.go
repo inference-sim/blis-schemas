@@ -13,6 +13,8 @@
 package blisschemas
 
 import (
+	"reflect"
+
 	"github.com/inference-sim/blis-schemas/internal/validate"
 	"github.com/inference-sim/blis-schemas/rules"
 	"github.com/inference-sim/blis-schemas/spec/acceptance"
@@ -26,11 +28,11 @@ import (
 	"github.com/inference-sim/blis-schemas/spec/workload"
 )
 
-// Bundle is a complete set of documents describing one run. Optional members are nil
-// when a caller is validating a subset: a catalog contributor checks a chip alone,
-// where a CI job checking a run supplies everything. The Scenario fixes the immutable
-// problem and the Deployment the mutable configuration against it; validating both
-// together is what checks that a deployment fits its cluster.
+// Bundle is a complete set of documents describing one run, and optionally the engine rules
+// to check it with. Optional members are nil when a caller is validating a subset: a catalog
+// contributor checks a chip alone, where a CI job checking a run supplies everything. The
+// Scenario fixes the immutable problem and the Deployment the mutable configuration against
+// it; validating both together is what checks that a deployment fits its cluster.
 type Bundle struct {
 	Scenario     *scenario.Scenario
 	Deployment   *deployment.Deployment
@@ -44,16 +46,18 @@ type Bundle struct {
 	// RoutingProfiles are registry routing-profile sets, validated field by field.
 	RoutingProfiles []*routing.ProfileSet
 	Workload        *workload.Shape
-	// Rules looks up a release's engine rules for the scenario's engine_version: the caller's
-	// (#2021 B4: the packs move to the engine model, blis-vllm). nil uses the packs still in
-	// this module (rules.Lookup) until every consumer passes its own.
-	Rules func(version string) rules.EngineRules
-	// RulesVersions lists the versions Rules answers, for the finding when it answers none.
-	// nil with Rules set says only that the version is unknown.
-	RulesVersions func() []string
 	// ReplayWorkload is a catalog replay workload, validated field by field.
 	ReplayWorkload *workload.CatalogReplay
 	Evaluation     *evaluation.Run
+
+	// Rules looks up a release's engine rules for the scenario's engine_version: the caller's
+	// (inference-sim#2021 B4: the packs move to the engine model, blis-vllm). nil uses the packs
+	// still in this module (rules.Lookup) until every consumer passes its own. Rules that answer
+	// for another release are refused (engine-version-matches), never applied.
+	Rules func(version string) rules.EngineRules
+	// RulesVersions lists the versions Rules answers, for the finding when it answers none.
+	// nil with Rules set: the finding says only that the version is unknown, listing none.
+	RulesVersions func() []string
 }
 
 // Report is the outcome of validating a bundle, with the two layers kept apart.
@@ -173,30 +177,49 @@ func Validate(b Bundle) Report {
 			// The same finding rules.Apply gives: a version with no rules has not been
 			// rule-checked, and saying nothing would read as a pass.
 			p := &validate.Problems{}
-			var known []string
 			if b.RulesVersions != nil {
-				known = b.RulesVersions()
+				p.RuleWarnf("engine-version-known",
+					"no rules pack for engine version %q; field validation passed but no version-specific rule was applied. Registered versions: %v",
+					b.Scenario.EngineVersion, b.RulesVersions())
+			} else {
+				p.RuleWarnf("engine-version-known",
+					"no rules pack for engine version %q; field validation passed but no version-specific rule was applied",
+					b.Scenario.EngineVersion)
 			}
-			p.RuleWarnf("engine-version-known",
-				"no rules pack for engine version %q; field validation passed but no version-specific rule was applied. Registered versions: %v",
-				b.Scenario.EngineVersion, known)
 			rep.Rule = p
 			return rep
 		}
-		rep.Rule = er.Check(in)
-		rep.RulesApplied = er.EngineVersion()
+		// Rules for another release are never applied to this one: a lookup that falls back to
+		// a nearby release would pass a scenario its own release refuses (rules.go's package
+		// comment). Keyed packs cannot do this; a caller's lookup can.
+		if v := er.EngineVersion(); v != b.Scenario.EngineVersion {
+			rep.Rule.RuleErrorf("engine-version-matches",
+				"the engine rules looked up for engine version %q are for %q; no rule was applied",
+				b.Scenario.EngineVersion, v)
+			return rep
+		}
+		// A Check that finds nothing may say so with a nil Problems; the report keeps its empty
+		// layer, so OK and Problems never meet a nil.
+		if p := er.Check(in); p != nil {
+			rep.Rule = p
+		}
+		rep.RulesApplied = b.Scenario.EngineVersion
 	}
 	return rep
 }
 
-// isNilRules reports whether er is nil or a typed nil (a nil *Pack in the interface), which a
-// lookup returns for a version it does not know.
+// isNilRules reports whether er is nil or holds a nil pointer, map, slice, func or channel of
+// any rules type: what a lookup returns, typed, for a version it does not know. A forwarding
+// value around a nil is not nil here, and fails when it is asked.
 func isNilRules(er rules.EngineRules) bool {
 	if er == nil {
 		return true
 	}
-	p, ok := er.(*rules.Pack)
-	return ok && p == nil
+	switch v := reflect.ValueOf(er); v.Kind() {
+	case reflect.Pointer, reflect.Map, reflect.Slice, reflect.Func, reflect.Chan, reflect.Interface:
+		return v.IsNil()
+	}
+	return false
 }
 
 // checkAcceptanceK refuses an inline acceptance stated for a K other than one the

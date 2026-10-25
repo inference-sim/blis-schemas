@@ -62,6 +62,11 @@ the malformation, which a reader cannot tell apart from real problems.
     report, so `OK()` is still true. A caller that requires rules to have run should also
     check that `RulesApplied` is not empty.
 
+A caller can pass the engine's own rules instead of using this module's packs, through
+`Bundle.Rules` (see [the Go guide](../guides/go.md#pass-the-engines-own-rules)). The same
+warning applies to a release they do not know. Rules that answer for a release other than the
+scenario's are an error, `engine-version-matches`, and nothing is applied.
+
 ## Reports
 
 `Validate` returns a `Report`:
@@ -73,8 +78,8 @@ the malformation, which a reader cannot tell apart from real problems.
 :   The rule layer's problems, each carrying the name of the rule that reported it.
 
 `RulesApplied`
-:   The engine version whose pack ran. Empty if the field layer failed, if the bundle has
-    no scenario, or if no pack matched.
+:   The engine version whose rules ran. Empty if the field layer failed, if the bundle has
+    no scenario, if no rules matched, or if the caller's rules answered for another release.
 
 `OK()` is true when neither layer holds an error. `Problems()` returns everything, field
 problems first. Each problem has a severity, a dotted path to the field and a message:

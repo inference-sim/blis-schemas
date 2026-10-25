@@ -1,6 +1,7 @@
 package blisschemas
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -292,7 +293,7 @@ func (f fakeRules) Check(rules.Input) *rules.Problems {
 	return p
 }
 
-// A caller that states its own rules gets them run, never this module's packs (#2021 B4: the
+// A caller that states its own rules gets them run, never this module's packs (inference-sim#2021 B4: the
 // packs move to the engine model); a version they do not know is reported, not passed in
 // silence; and a caller that states none still gets the packs here.
 func TestValidate_RunsTheCallersRules(t *testing.T) {
@@ -323,5 +324,84 @@ func TestValidate_RunsTheCallersRules(t *testing.T) {
 	b.Rules, b.RulesVersions = nil, nil
 	if rep = Validate(b); rep.RulesApplied != "0.29.0" || !rep.OK() {
 		t.Errorf("no caller rules: applied %q, want this module's 0.29.0 pack", rep.RulesApplied)
+	}
+}
+
+// nilCheckRules says "no findings" the usual Go way, with a nil Problems.
+type nilCheckRules struct{ fakeRules }
+
+func (nilCheckRules) Check(rules.Input) *rules.Problems { return nil }
+
+// ptrRules is a rules type of another pointer type, as an engine model's own rules may be.
+type ptrRules struct{ fakeRules }
+
+func (r *ptrRules) EngineVersion() string             { return r.version }
+func (r *ptrRules) Check(rules.Input) *rules.Problems { return &validate.Problems{} }
+
+// The caller's rules are held to what this module's own packs guarantee: a report whose rule
+// layer is never nil, an unknown release named as unknown whatever the rules' concrete type,
+// and rules answering for a release other than the scenario's refused rather than applied.
+func TestValidate_HoldsTheCallersRulesToThePacksContract(t *testing.T) {
+	b := bundle()
+	b.Rules = func(v string) rules.EngineRules { return nilCheckRules{fakeRules{version: v}} }
+	rep := Validate(b)
+	if rep.Rule == nil || !rep.OK() || rep.RulesApplied != "0.29.0" || len(rep.Problems()) != 0 {
+		t.Errorf("rules whose Check returns nil: rule layer %v, applied %q; want an empty layer and 0.29.0", rep.Rule, rep.RulesApplied)
+	}
+
+	var typedNil *ptrRules
+	b.Rules = func(string) rules.EngineRules { return typedNil }
+	rep = Validate(b)
+	if rep.RulesApplied != "" || !strings.Contains(rep.Rule.Error(), "no rules pack") || !rep.OK() {
+		t.Errorf("a typed nil of a non-Pack rules type must read as unknown: applied %q, findings:\n%s", rep.RulesApplied, rep.Rule.Error())
+	}
+	// With no RulesVersions the finding names no registered versions, rather than an empty list
+	// that would read as a rules source holding none.
+	if strings.Contains(rep.Rule.Error(), "Registered versions") {
+		t.Errorf("no RulesVersions: the finding must not list registered versions:\n%s", rep.Rule.Error())
+	}
+
+	for _, answered := range []string{"0.31.0", ""} {
+		b.Rules = func(string) rules.EngineRules { return fakeRules{version: answered} }
+		rep = Validate(b)
+		if rep.OK() || rep.RulesApplied != "" {
+			t.Errorf("rules answering for %q to a 0.29.0 scenario: OK %v, applied %q; want a refusal and nothing applied",
+				answered, rep.OK(), rep.RulesApplied)
+		}
+		for _, frag := range []string{"engine-version-matches", `"0.29.0"`, `"` + answered + `"`} {
+			if !strings.Contains(rep.Rule.Error(), frag) {
+				t.Errorf("rules answering for %q: the refusal must name %s; findings:\n%s", answered, frag, rep.Rule.Error())
+			}
+		}
+		if strings.Contains(rep.Rule.Error(), "caller's rules ran") {
+			t.Errorf("rules answering for %q were run against a 0.29.0 scenario", answered)
+		}
+	}
+}
+
+// The caller's rules, given this module's own lookup, report exactly what the in-module path
+// does: the same findings with the same rule, severity and path, the same applied release, the
+// same verdict. For a known release with a rule that fires, and for an unknown one.
+func TestValidate_CallersPathMatchesTheModulesPacks(t *testing.T) {
+	for _, version := range []string{"0.29.0", "0.31.0", "99.0.0"} {
+		b := bundle()
+		b.Scenario.EngineVersion = version
+		b.Deployment.Pools[0].Engine.All2AllBackend = "telepathy"
+		own := Validate(b)
+		b.Rules = func(v string) rules.EngineRules {
+			if p := rules.Lookup(v); p != nil {
+				return p
+			}
+			return nil
+		}
+		b.RulesVersions = rules.Versions
+		caller := Validate(b)
+		if !reflect.DeepEqual(own.Rule.All(), caller.Rule.All()) || own.RulesApplied != caller.RulesApplied || own.OK() != caller.OK() {
+			t.Errorf("%s: the caller's path differs from the module's:\n  module: applied %q ok %v %v\n  caller: applied %q ok %v %v",
+				version, own.RulesApplied, own.OK(), own.Rule.All(), caller.RulesApplied, caller.OK(), caller.Rule.All())
+		}
+		if version != "99.0.0" && len(own.Rule.All()) == 0 {
+			t.Errorf("%s: non-vacuity: the planted backend must make a rule fire", version)
+		}
 	}
 }
