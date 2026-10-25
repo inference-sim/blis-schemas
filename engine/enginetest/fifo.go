@@ -75,20 +75,24 @@ func (FIFOFactory) New(s engine.Spec) (engine.Engine, error) {
 	if s.Kind != FIFOKind {
 		return nil, fmt.Errorf("fifo: spec kind %q is not %q", s.Kind, FIFOKind)
 	}
-	if s.Config.Kind == yaml.MappingNode {
+	block := &s.Config
+	if block.Kind == yaml.DocumentNode && len(block.Content) == 1 {
+		block = block.Content[0]
+	}
+	if block.Kind == yaml.MappingNode {
 		known := map[string]bool{}
 		t := reflect.TypeOf(FIFOConfig{})
 		for i := range t.NumField() {
 			known[strings.Split(t.Field(i).Tag.Get("yaml"), ",")[0]] = true
 		}
-		for i := 0; i+1 < len(s.Config.Content); i += 2 {
-			if k := s.Config.Content[i]; !known[k.Value] {
+		for i := 0; i+1 < len(block.Content); i += 2 {
+			if k := block.Content[i]; !known[k.Value] {
 				return nil, fmt.Errorf("fifo: config: line %d: field %s not found in FIFOConfig", k.Line, k.Value)
 			}
 		}
 	}
 	var cfg FIFOConfig
-	if err := s.Config.Decode(&cfg); err != nil {
+	if err := block.Decode(&cfg); err != nil {
 		return nil, fmt.Errorf("fifo: config: %w", err)
 	}
 	return NewFIFO(cfg)

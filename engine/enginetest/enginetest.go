@@ -118,6 +118,7 @@ type driver struct {
 	lastID   engine.BatchID
 	haveID   bool
 	pending  map[string]bool
+	held     map[string]bool
 	emitted  map[string]int
 	trace    Trace
 	steps    int
@@ -178,35 +179,14 @@ func (d *driver) step() error {
 			}
 			d.push(&event{at: d.now + dt, kind: kindTransfer, transfer: tr})
 		}
+		if err := d.checkMembers(b); err != nil {
+			return err
+		}
 		if b.Empty() {
 			return nil
 		}
 		if d.haveID && b.ID <= d.lastID {
 			return fmt.Errorf("at %d: batch ID %d does not follow %d", d.now, b.ID, d.lastID)
-		}
-		inBatch := map[string]bool{}
-		for _, s := range b.Reqs {
-			switch {
-			case !d.pending[s.ID]:
-				return fmt.Errorf("at %d: batch %d runs %s, which was never added or has finished", d.now, b.ID, s.ID)
-			case inBatch[s.ID]:
-				return fmt.Errorf("at %d: batch %d runs %s twice in batch", d.now, b.ID, s.ID)
-			}
-			inBatch[s.ID] = true
-		}
-		// A preempted request is one the engine holds, evicted once, and not one this batch
-		// runs: vLLM unschedules a request it preempts within the step.
-		evicted := map[string]bool{}
-		for _, id := range b.Preempted {
-			switch {
-			case !d.pending[id]:
-				return fmt.Errorf("at %d: batch %d preempts %s, which was never added or has finished", d.now, b.ID, id)
-			case inBatch[id]:
-				return fmt.Errorf("at %d: batch %d both runs and preempts %s", d.now, b.ID, id)
-			case evicted[id]:
-				return fmt.Errorf("at %d: batch %d preempts %s twice", d.now, b.ID, id)
-			}
-			evicted[id] = true
 		}
 		d.lastID, d.haveID = b.ID, true
 		dur := d.e.StepTime(b)
@@ -223,6 +203,36 @@ func (d *driver) step() error {
 			return fmt.Errorf("at %d: Snapshot().InFlight = %d with %d batches in flight", d.now, s.InFlight, len(d.inFlight))
 		}
 	}
+}
+
+// checkMembers checks who a decision names. A batch runs only requests the engine holds
+// (added and not finished), each once. It preempts only requests it holds and does not
+// run, each once: vLLM unschedules a request it preempts within the step. That holds for a
+// decision that runs nothing too, as a step that preempts every running request does.
+func (d *driver) checkMembers(b engine.Batch) error {
+	inBatch := map[string]bool{}
+	for _, s := range b.Reqs {
+		switch {
+		case !d.held[s.ID]:
+			return fmt.Errorf("at %d: batch %d runs %s, which was never added or has finished", d.now, b.ID, s.ID)
+		case inBatch[s.ID]:
+			return fmt.Errorf("at %d: batch %d runs %s twice in batch", d.now, b.ID, s.ID)
+		}
+		inBatch[s.ID] = true
+	}
+	evicted := map[string]bool{}
+	for _, id := range b.Preempted {
+		switch {
+		case !d.held[id]:
+			return fmt.Errorf("at %d: batch %d preempts %s, which was never added or has finished", d.now, b.ID, id)
+		case inBatch[id]:
+			return fmt.Errorf("at %d: batch %d both runs and preempts %s", d.now, b.ID, id)
+		case evicted[id]:
+			return fmt.Errorf("at %d: batch %d preempts %s twice", d.now, b.ID, id)
+		}
+		evicted[id] = true
+	}
+	return nil
 }
 
 func (d *driver) complete(id engine.BatchID) error {
@@ -278,6 +288,7 @@ func (d *driver) finished(f engine.Finished) error {
 		return fmt.Errorf("at %d: request %s finished but was never added", d.now, f.ID)
 	}
 	delete(d.pending, f.ID)
+	delete(d.held, f.ID)
 	d.trace.Finished[f.ID] = f
 	return nil
 }
@@ -296,7 +307,8 @@ func Drive(newEngine func() (engine.Engine, error), arrivals []Arrival, opt Opti
 	d := &driver{
 		e: e, opt: opt,
 		started: map[engine.BatchID]engine.Time{}, batches: map[engine.BatchID]engine.Batch{},
-		pending: map[string]bool{}, emitted: map[string]int{}, trace: Trace{Finished: map[string]engine.Finished{}},
+		pending: map[string]bool{}, held: map[string]bool{}, emitted: map[string]int{},
+		trace: Trace{Finished: map[string]engine.Finished{}},
 	}
 	maxSteps := opt.MaxSteps
 	if maxSteps == 0 {
@@ -328,6 +340,7 @@ func Drive(newEngine func() (engine.Engine, error), arrivals []Arrival, opt Opti
 			if err := e.Add(ev.arrival.Req, d.now); err != nil {
 				return Trace{}, fmt.Errorf("at %d: Add(%s): %w", d.now, ev.arrival.Req.ID, err)
 			}
+			d.held[ev.arrival.Req.ID] = true
 		case kindTransfer:
 			ok := opt.TransferFails == nil || !opt.TransferFails(ev.transfer)
 			if err := e.TransferDone(ev.transfer.ID, ok, d.now); err != nil {

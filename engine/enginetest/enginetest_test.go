@@ -144,6 +144,10 @@ func TestFIFOBuildsThroughTheRegistry(t *testing.T) {
 	if _, err := engine.New(engine.Spec{Kind: FIFOKind, Config: *bad.Content[0]}); err == nil {
 		t.Error("a misspelled key built an engine; the block must decode strictly")
 	}
+	// The same block handed over as its whole document, not its mapping, decodes as strictly.
+	if _, err := engine.New(engine.Spec{Kind: FIFOKind, Config: bad}); err == nil {
+		t.Error("a misspelled key in a document node built an engine; the block must decode strictly")
+	}
 	if _, err := engine.New(engine.Spec{Kind: "no-such-engine"}); err == nil ||
 		!strings.Contains(err.Error(), FIFOKind) {
 		t.Errorf("an unknown kind returned %v; want an error naming the registered kinds", err)
@@ -315,6 +319,29 @@ func (e preemptsTwice) Schedule(now engine.Time) (engine.Batch, error) {
 	return b, err
 }
 
+// preemptsAStrangerIdle reports a preemption of a request it was never given in a batch
+// that runs nothing, as vLLM's step does when it preempts every running request.
+type preemptsAStrangerIdle struct{ *FIFO }
+
+func (e preemptsAStrangerIdle) Schedule(now engine.Time) (engine.Batch, error) {
+	b, err := e.FIFO.Schedule(now)
+	if err == nil && b.Empty() {
+		b.Preempted = append(b.Preempted, "stranger")
+	}
+	return b, err
+}
+
+// schedulesBeforeArrival runs B before B has been added to it.
+type schedulesBeforeArrival struct{ *FIFO }
+
+func (e schedulesBeforeArrival) Schedule(now engine.Time) (engine.Batch, error) {
+	b, err := e.FIFO.Schedule(now)
+	if !b.Empty() && now < 100 {
+		b.Reqs = append(b.Reqs, engine.Scheduled{ID: "B", Tokens: 1, PromptLen: 4})
+	}
+	return b, err
+}
+
 func TestTheDriverCatchesBrokenEngines(t *testing.T) {
 	held := req("held", 4, 1)
 	held.Tags = map[string]string{"fifo.hold_until": "500"}
@@ -339,6 +366,8 @@ func TestTheDriverCatchesBrokenEngines(t *testing.T) {
 		{"a request scheduled twice in one batch", func(f *FIFO) engine.Engine { return schedulesTwice{f} }, nil, two, "twice in batch"},
 		{"a never-added request preempted", func(f *FIFO) engine.Engine { return preemptsAStranger{f} }, nil, two, "preempts stranger, which was never added"},
 		{"a request preempted and run in one batch", func(f *FIFO) engine.Engine { return preemptsAndRuns{f} }, nil, two, "both runs and preempts"},
+		{"a never-added request preempted by an empty batch", func(f *FIFO) engine.Engine { return preemptsAStrangerIdle{f} }, nil, []Arrival{at(0, held)}, "preempts stranger, which was never added"},
+		{"a request run before it arrives", func(f *FIFO) engine.Engine { return schedulesBeforeArrival{f} }, nil, []Arrival{at(0, req("A", 4, 2)), at(100, req("B", 4, 2))}, "runs B, which was never added"},
 		{"a request preempted twice in one batch", func(f *FIFO) engine.Engine { return preemptsTwice{f} }, func(c *FIFOConfig) { c.MaxRunning = 1 }, two, "preempts B twice"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
