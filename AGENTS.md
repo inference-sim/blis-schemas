@@ -3,10 +3,10 @@
 These rules apply to every AI-assisted change to this repository. Human contributors
 follow the same rules; they are written here so an agent reads them first.
 
-## Cross-repository rules (all five BLIS repositories)
+## Cross-repository rules (all six BLIS repositories)
 
-blis-schemas, blis-catalog, blis-registry, blis-latency-kernel and inference-sim form one
-system. A change that touches more than one of them follows
+blis-schemas, blis-catalog, blis-registry, blis-vllm, blis-latency-kernel and inference-sim
+form one system. A change that touches more than one of them follows
 [Changes across the repositories](https://github.com/inference-sim/blis-schemas/blob/main/docs/contributing/cross-repo-changes.md),
 the one canonical description of the process. In short:
 
@@ -19,7 +19,7 @@ the one canonical description of the process. In short:
 3. **Versions.** Pin dependencies by release tag, or by the exact pushed head (Go
    pseudo-version, full SHA) marked `TEMPORARY` with its pull request. Never commit a
    `replace` in `go.mod`. Push and merge in dependency order: schemas, then catalog, registry
-   and kernel, then inference-sim. A statement about engine behaviour cites
+   and blis-vllm, then the kernel, then inference-sim. A statement about engine behaviour cites
    `<path>:<lines>@<release>`; data from another engine version is used only for a code path a
    recorded diff shows unchanged.
 4. **Apples to apples.** Compare the same quantity, by the same definition, on the same points,
@@ -39,7 +39,7 @@ the one canonical description of the process. In short:
 ## This repository
 
 blis-schemas is the root of the dependency graph: push it first, and any change to its head
-means repinning all four consumers.
+means repinning all five consumers.
 
 - Tests: `go test ./...` (includes the docs checks), and
   `VLLM_SOURCE=<vllm checkout at the release> go test -run MatchSource ./rules/...` for rules

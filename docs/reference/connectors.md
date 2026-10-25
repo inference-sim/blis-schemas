@@ -36,7 +36,8 @@ live with the engine model, in blis-vllm.
 ## Checks
 
 A registry is invalid if `kind` is not `ConnectorRegistry`, `name` is empty, it has no
-connectors, a connector name is blank, or an entry names an unknown `upstream`, omits
+connectors, a connector name is blank or has surrounding spaces (names match the engine's
+exactly), or an entry names an unknown `upstream`, omits
 `behaves_like` or `evidence`, has no roles, or lists an unknown or repeated role.
 
 Source: [`spec/connector`](https://github.com/inference-sim/blis-schemas/tree/main/spec/connector).

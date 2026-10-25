@@ -13,8 +13,10 @@ lives in [blis-catalog](https://github.com/inference-sim/blis-catalog) (declared
 acceptance profiles), which run
 this module's validators in CI.
 [blis-latency-kernel](https://github.com/inference-sim/blis-latency-kernel) implements the
-`Kernel` interface defined here, and [inference-sim](https://github.com/inference-sim/inference-sim)
-calls it in pull request [#1851](https://github.com/inference-sim/inference-sim/pull/1851).
+`Kernel` interface defined here, [blis-vllm](https://github.com/inference-sim/blis-vllm)
+implements the `Engine` interface for vLLM, and
+[inference-sim](https://github.com/inference-sim/inference-sim) calls the kernel on every
+simulated step.
 
 ## Use
 

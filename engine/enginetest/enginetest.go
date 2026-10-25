@@ -4,7 +4,8 @@
 // Its centre is Drive, a minimal discrete-event driver that follows the contract's wake
 // protocol and same-instant order exactly. Driving an engine through it checks the laws
 // that hold for every engine: no request is lost or finished twice, a batch runs only
-// requests the engine holds, each once, batch IDs never repeat, batches complete in order,
+// requests the engine holds, each once, and preempts only requests it holds and does not
+// run, each once, batch IDs never repeat, batches complete in order,
 // no more batches are in flight than the engine's limit, a wake is always after the
 // instant it was asked at, a step always takes time, a batch's output names only its own
 // requests and at most one token plus its accepted drafts each, a finish reports the
@@ -192,6 +193,20 @@ func (d *driver) step() error {
 				return fmt.Errorf("at %d: batch %d runs %s twice in batch", d.now, b.ID, s.ID)
 			}
 			inBatch[s.ID] = true
+		}
+		// A preempted request is one the engine holds, evicted once, and not one this batch
+		// runs: vLLM unschedules a request it preempts within the step.
+		evicted := map[string]bool{}
+		for _, id := range b.Preempted {
+			switch {
+			case !d.pending[id]:
+				return fmt.Errorf("at %d: batch %d preempts %s, which was never added or has finished", d.now, b.ID, id)
+			case inBatch[id]:
+				return fmt.Errorf("at %d: batch %d both runs and preempts %s", d.now, b.ID, id)
+			case evicted[id]:
+				return fmt.Errorf("at %d: batch %d preempts %s twice", d.now, b.ID, id)
+			}
+			evicted[id] = true
 		}
 		d.lastID, d.haveID = b.ID, true
 		dur := d.e.StepTime(b)

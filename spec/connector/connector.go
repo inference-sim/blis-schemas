@@ -122,6 +122,11 @@ func (r *Registry) Validate() *validate.Problems {
 			p.Field("connectors", "a connector name must not be blank")
 			continue
 		}
+		// A name is the engine's own, matched exactly, so a padded one would never match.
+		if name != strings.TrimSpace(name) {
+			p.Field("connectors", "connector name %q has surrounding spaces; Lookup matches the engine's name exactly", name)
+			continue
+		}
 		at := "connectors." + name
 		if !e.Upstream.Valid() {
 			p.Field(at+".upstream", "%q is not a known connector interface (%s)", e.Upstream, UpstreamKVConnectorBaseV1)

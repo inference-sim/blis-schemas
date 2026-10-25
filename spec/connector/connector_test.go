@@ -41,6 +41,9 @@ func TestEachFailureModeIsRefused(t *testing.T) {
 		{"an empty connector name", func(r *Registry) {
 			r.Connectors[" "] = r.Connectors["NixlConnector"]
 		}, "connectors"},
+		{"a connector name with surrounding spaces", func(r *Registry) {
+			r.Connectors[" NixlConnector "] = r.Connectors["NixlConnector"]
+		}, "connectors"},
 		{"an unknown upstream interface", func(r *Registry) {
 			e := r.Connectors["NixlConnector"]
 			e.Upstream = "KVConnectorBase_V2"

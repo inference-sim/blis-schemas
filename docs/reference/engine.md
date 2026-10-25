@@ -22,7 +22,7 @@ interface in its own repository with no change here or in the simulator.
 |---|---|
 | `Add(r Request, now Time) error` | Hands over a request that arrived at `now`. Schedules nothing. |
 | `Schedule(now Time) (Batch, error)` | Decides one batch: which requests run, how many tokens each, which are preempted, which KV transfers start. `ErrNoCapacity` when `InFlightLimit` batches are in flight. |
-| `StepTime(b Batch) Duration` | Prices the batch's forward pass; at least one microsecond. |
+| `StepTime(b Batch) Duration` | Prices the forward pass of a batch that runs requests; at least one microsecond. An `Empty` batch is not priced. |
 | `Complete(id BatchID, outcome Outcome, end Time) (Result, error)` | Applies a batch's outcome (tokens sampled, drafts accepted) and returns what became visible: tokens emitted, first tokens, finishes, KV events. |
 | `TransferDone(id TransferID, ok bool, now Time) error` | Reports that an asynchronous KV load or store finished, successfully or not. |
 | `Finish(id string, why FinishReason, now Time) error` | Ends a request for a reason the engine did not decide (client abort, timeout). A no-op for an unknown or finished request. |
@@ -76,7 +76,8 @@ empty or a duplicate kind), `engine.New(spec)` builds an engine through it, and
 `enginetest.Drive` is a minimal discrete-event driver that follows the contract exactly.
 Driving an engine through it checks the laws every engine keeps, and reports the first one
 broken: no request is lost or finished twice, and none is finished that was never added;
-a batch runs only requests the engine holds, each once; batch IDs never repeat; batches
+a batch runs only requests the engine holds, each once, and preempts only requests it holds
+and does not run, each once; batch IDs never repeat; batches
 complete in order; no more batches are in flight than the limit; a wake is always after the
 instant it was asked at; a step always takes time; a batch emits output only for its own
 requests, at most one sampled token plus its accepted drafts each; a finish reports the output

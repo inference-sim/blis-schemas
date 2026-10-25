@@ -258,6 +258,42 @@ func (e schedulesTwice) Schedule(now engine.Time) (engine.Batch, error) {
 	return b, err
 }
 
+// preemptsAStranger reports a preemption of a request it was never given.
+type preemptsAStranger struct{ *FIFO }
+
+func (e preemptsAStranger) Schedule(now engine.Time) (engine.Batch, error) {
+	b, err := e.FIFO.Schedule(now)
+	if !b.Empty() {
+		b.Preempted = append(b.Preempted, "stranger")
+	}
+	return b, err
+}
+
+// preemptsAndRuns lists a request it runs in the same batch as preempted.
+type preemptsAndRuns struct{ *FIFO }
+
+func (e preemptsAndRuns) Schedule(now engine.Time) (engine.Batch, error) {
+	b, err := e.FIFO.Schedule(now)
+	if !b.Empty() {
+		b.Preempted = append(b.Preempted, b.Reqs[0].ID)
+	}
+	return b, err
+}
+
+// preemptsTwice evicts one request twice in one decision. The FIFO engine never preempts,
+// so the request it names is one it holds but does not run in that batch: it adds a held
+// request that waits behind the running ones.
+type preemptsTwice struct{ *FIFO }
+
+func (e preemptsTwice) Schedule(now engine.Time) (engine.Batch, error) {
+	b, err := e.FIFO.Schedule(now)
+	if !b.Empty() && len(e.waiting) > 0 {
+		id := e.waiting[0].r.ID
+		b.Preempted = append(b.Preempted, id, id)
+	}
+	return b, err
+}
+
 func TestTheDriverCatchesBrokenEngines(t *testing.T) {
 	held := req("held", 4, 1)
 	held.Tags = map[string]string{"fifo.hold_until": "500"}
@@ -280,6 +316,9 @@ func TestTheDriverCatchesBrokenEngines(t *testing.T) {
 		{"a finish that miscounts its output", func(f *FIFO) engine.Engine { return miscounts{f} }, nil, two, "emitted"},
 		{"a never-added request scheduled", func(f *FIFO) engine.Engine { return schedulesAStranger{f} }, nil, two, "never added"},
 		{"a request scheduled twice in one batch", func(f *FIFO) engine.Engine { return schedulesTwice{f} }, nil, two, "twice in batch"},
+		{"a never-added request preempted", func(f *FIFO) engine.Engine { return preemptsAStranger{f} }, nil, two, "preempts stranger, which was never added"},
+		{"a request preempted and run in one batch", func(f *FIFO) engine.Engine { return preemptsAndRuns{f} }, nil, two, "both runs and preempts"},
+		{"a request preempted twice in one batch", func(f *FIFO) engine.Engine { return preemptsTwice{f} }, func(c *FIFOConfig) { c.MaxRunning = 1 }, two, "preempts B twice"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			cfg := fifoCfg()

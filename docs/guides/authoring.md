@@ -18,8 +18,9 @@ and the test suite validates each one.
 :   A directory under `models/` in the catalog.
 
 `coefficients`
-:   Coefficient sets in the registry, named by file. The five above are those named by the
-    kernel-based scenarios in inference-sim's pull request #1851. blis-latency-kernel reads
+:   Coefficient sets in the registry, named by file. The five above are those named by
+    inference-sim's kernel-based scenarios (added in its pull request #1851, merged on
+    2026-10-13). blis-latency-kernel reads
     them in the order listed: where two sets both supply a coefficient that applies to the
     deployment, the later set wins.
 

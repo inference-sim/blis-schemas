@@ -5,7 +5,7 @@ checked, and the rules every document follows. Read them in order if you are new
 terms below are used with one meaning throughout.</p>
 
 [The BLIS repositories](repositories.md)
-:   What each of the five repositories owns, and what each takes from this one.
+:   What each of the six repositories owns, and what each takes from this one.
 
 [Documents](documents.md)
 :   The eleven kinds of document, where each lives, and how they refer to each other.

@@ -56,8 +56,9 @@ type Engine interface {
 	// start transfers, which the simulator prices like any other.
 	Schedule(now Time) (Batch, error)
 
-	// StepTime prices a batch: how long its forward pass takes. A batch that runs nothing
-	// still costs at least one microsecond, so a step always advances time.
+	// StepTime prices a batch that runs requests: how long its forward pass takes, at least
+	// one microsecond, so a step always advances time. An Empty batch runs no forward pass,
+	// so a simulator does not price it.
 	StepTime(b Batch) Duration
 
 	// Complete applies the outcome of an in-flight batch, whose step ends at end: tokens
