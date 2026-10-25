@@ -44,6 +44,13 @@ type Bundle struct {
 	// RoutingProfiles are registry routing-profile sets, validated field by field.
 	RoutingProfiles []*routing.ProfileSet
 	Workload        *workload.Shape
+	// Rules looks up a release's engine rules for the scenario's engine_version: the caller's
+	// (#2021 B4: the packs move to the engine model, blis-vllm). nil uses the packs still in
+	// this module (rules.Lookup) until every consumer passes its own.
+	Rules func(version string) rules.EngineRules
+	// RulesVersions lists the versions Rules answers, for the finding when it answers none.
+	// nil with Rules set says only that the version is unknown.
+	RulesVersions func() []string
 	// ReplayWorkload is a catalog replay workload, validated field by field.
 	ReplayWorkload *workload.CatalogReplay
 	Evaluation     *evaluation.Run
@@ -153,13 +160,43 @@ func Validate(b Bundle) Report {
 		return rep
 	}
 	if b.Scenario != nil {
-		rep.Rule = rules.Apply(rules.Input{
-			Scenario: b.Scenario, Deployment: b.Deployment, Model: b.Model})
-		if rules.Lookup(b.Scenario.EngineVersion) != nil {
-			rep.RulesApplied = b.Scenario.EngineVersion
+		in := rules.Input{Scenario: b.Scenario, Deployment: b.Deployment, Model: b.Model}
+		if b.Rules == nil {
+			rep.Rule = rules.Apply(in)
+			if rules.Lookup(b.Scenario.EngineVersion) != nil {
+				rep.RulesApplied = b.Scenario.EngineVersion
+			}
+			return rep
 		}
+		er := b.Rules(b.Scenario.EngineVersion)
+		if isNilRules(er) {
+			// The same finding rules.Apply gives: a version with no rules has not been
+			// rule-checked, and saying nothing would read as a pass.
+			p := &validate.Problems{}
+			var known []string
+			if b.RulesVersions != nil {
+				known = b.RulesVersions()
+			}
+			p.RuleWarnf("engine-version-known",
+				"no rules pack for engine version %q; field validation passed but no version-specific rule was applied. Registered versions: %v",
+				b.Scenario.EngineVersion, known)
+			rep.Rule = p
+			return rep
+		}
+		rep.Rule = er.Check(in)
+		rep.RulesApplied = er.EngineVersion()
 	}
 	return rep
+}
+
+// isNilRules reports whether er is nil or a typed nil (a nil *Pack in the interface), which a
+// lookup returns for a version it does not know.
+func isNilRules(er rules.EngineRules) bool {
+	if er == nil {
+		return true
+	}
+	p, ok := er.(*rules.Pack)
+	return ok && p == nil
 }
 
 // checkAcceptanceK refuses an inline acceptance stated for a K other than one the

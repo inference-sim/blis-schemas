@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/inference-sim/blis-schemas/internal/validate"
 	"github.com/inference-sim/blis-schemas/rules"
 	"github.com/inference-sim/blis-schemas/spec/coefficient"
 	"github.com/inference-sim/blis-schemas/spec/deployment"
@@ -275,4 +276,52 @@ func renderAll(r Report) string {
 		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+// fakeRules is a non-Pack EngineRules that records the version it was asked for and reports
+// one rule finding, so a test can tell the caller's rules ran rather than the packs here.
+type fakeRules struct {
+	rules.EngineRules
+	version string
+}
+
+func (f fakeRules) EngineVersion() string { return f.version }
+func (f fakeRules) Check(rules.Input) *rules.Problems {
+	p := &validate.Problems{}
+	p.RuleErrorf("caller-rule", "the caller's rules ran for %s", f.version)
+	return p
+}
+
+// A caller that states its own rules gets them run, never this module's packs (#2021 B4: the
+// packs move to the engine model); a version they do not know is reported, not passed in
+// silence; and a caller that states none still gets the packs here.
+func TestValidate_RunsTheCallersRules(t *testing.T) {
+	var asked string
+	b := bundle()
+	b.Rules = func(v string) rules.EngineRules { asked = v; return fakeRules{version: v} }
+	rep := Validate(b)
+	if asked != "0.29.0" || rep.RulesApplied != "0.29.0" {
+		t.Fatalf("asked %q, applied %q; want the scenario's 0.29.0", asked, rep.RulesApplied)
+	}
+	if !strings.Contains(rep.Rule.Error(), "the caller's rules ran for 0.29.0") {
+		t.Errorf("the caller's rules did not run:\n%s", rep.Rule.Error())
+	}
+
+	b.Rules = func(string) rules.EngineRules { return nil }
+	b.RulesVersions = func() []string { return []string{"0.32.0"} }
+	rep = Validate(b)
+	if rep.RulesApplied != "" || !strings.Contains(rep.Rule.Error(), "no rules pack") ||
+		!strings.Contains(rep.Rule.Error(), "[0.32.0]") {
+		t.Errorf("a version the caller's rules do not know: applied %q, findings:\n%s", rep.RulesApplied, rep.Rule.Error())
+	}
+	var nilPack *rules.Pack
+	b.Rules = func(string) rules.EngineRules { return nilPack }
+	if rep = Validate(b); rep.RulesApplied != "" || !strings.Contains(rep.Rule.Error(), "no rules pack") {
+		t.Errorf("a typed-nil pack must read as unknown: applied %q", rep.RulesApplied)
+	}
+
+	b.Rules, b.RulesVersions = nil, nil
+	if rep = Validate(b); rep.RulesApplied != "0.29.0" || !rep.OK() {
+		t.Errorf("no caller rules: applied %q, want this module's 0.29.0 pack", rep.RulesApplied)
+	}
 }
