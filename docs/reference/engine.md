@@ -62,7 +62,7 @@ flight, but may still start transfers.
 |---|---|
 | `Kind` | The engine model, such as `vllm`; the simulator looks it up in the factory registry. |
 | `UpstreamVersion` | The real engine's release the configuration was written for. An engine refuses a release it does not model. |
-| `Config` | The engine's configuration block, as YAML only the engine decodes. |
+| `Config` | The engine's configuration block, as YAML only the engine decodes. A factory decodes the node itself, so an error names its line in the document. |
 | `Roots` | Directories the engine may read further inputs from, by role (catalog, registry, the configuration's own directory). |
 | `Pool` | Which pool of a multi-pool document this engine is. |
 | `Seed` | The run's seed. |

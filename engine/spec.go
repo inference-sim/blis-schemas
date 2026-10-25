@@ -23,7 +23,9 @@ type Spec struct {
 	// for, such as "0.32.0". An engine refuses a release it does not model rather than
 	// running it as another; the version is a check, not a selector.
 	UpstreamVersion string
-	// Config is the engine's configuration block, exactly as the document gave it.
+	// Config is the engine's configuration block, exactly as the document gave it. A
+	// factory decodes the node itself (Node.Decode) rather than a re-encoding of it, so the
+	// node's positions put a configuration error at its line in the document.
 	Config yaml.Node
 	// Roots are the directories the engine may read further inputs from, by role: a
 	// model catalog, a coefficient registry, the directory of the file the

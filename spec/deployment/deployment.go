@@ -358,7 +358,9 @@ type Engine struct {
 	// reading of 0, not only this schema's: the launch path passes a non-positive
 	// --max-cpu-loras as None (vllm/engine/arg_utils.py:2663-2665@5df63a72), which LoRAConfig
 	// then sets to max_loras (vllm/config/lora.py:120-121@5df63a72). The engine refuses a
-	// positive value below max_loras.
+	// positive value below max_loras. A negative value is refused here: the CLI would read it
+	// as unset, but LoRAConfig given one directly refuses it, as below max_loras, which is at
+	// least 1 (vllm/config/lora.py:35,122-126@5df63a72), so no reading of it is safe to assume.
 	MaxCPULoRAs int `yaml:"max_cpu_loras,omitempty"`
 
 	// Quantization is the weight format the engine serves in, where it differs from

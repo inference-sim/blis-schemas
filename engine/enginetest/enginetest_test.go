@@ -154,6 +154,27 @@ func TestFIFOBuildsThroughTheRegistry(t *testing.T) {
 // duplicate kind, and go test -count=N runs a test N times in one process.
 var registerFIFO = sync.OnceFunc(func() { engine.Register(FIFOFactory{}) })
 
+// A configuration error names the line of the document the block came from, not a line of
+// a re-encoding of it: the node keeps the document's positions, and the factory decodes the
+// node itself.
+func TestFIFOConfigErrorsNameTheDocumentsLine(t *testing.T) {
+	registerFIFO()
+	for _, c := range []struct{ doc, want string }{
+		{"kind: Deployment\nname: d\nengine:\n  max_running: 2\n  token_budget: 8\n  max_runnign: 3\n", "line 6"},
+		{"kind: Deployment\nname: d\nengine:\n  max_running: two\n  token_budget: 8\n", "line 4"},
+	} {
+		var root yaml.Node
+		if err := yaml.Unmarshal([]byte(c.doc), &root); err != nil {
+			t.Fatal(err)
+		}
+		block := root.Content[0].Content[5] // the value of the engine key
+		_, err := engine.New(engine.Spec{Kind: FIFOKind, Config: *block})
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("config error %v; want one naming %s of the document", err, c.want)
+		}
+	}
+}
+
 // --- The driver catches broken engines. Each is FIFO with one law broken. -------------
 
 type mute struct{ *FIFO }

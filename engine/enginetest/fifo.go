@@ -1,9 +1,10 @@
 package enginetest
 
 import (
-	"bytes"
 	"fmt"
+	"reflect"
 	"strconv"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 
@@ -68,18 +69,26 @@ type FIFOFactory struct{}
 func (FIFOFactory) Kind() string { return FIFOKind }
 
 // New implements engine.Factory, decoding the block strictly: an unknown key is an error.
+// It decodes the node itself rather than a re-encoding of it, so an error names the line of
+// the document the block came from.
 func (FIFOFactory) New(s engine.Spec) (engine.Engine, error) {
 	if s.Kind != FIFOKind {
 		return nil, fmt.Errorf("fifo: spec kind %q is not %q", s.Kind, FIFOKind)
 	}
-	raw, err := yaml.Marshal(&s.Config)
-	if err != nil {
-		return nil, fmt.Errorf("fifo: %w", err)
+	if s.Config.Kind == yaml.MappingNode {
+		known := map[string]bool{}
+		t := reflect.TypeOf(FIFOConfig{})
+		for i := range t.NumField() {
+			known[strings.Split(t.Field(i).Tag.Get("yaml"), ",")[0]] = true
+		}
+		for i := 0; i+1 < len(s.Config.Content); i += 2 {
+			if k := s.Config.Content[i]; !known[k.Value] {
+				return nil, fmt.Errorf("fifo: config: line %d: field %s not found in FIFOConfig", k.Line, k.Value)
+			}
+		}
 	}
 	var cfg FIFOConfig
-	dec := yaml.NewDecoder(bytes.NewReader(raw))
-	dec.KnownFields(true)
-	if err := dec.Decode(&cfg); err != nil {
+	if err := s.Config.Decode(&cfg); err != nil {
 		return nil, fmt.Errorf("fifo: config: %w", err)
 	}
 	return NewFIFO(cfg)
