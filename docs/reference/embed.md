@@ -39,6 +39,7 @@ the router's outbound HTTP (engine metrics, prompt rendering).
 |---|---|
 | `Constructor(ctx, rt, cfg) (Router, error)` | Builds a router with no endpoints. Neither it nor work it starts calls `Rand` before it returns, because the host derives the stream scope from the constructed router. If it fails, it has already stopped what it started. A refused plugin type wraps a `*RefusalError`. |
 | `Config.Allow(pluginType) (bool, string)` | The host's plugin policy. A type the router cannot host for a stated reason is refused with that reason; otherwise Allow decides; a type the router has not audited is refused even when Allow permits it. |
+| `Config.Logger *slog.Logger` | Receives the router's logs; nil discards them. |
 | `Config.Check(Requirements, Pool) error` | The host's own check, which the router calls after parsing the configuration and before it builds any plugin. A failure is returned unwrapped. |
 | `Requirements()` | Facts about the configuration, known from the parsed configuration before any plugin exists: metric flags, inert flags, metrics extractors and sources, KV-event indexes, topology labels, whether it disaggregates. |
 | `Pool()` | The pool served. `Pool.ID()` renders it as `Kind.group namespace/name`. |
@@ -58,6 +59,19 @@ A `Flight` is a dispatched request. The host hands it the response headers
 (`ResponseBody`), then ends it once: with the last body chunk, or with `Terminate`
 (`client-disconnect`, `evicted`, `error`). `EvictionSignal` is closed when the router revokes
 the request. It is nil when the router never evicts.
+
+## Requests
+
+A `Request` is what a client sends; the router renders its request headers from it, in sorted
+key order. `:method` is `POST`, `:path` is `Path`, `content-type` is `application/json`, and
+`x-request-id` is `ID`, always. The others are sent only when the field is set:
+
+| Field | Header | Rendering |
+|---|---|---|
+| `Objective` | `x-llm-d-inference-objective` | verbatim |
+| `FairnessID` | `x-llm-d-inference-fairness-id` | verbatim |
+| `TTFTSLO` | `x-llm-d-slo-ttft-ms` | whole milliseconds, rounded up, when positive |
+| `TTL` | `x-llm-d-inference-ttl` | `time.Duration.String`, when positive; a flow-controlled request's queue-wait budget is the shorter of it and the configured one |
 
 ## Rejections
 

@@ -15,7 +15,8 @@
 // Suite supplies a configuration that produces it); response headers and bodies, streamed and
 // not; each Termination; the eviction signal; KV-event ingest, removal and clear (with the index
 // itself for a router that implements embed.KVIndexInspector); refusal of a
-// plugin type through Config.Allow; a host refusal through Config.Check, before any plugin;
+// plugin type through Config.Allow, and of an unaudited one that Allow permits; a request's
+// own TTL as its queue-wait budget; a host refusal through Config.Check, before any plugin;
 // determinism over a seed; that no draw happens before the Constructor returns; and that Stop
 // ends every goroutine and loop.
 package embedtest
@@ -75,7 +76,8 @@ type Suite struct {
 	Route embed.Config
 	// Hold has flow control: while every endpoint is saturated it holds requests, at most
 	// one at a time (a second is refused, Saturated), each for a bounded queue-wait budget
-	// (FlowControl.MaxQueueTTL) after which it is refused (TTLExpired).
+	// (FlowControl.MaxQueueTTL) after which it is refused (TTLExpired). A request whose
+	// Request.TTL is shorter has that shorter budget.
 	Hold embed.Config
 	// KV routes by engines' KV events: of idle endpoints, it sends a request to the one whose
 	// published blocks hold the longest prefix of the request's prompt. A prompt is token IDs
@@ -98,6 +100,12 @@ type Suite struct {
 	// policy.
 	Refuse     embed.Config
 	RefuseType string
+	// Unaudited, when set, is a plugin type the router refuses because it has not audited it
+	// for hosting, although it would construct it otherwise: Check sets it in the Refuse
+	// configuration's place (UnauditedConfig) with an Allow that permits every type, and
+	// expects a *embed.RefusalError naming it. Empty skips the check.
+	Unaudited       string
+	UnauditedConfig embed.Config
 }
 
 // Run runs Check and reports each problem as a test error.
@@ -140,6 +148,7 @@ func Problems(s Suite) []error {
 		{"kv", partKV},
 		{"evict", partEvict},
 		{"refuse", partRefuse},
+		{"unaudited", partUnaudited},
 		{"check", partCheck},
 	}
 	for _, p := range parts {

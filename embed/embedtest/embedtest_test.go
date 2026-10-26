@@ -25,15 +25,17 @@ func suite(m mutation) embedtest.Suite {
 	evict := config(stubConfig{FlowControl: true, Capacity: 4, Evict: true})
 	unavailable := config(stubConfig{Unavailable: true})
 	return embedtest.Suite{
-		New:         newStub(m),
-		Seed:        7,
-		Route:       config(stubConfig{}),
-		Hold:        config(stubConfig{FlowControl: true, TTL: "5s", Capacity: 1}),
-		KV:          config(stubConfig{KV: true}),
-		Evict:       &evict,
-		Unavailable: &unavailable,
-		Refuse:      config(stubConfig{Plugins: []string{"scorer", "unhostable"}}),
-		RefuseType:  "unhostable",
+		New:             newStub(m),
+		Seed:            7,
+		Route:           config(stubConfig{}),
+		Hold:            config(stubConfig{FlowControl: true, TTL: "5s", Capacity: 1}),
+		KV:              config(stubConfig{KV: true}),
+		Evict:           &evict,
+		Unavailable:     &unavailable,
+		Refuse:          config(stubConfig{Plugins: []string{"scorer", "unhostable"}}),
+		RefuseType:      "unhostable",
+		Unaudited:       "experimental",
+		UnauditedConfig: config(stubConfig{Plugins: []string{"scorer", "experimental"}, Unaudited: []string{"experimental"}}),
 	}
 }
 
@@ -58,7 +60,7 @@ func TestMutationsFail(t *testing.T) {
 		{randAtConstruction, "before the Constructor returned"},
 		{randInStartedWork, "before the Constructor returned"},
 		{wallClockSeed, "determinism: two runs on seed 7 made different decisions"},
-		{leakOnStop, "hold: request-5: decided after Stop"},
+		{leakOnStop, "hold: request-6: decided after Stop"},
 		{loopAfterStop, "an Every loop ran"},
 		{headersDropped, "want every header passed in"},
 		{ignoresAllow, "refuse: construction succeeded although Allow refused unhostable"},
@@ -79,6 +81,9 @@ func TestMutationsFail(t *testing.T) {
 		{checkStalePool, "check: Check saw Pool"},
 		{inspectorStale, "kv: KVBlocks(10.0.0.2:8000) after its blocks were removed holds 1 blocks; want 0"},
 		{addressKept, "at the address it was updated to"},
+		{requestTTLIgnored, "Request.TTL 1.25s did not bound its wait"},
+		{unauditedAllowed, "unaudited: construction succeeded although experimental has not been audited"},
+		{unauditedNoAsk, "unaudited: Allow was never asked about experimental"},
 		{parkedForever, "route: 1 goroutines started with Runtime.Go are still live after Stop"},
 	} {
 		t.Run(string(c.m), func(t *testing.T) {

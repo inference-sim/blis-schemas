@@ -21,8 +21,9 @@ import (
 type stubConfig struct {
 	Plugins     []string `json:"plugins"`
 	FlowControl bool     `json:"flowControl"`
-	TTL         string   `json:"ttl"`      // queue-wait budget
-	Capacity    int      `json:"capacity"` // held requests at most
+	TTL         string   `json:"ttl"`       // queue-wait budget
+	Unaudited   []string `json:"unaudited"` // types it would build but has not audited
+	Capacity    int      `json:"capacity"`  // held requests at most
 	Evict       bool     `json:"evict"`
 	KV          bool     `json:"kv"`
 	Unavailable bool     `json:"unavailable"` // serves nothing
@@ -57,6 +58,9 @@ const (
 	failedConstructLeak mutation = "a refused construction leaves its loop running"
 	parkedForever       mutation = "a goroutine parked on nothing Stop ends"
 	unavailableAsUncl   mutation = "Unavailable reported as Unclassified"
+	requestTTLIgnored   mutation = "Request.TTL ignored"
+	unauditedAllowed    mutation = "an unaudited type built because Allow permits it"
+	unauditedNoAsk      mutation = "an unaudited type refused without consulting Allow"
 	checkWrapped        mutation = "Check's error wrapped"
 	checkAfterPlugins   mutation = "Check called after Allow"
 	checkIgnored        mutation = "Check never called"
@@ -105,11 +109,20 @@ func newStub(m mutation) embed.Constructor {
 			if cfg.Allow == nil || m == ignoresAllow {
 				continue
 			}
+			unaudited := slices.Contains(c.Unaudited, typ)
+			if unaudited && m == unauditedNoAsk {
+				s.cancel()
+				return nil, fmt.Errorf("stub: %w", &embed.RefusalError{Plugin: typ, Type: typ, Reason: "not audited"})
+			}
 			if ok, reason := cfg.Allow(typ); !ok {
 				if m != failedConstructLeak {
 					s.cancel()
 				}
 				return nil, fmt.Errorf("stub: %w", &embed.RefusalError{Plugin: typ, Type: typ, Reason: reason})
+			}
+			if unaudited && m != unauditedAllowed {
+				s.cancel()
+				return nil, fmt.Errorf("stub: %w", &embed.RefusalError{Plugin: typ, Type: typ, Reason: "it has not been audited for hosting"})
 			}
 		}
 		if cfg.Check != nil && m == checkAfterPlugins {
@@ -307,7 +320,11 @@ func (s *stub) Route(ctx context.Context, req embed.Request, done func(embed.Fli
 				return
 			}
 			s.held++
-			wait, stop := s.rt.WithTimeout(ctx, s.ttl)
+			budget := s.ttl
+			if req.TTL > 0 && req.TTL < budget && s.m != requestTTLIgnored {
+				budget = req.TTL
+			}
+			wait, stop := s.rt.WithTimeout(ctx, budget)
 			if s.cfg.Evict {
 				s.evictOne()
 			}

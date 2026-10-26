@@ -259,6 +259,22 @@ func partHold(e *env) {
 		e.wantRejected(expiring, embed.TTLExpired)
 	}
 
+	// A request's own TTL, shorter than the configured budget, is its budget.
+	if short := fc.MaxQueueTTL / 4; short > 0 {
+		req := e.request("", false, e.prompt(1, 1))
+		req.TTL = short
+		own := e.route(req)
+		if e.wantHeld(own) {
+			e.rt.Advance(short + fc.ExpirySweep + e.s.Observe)
+			if !own.decided() {
+				e.fail("%s: Request.TTL %v did not bound its wait: still held after %v (the configured budget is %v)",
+					own.req.ID, short, short+fc.ExpirySweep+e.s.Observe, fc.MaxQueueTTL)
+				e.rt.Advance(release)
+			}
+			e.wantRejected(own, embed.TTLExpired)
+		}
+	}
+
 	waiting := e.route(e.request("", false, e.prompt(1, 1)))
 	if e.wantHeld(waiting) {
 		e.saturate(false)
@@ -466,6 +482,42 @@ func partCheck(e *env) {
 	}
 	if !reflect.DeepEqual(gotPool, e.r.Pool()) {
 		e.fail("Check saw Pool %+v; the router reports %+v", gotPool, e.r.Pool())
+	}
+}
+
+// partUnaudited: a type the router has not audited is refused even when Allow permits it,
+// after Allow was consulted (the router's own stated reasons come first; see Config.Allow).
+func partUnaudited(e *env) {
+	if e.s.Unaudited == "" {
+		return
+	}
+	var asked []string
+	cfg := e.s.UnauditedConfig
+	cfg.Allow = func(typ string) (bool, string) {
+		asked = append(asked, typ)
+		return true, ""
+	}
+	e.rt = NewRuntime(e.s.Seed)
+	e.rt.Engines = e.serve
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	r, err := e.s.New(ctx, e.rt, cfg)
+	var re *embed.RefusalError
+	switch {
+	case err == nil:
+		e.fail("construction succeeded although %s has not been audited; Allow permitting it must not be enough", e.s.Unaudited)
+		e.r, e.cancel = r, cancel
+		e.reset()
+		return
+	case !errors.As(err, &re):
+		e.fail("construction failed with %v; want an error wrapping *embed.RefusalError", err)
+	case re.Type != e.s.Unaudited:
+		e.fail("RefusalError %+v; want type %s", *re, e.s.Unaudited)
+	case re.Reason == "":
+		e.fail("RefusalError for %s has no reason", e.s.Unaudited)
+	}
+	if !slices.Contains(asked, e.s.Unaudited) {
+		e.fail("Allow was never asked about %s; an unaudited type with no stated reason is still put to Allow first (consulted %v)", e.s.Unaudited, asked)
 	}
 }
 
