@@ -10,7 +10,7 @@ import (
 	"runtime/debug"
 	"slices"
 	"strings"
-	"sync/atomic"
+	"sync"
 	"time"
 
 	"github.com/inference-sim/blis-schemas/embed"
@@ -49,7 +49,7 @@ type Runtime struct {
 	live     int
 	settling bool
 
-	randCalls    int  // Rand calls, to check that construction draws none
+	randCalls    int  // Rand calls from the driving goroutine (not from Go's), to check that a Constructor makes none
 	stopped      bool // set by the checks once Router.Stop has returned
 	loopsStopped int  // Every callbacks run after stopped
 }
@@ -205,52 +205,63 @@ func (r *Runtime) WithDeadlineCause(parent context.Context, deadline time.Time, 
 	if cur, ok := parent.Deadline(); ok && cur.Before(deadline) {
 		return context.WithCancel(parent)
 	}
-	inner, cancelCause := context.WithCancelCause(parent)
+	// The context ends once, at one linearization point: decide, under mu. The first ending
+	// to reach it (the deadline event, the parent ending, or the returned cancel) records its
+	// error and cancels with its cause; later endings change nothing. A parent that has ended
+	// always wins, even before its AfterFunc has run, because decide checks it first under the
+	// lock. The context does not inherit the parent's cancellation directly, so the parent's
+	// ending goes through decide too and never takes a second path around it.
+	inner, cancelCause := context.WithCancelCause(context.WithoutCancel(parent))
 	dc := &deadlineCtx{Context: inner, deadline: deadline}
-	// The deadline event runs on the driving goroutine. It marks the context expired before
-	// cancelling it, so a reader never sees Canceled and then DeadlineExceeded from the
-	// deadline; and Err keeps the first error it reports, so a parent cancelled from another
-	// goroutine at the same moment can decide which error that is, but never change it.
-	stop := r.schedule(deadline.Sub(r.Now()), func() {
-		if inner.Err() == nil {
-			dc.expired.Store(true)
-			cancelCause(cause)
+	dc.decide = func(err, cause error) {
+		dc.mu.Lock()
+		defer dc.mu.Unlock()
+		if dc.err != nil {
+			return
 		}
-	})
+		if perr := parent.Err(); perr != nil {
+			err, cause = perr, context.Cause(parent)
+		}
+		if err == nil {
+			return // Err asked, and nothing has ended
+		}
+		dc.err = err
+		cancelCause(cause)
+	}
+	stopParent := context.AfterFunc(parent, func() { dc.decide(parent.Err(), context.Cause(parent)) })
+	stop := r.schedule(deadline.Sub(r.Now()), func() { dc.decide(context.DeadlineExceeded, cause) })
 	return dc, func() {
 		stop()
-		cancelCause(context.Canceled)
+		stopParent()
+		dc.decide(context.Canceled, context.Canceled)
 	}
 }
 
-// deadlineCtx reports its deadline and, once the deadline has passed, DeadlineExceeded. Its
-// first non-nil Err is the one it keeps, as context.Context requires.
+// deadlineCtx reports its deadline and, once it has ended, the error decide recorded. Err
+// reads under the lock decide holds while it cancels, so it is nil until Done is closed and
+// the same error from then on.
 type deadlineCtx struct {
 	context.Context
 	deadline time.Time
-	expired  atomic.Bool
-	err      atomic.Pointer[error]
+	mu       sync.Mutex
+	err      error
+	decide   func(err, cause error)
 }
 
 func (c *deadlineCtx) Deadline() (time.Time, bool) { return c.deadline, true }
 
 func (c *deadlineCtx) Err() error {
-	if e := c.err.Load(); e != nil {
-		return *e
-	}
-	var err error
-	if c.expired.Load() {
-		err = context.DeadlineExceeded
-	} else if err = c.Context.Err(); err == nil {
-		return nil
-	}
-	c.err.CompareAndSwap(nil, &err)
-	return *c.err.Load()
+	c.decide(nil, nil) // a parent that has ended is decided now; nothing else is
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.err
 }
 
 // Rand implements embed.Runtime.
 func (r *Runtime) Rand(name string) embed.Rand {
-	r.randCalls++
+	if r.current == nil { // on the driving goroutine, not in a goroutine started with Go
+		r.randCalls++
+	}
 	if s, ok := r.streams[name]; ok {
 		return s
 	}

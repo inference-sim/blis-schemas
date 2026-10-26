@@ -37,7 +37,7 @@ the router's outbound HTTP (engine metrics, prompt rendering).
 
 | Method | Does |
 |---|---|
-| `Constructor(ctx, rt, cfg) (Router, error)` | Builds a router with no endpoints. It draws no randomness. If it fails, it has already stopped what it started. A refused plugin type wraps a `*RefusalError`. |
+| `Constructor(ctx, rt, cfg) (Router, error)` | Builds a router with no endpoints. It never calls `Rand` itself; work it starts through `Go` or `Every` may draw at any time. If it fails, it has already stopped what it started. A refused plugin type wraps a `*RefusalError`. |
 | `Config.Allow(pluginType) (bool, string)` | The host's plugin policy. A type the router cannot host for a stated reason is refused with that reason; otherwise Allow decides; a type the router has not audited is refused even when Allow permits it. |
 | `Config.Check(Requirements, Pool) error` | The host's own check, which the router calls after parsing the configuration and before it builds any plugin. A failure is returned unwrapped. |
 | `Requirements()` | Facts about the configuration, known from the parsed configuration before any plugin exists: metric flags, inert flags, metrics extractors and sources, KV-event indexes, topology labels, whether it disaggregates. |

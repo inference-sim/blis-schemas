@@ -88,6 +88,8 @@ func newStub(m mutation) embed.Constructor {
 		if m == randAtConstruction {
 			rt.Rand("picker").Float64()
 		}
+		// Work started through Go may draw at once, before the Constructor returns.
+		rt.Go(func() { rt.Rand("startup-jitter").Float64() })
 		if cfg.Check != nil && m != checkIgnored && m != checkAfterPlugins {
 			if err := s.check(cfg.Check); err != nil {
 				return nil, err

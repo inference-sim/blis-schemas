@@ -3,7 +3,11 @@ package embedtest_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -51,7 +55,7 @@ func TestMutationsFail(t *testing.T) {
 		{noEndpointsAsUnavl, "no-endpoints: request-1: want a no-endpoints rejection, got unavailable"},
 		{admitNotShed, "admission: request-1: want a admission rejection, got dispatched"},
 		{badBodyDispatched, "unclassified: request-1: want a unclassified rejection"},
-		{randAtConstruction, "construction drew randomness"},
+		{randAtConstruction, "the Constructor called Rand itself"},
 		{wallClockSeed, "determinism: two runs on seed 7 made different decisions"},
 		{leakOnStop, "hold: request-5: decided after Stop"},
 		{loopAfterStop, "an Every loop ran"},
@@ -133,4 +137,59 @@ func TestDeadlineErrIsStable(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestDeadlineRaceHasOneOutcome: a deadline and a parent cancellation racing from two
+// goroutines end the context once. Whichever wins, Err reports it — DeadlineExceeded exactly
+// when the deadline's cause is the context's cause, Canceled exactly when the parent's is —
+// and Err never changes once it has reported an error.
+func TestDeadlineRaceHasOneOutcome(t *testing.T) {
+	errDeadline := errors.New("deadline cause")
+	errParent := errors.New("parent cause")
+	wins := map[error]int{}
+	for i := range 2000 {
+		rt := embedtest.NewRuntime(1)
+		parent, cancelParent := context.WithCancelCause(context.Background())
+		ctx, cancel := rt.WithDeadlineCause(parent, rt.Now().Add(time.Millisecond), errDeadline)
+		var first atomic.Pointer[error]
+		var wg sync.WaitGroup
+		stopWatch := make(chan struct{})
+		wg.Add(3)
+		go func() { // a reader: the first error Err reports, and that it never changes
+			defer wg.Done()
+			for {
+				if err := ctx.Err(); err != nil {
+					if !first.CompareAndSwap(nil, &err) && *first.Load() != err {
+						t.Errorf("iteration %d: Err changed from %v to %v", i, *first.Load(), err)
+					}
+				}
+				select {
+				case <-stopWatch:
+					return
+				default:
+				}
+			}
+		}()
+		go func() { defer wg.Done(); rt.Advance(time.Millisecond) }()
+		go func() { defer wg.Done(); cancelParent(errParent) }()
+		for ctx.Err() == nil {
+			runtime.Gosched()
+		}
+		time.Sleep(time.Microsecond)
+		close(stopWatch)
+		wg.Wait()
+		err, cause := ctx.Err(), context.Cause(ctx)
+		switch {
+		case errors.Is(cause, errDeadline) && err == context.DeadlineExceeded:
+		case errors.Is(cause, errParent) && err == context.Canceled:
+		default:
+			t.Fatalf("iteration %d: Err() = %v but the context's cause is %v", i, err, cause)
+		}
+		if f := first.Load(); f != nil && *f != err {
+			t.Fatalf("iteration %d: Err first reported %v, now %v", i, *f, err)
+		}
+		wins[err]++
+		cancel()
+	}
+	t.Logf("outcomes: %v", wins)
 }
