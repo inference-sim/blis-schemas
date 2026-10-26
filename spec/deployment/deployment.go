@@ -350,7 +350,7 @@ type Engine struct {
 	KVEvents *KVEvents `yaml:"kv_events,omitempty"`
 	// MaxLoRAs is the most distinct LoRA adapters one batch may hold; a request whose adapter
 	// does not fit is skipped that step (vllm/config/lora.py:35@5df63a72;
-	// vllm/v1/core/sched/scheduler.py:897-946@5df63a72). Zero means unset, the engine default
+	// vllm/v1/core/sched/scheduler.py:890-897, 941-952@5df63a72). Zero means unset, the engine default
 	// of 1.
 	MaxLoRAs int `yaml:"max_loras,omitempty"`
 	// MaxCPULoRAs is how many LoRA adapters are kept loaded in CPU memory, an LRU set
