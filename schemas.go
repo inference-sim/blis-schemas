@@ -52,7 +52,8 @@ type Bundle struct {
 
 	// Rules looks up a release's engine rules for the scenario's engine_version: the caller's
 	// (inference-sim#2021 B4: the packs move to the engine model, blis-vllm). nil uses the packs
-	// still in this module (rules.Lookup) until every consumer passes its own. Rules that answer
+	// still in this module (rules.Lookup) until every consumer passes its own, which is
+	// https://github.com/inference-sim/blis-schemas/issues/103. Rules that answer
 	// for another release are refused (engine-version-matches), never applied.
 	Rules func(version string) rules.EngineRules
 	// RulesVersions lists the versions Rules answers, for the finding when it answers none.
