@@ -1,8 +1,9 @@
 # The BLIS repositories
 
-<p class="lede">BLIS is five repositories, each owning one kind of thing. blis-schemas is
-the one that holds no data and runs no simulation. It defines the documents the other four
-exchange, and the checks those documents must pass.</p>
+<p class="lede">BLIS is five repositories, each owning one kind of thing, plus a fork of
+the llm-d router that the simulator hosts. blis-schemas is the one that holds no data and runs
+no simulation. It defines the documents the other four exchange, the checks those documents
+must pass, and the interfaces between the Go repositories.</p>
 
 --8<-- "docs/figures/repositories.html"
 
@@ -12,6 +13,7 @@ exchange, and the checks those documents must pass.</p>
 | [blis-registry](https://github.com/inference-sim/blis-registry) | Coefficient sets: measured, cited or assumed values, each with its method, sources and scope | Its CI runs `validate-registry` over every committed set |
 | [blis-latency-kernel](https://github.com/inference-sim/blis-latency-kernel) | The cost model: memory and step time for one pool of a deployment | Imports the document types and loaders, implements `kernel.Kernel`, and validates its inputs before it constructs a kernel |
 | [inference-sim](https://github.com/inference-sim/inference-sim) | The discrete-event simulator: queues, batching, admission, preemption | In pull request #1851, calls a kernel each simulated step through the `kernel` package's types |
+| [llm-d router fork](https://github.com/inference-sim/llm-d-router) | The request router the simulator hosts | Implements the `embed` contract (`embed.Constructor`) and runs `embed/embedtest` |
 | **blis-schemas** | The shapes of all of the above, and the checks on them | — |
 
 ## Shapes apart from contents
@@ -52,6 +54,11 @@ branch, the `sim/kernelmodel` package adapts a kernel to the simulator's latency
 and imports this module's `kernel` and `spec/deployment` packages for the types that cross
 the boundary. It computes no cost of its own. On inference-sim's main branch, the
 simulator imports neither the kernel nor this module.
+
+**The llm-d router fork** implements the [router contract](../reference/embed.md), package
+`embed`: inference-sim hosts the router on its discrete-event runtime (`embed.Runtime`) and
+calls it only through `embed.Router`. The contract lets a same-major router release reach
+the simulator as a version bump. The fork checks itself against `embed/embedtest`.
 
 ## Dependencies run one way
 

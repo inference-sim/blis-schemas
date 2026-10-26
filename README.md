@@ -2,8 +2,9 @@
 
 Go schemas and validators for the BLIS cost model: what a model is, what hardware can do,
 what a coefficient claims, how far speculative decoding advances a request, what a
-deployment specifies, what a measured run recorded, and
-the interface a cost model implements.
+deployment specifies, what a measured run recorded, and the two runtime contracts between
+BLIS repositories: `kernel`, the interface a cost model implements, and `embed`, the interface
+between a simulator and the request router it hosts.
 
 **Documentation: <https://inference-sim.github.io/blis-schemas/>**
 
@@ -15,6 +16,9 @@ this module's validators in CI.
 [blis-latency-kernel](https://github.com/inference-sim/blis-latency-kernel) implements the
 `Kernel` interface defined here, and [inference-sim](https://github.com/inference-sim/inference-sim)
 calls it in pull request [#1851](https://github.com/inference-sim/inference-sim/pull/1851).
+The [llm-d router fork](https://github.com/inference-sim/llm-d-router) implements the `embed`
+contract (`embed.Constructor`), inference-sim hosts the router (`embed.Runtime`), and
+`embed/embedtest` checks an implementation against the contract.
 
 ## Use
 
