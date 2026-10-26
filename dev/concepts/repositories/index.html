@@ -6,7 +6,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="Go schemas and validators for the BLIS cost model: the shapes of the documents that describe a model, its hardware, its coefficients, a deployment, and a measured run.">
+        <meta name="description" content="Go schemas and validators for the BLIS cost model: the shapes of the documents that describe a model, its hardware, its coefficients, a deployment, and a measured run; and the two runtime contracts between BLIS repositories, the interface a cost model implements (kernel) and the contract between a simulator and the request router it hosts (embed).">
       
       
       
@@ -934,6 +934,8 @@
       
         
       
+        
+      
     
     
     
@@ -1283,6 +1285,34 @@
     
   
     Kernel interface
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/embed/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Router contract
   
 
     
@@ -1822,14 +1852,15 @@
 
 
 <h1 id="the-blis-repositories">The BLIS repositories<a class="headerlink" href="#the-blis-repositories" title="Permanent link">&para;</a></h1>
-<p class="lede">BLIS is five repositories, each owning one kind of thing. blis-schemas is
-the one that holds no data and runs no simulation. It defines the documents the other four
-exchange, and the checks those documents must pass.</p>
+<p class="lede">BLIS is five repositories, each owning one kind of thing, plus a fork of
+the llm-d router that the simulator hosts. blis-schemas is the one that holds no data and runs
+no simulation. It defines the documents the other four exchange, the checks those documents
+must pass, and the interfaces between the Go repositories.</p>
 
 <figure class="diagram" markdown="0">
-<svg viewBox="0 0 800 340" role="img" aria-labelledby="fig-repos-title fig-repos-desc">
+<svg viewBox="0 0 800 440" role="img" aria-labelledby="fig-repos-title fig-repos-desc">
 <title id="fig-repos-title">The BLIS repositories and how they depend on blis-schemas</title>
-<desc id="fig-repos-desc">blis-catalog and blis-registry hold data and run blis-schemas validators in CI. blis-latency-kernel imports blis-schemas and reads the catalog and registry files when a kernel is constructed. inference-sim, in pull request 1851, imports the kernel and blis-schemas.</desc>
+<desc id="fig-repos-desc">blis-catalog and blis-registry hold data and run blis-schemas validators in CI. blis-latency-kernel imports blis-schemas and reads the catalog and registry files when a kernel is constructed. inference-sim, in pull request 1851, imports the kernel and blis-schemas. The llm-d router fork imports blis-schemas and implements its router contract, and inference-sim hosts the router through that contract.</desc>
 <defs>
 <marker id="repos-ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0,1 L9,5 L0,9 z"/></marker>
 <marker id="repos-ah-accent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead-accent" d="M0,1 L9,5 L0,9 z"/></marker>
@@ -1847,7 +1878,7 @@ exchange, and the checks those documents must pass.</p>
 <rect class="box-accent" x="330" y="132" width="180" height="76" rx="5"/>
 <text class="title accent-text" x="344" y="158">blis-schemas</text>
 <text class="small" x="344" y="177">document types, validators,</text>
-<text class="small" x="344" y="192">the Kernel interface</text>
+<text class="small" x="344" y="192">Kernel and router contract</text>
 <rect class="box" x="600" y="52" width="190" height="72" rx="5"/>
 <text class="title" x="614" y="78">blis-latency-kernel</text>
 <text class="small" x="614" y="97">implements Kernel: prices</text>
@@ -1864,10 +1895,16 @@ exchange, and the checks those documents must pass.</p>
 <path class="edge" d="M600,240 L512,190" marker-end="url(#repos-ah)"/>
 <path class="edge" d="M695,215 L695,126" marker-end="url(#repos-ah)"/>
 <path class="edge dotted" d="M600,66 L222,66" marker-end="url(#repos-ah)"/>
+<rect class="box" x="600" y="335" width="190" height="72" rx="5"/>
+<text class="title" x="614" y="361">llm-d router fork</text>
+<text class="small" x="614" y="380">implements the router</text>
+<text class="small" x="614" y="395">contract (embed)</text>
+<path class="edge" d="M600,350 L470,210" marker-end="url(#repos-ah)"/>
+<path class="edge" d="M695,289 L695,333" marker-end="url(#repos-ah)"/>
 <text class="small" x="300" y="58">reads catalog and registry files when constructed</text>
-<text class="small" x="10" y="332">Solid: Go import. Dashed: a blis-schemas command the repository runs in CI. Dotted: file reads.</text>
+<text class="small" x="10" y="432">Solid: Go import. Dashed: a blis-schemas command the repository runs in CI. Dotted: file reads.</text>
 </svg>
-<figcaption>Who depends on whom. blis-schemas imports nothing from the other four. The data repositories contain no Go; they run its validators in CI. The kernel imports its types, and so does the simulator in pull request #1851, which is still open.</figcaption>
+<figcaption>Who depends on whom. blis-schemas imports nothing from the other repositories. The data repositories contain no Go; they run its validators in CI. The kernel imports its types, and so does the simulator in pull request #1851, which is still open. The llm-d router fork implements the router contract (<code>embed</code>), and inference-sim hosts the router through it.</figcaption>
 </figure>
 
 <table>
@@ -1898,6 +1935,11 @@ exchange, and the checks those documents must pass.</p>
 <td><a href="https://github.com/inference-sim/inference-sim">inference-sim</a></td>
 <td>The discrete-event simulator: queues, batching, admission, preemption</td>
 <td>In pull request #1851, calls a kernel each simulated step through the <code>kernel</code> package's types</td>
+</tr>
+<tr>
+<td><a href="https://github.com/inference-sim/llm-d-router">llm-d router fork</a></td>
+<td>The request router the simulator hosts</td>
+<td>Implements the <code>embed</code> contract (<code>embed.Constructor</code>) and runs <code>embed/embedtest</code></td>
 </tr>
 <tr>
 <td><strong>blis-schemas</strong></td>
@@ -1937,6 +1979,10 @@ branch, the <code>sim/kernelmodel</code> package adapts a kernel to the simulato
 and imports this module's <code>kernel</code> and <code>spec/deployment</code> packages for the types that cross
 the boundary. It computes no cost of its own. On inference-sim's main branch, the
 simulator imports neither the kernel nor this module.</p>
+<p><strong>The llm-d router fork</strong> implements the <a href="../../reference/embed/">router contract</a>, package
+<code>embed</code>: inference-sim hosts the router on its discrete-event runtime (<code>embed.Runtime</code>) and
+calls it only through <code>embed.Router</code>. The contract lets a same-major router release reach
+the simulator as a version bump. The fork checks itself against <code>embed/embedtest</code>.</p>
 <h2 id="dependencies-run-one-way">Dependencies run one way<a class="headerlink" href="#dependencies-run-one-way" title="Permanent link">&para;</a></h2>
 <p>blis-schemas imports nothing from the other repositories. Its only dependency is
 <code>gopkg.in/yaml.v3</code>. The kernel imports blis-schemas, and the simulator in #1851 imports

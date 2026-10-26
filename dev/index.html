@@ -6,7 +6,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="Go schemas and validators for the BLIS cost model: the shapes of the documents that describe a model, its hardware, its coefficients, a deployment, and a measured run.">
+        <meta name="description" content="Go schemas and validators for the BLIS cost model: the shapes of the documents that describe a model, its hardware, its coefficients, a deployment, and a measured run; and the two runtime contracts between BLIS repositories, the interface a cost model implements (kernel) and the contract between a simulator and the request router it hosts (embed).">
       
       
       
@@ -907,6 +907,8 @@
       
         
       
+        
+      
     
     
     
@@ -1256,6 +1258,34 @@
     
   
     Kernel interface
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="reference/embed/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Router contract
   
 
     
@@ -1781,7 +1811,8 @@
 deployment will perform before anyone runs it. blis-schemas defines the documents BLIS
 reasons about and checks them. It is a Go module: types for a model, its hardware, the
 coefficients a cost model uses, a deployment, its traffic and a measured run; a validator
-for each; and the interface a cost model implements. It holds no data.</p>
+for each; the interface a cost model implements; and the contract between a simulator and the
+request router it hosts. It holds no data.</p>
 
 <h2 id="the-idea-in-brief">The idea in brief<a class="headerlink" href="#the-idea-in-brief" title="Permanent link">&para;</a></h2>
 <p>A document's <em>shape</em> is defined here, and its <em>contents</em> live in the repository that owns
@@ -1792,9 +1823,9 @@ keeps the answers apart. Is each document well formed? That never depends on an 
 release. Would the release the scenario names run it as written? That always does. Every
 validator reports every problem at once, each naming the field that is wrong.</p>
 <figure class="diagram" markdown="0">
-<svg viewBox="0 0 800 340" role="img" aria-labelledby="fig-repos-title fig-repos-desc">
+<svg viewBox="0 0 800 440" role="img" aria-labelledby="fig-repos-title fig-repos-desc">
 <title id="fig-repos-title">The BLIS repositories and how they depend on blis-schemas</title>
-<desc id="fig-repos-desc">blis-catalog and blis-registry hold data and run blis-schemas validators in CI. blis-latency-kernel imports blis-schemas and reads the catalog and registry files when a kernel is constructed. inference-sim, in pull request 1851, imports the kernel and blis-schemas.</desc>
+<desc id="fig-repos-desc">blis-catalog and blis-registry hold data and run blis-schemas validators in CI. blis-latency-kernel imports blis-schemas and reads the catalog and registry files when a kernel is constructed. inference-sim, in pull request 1851, imports the kernel and blis-schemas. The llm-d router fork imports blis-schemas and implements its router contract, and inference-sim hosts the router through that contract.</desc>
 <defs>
 <marker id="repos-ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0,1 L9,5 L0,9 z"/></marker>
 <marker id="repos-ah-accent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead-accent" d="M0,1 L9,5 L0,9 z"/></marker>
@@ -1812,7 +1843,7 @@ validator reports every problem at once, each naming the field that is wrong.</p
 <rect class="box-accent" x="330" y="132" width="180" height="76" rx="5"/>
 <text class="title accent-text" x="344" y="158">blis-schemas</text>
 <text class="small" x="344" y="177">document types, validators,</text>
-<text class="small" x="344" y="192">the Kernel interface</text>
+<text class="small" x="344" y="192">Kernel and router contract</text>
 <rect class="box" x="600" y="52" width="190" height="72" rx="5"/>
 <text class="title" x="614" y="78">blis-latency-kernel</text>
 <text class="small" x="614" y="97">implements Kernel: prices</text>
@@ -1829,10 +1860,16 @@ validator reports every problem at once, each naming the field that is wrong.</p
 <path class="edge" d="M600,240 L512,190" marker-end="url(#repos-ah)"/>
 <path class="edge" d="M695,215 L695,126" marker-end="url(#repos-ah)"/>
 <path class="edge dotted" d="M600,66 L222,66" marker-end="url(#repos-ah)"/>
+<rect class="box" x="600" y="335" width="190" height="72" rx="5"/>
+<text class="title" x="614" y="361">llm-d router fork</text>
+<text class="small" x="614" y="380">implements the router</text>
+<text class="small" x="614" y="395">contract (embed)</text>
+<path class="edge" d="M600,350 L470,210" marker-end="url(#repos-ah)"/>
+<path class="edge" d="M695,289 L695,333" marker-end="url(#repos-ah)"/>
 <text class="small" x="300" y="58">reads catalog and registry files when constructed</text>
-<text class="small" x="10" y="332">Solid: Go import. Dashed: a blis-schemas command the repository runs in CI. Dotted: file reads.</text>
+<text class="small" x="10" y="432">Solid: Go import. Dashed: a blis-schemas command the repository runs in CI. Dotted: file reads.</text>
 </svg>
-<figcaption>Who depends on whom. blis-schemas imports nothing from the other four. The data repositories contain no Go; they run its validators in CI. The kernel imports its types, and so does the simulator in pull request #1851, which is still open.</figcaption>
+<figcaption>Who depends on whom. blis-schemas imports nothing from the other repositories. The data repositories contain no Go; they run its validators in CI. The kernel imports its types, and so does the simulator in pull request #1851, which is still open. The llm-d router fork implements the router contract (<code>embed</code>), and inference-sim hosts the router through it.</figcaption>
 </figure>
 
 <h2 id="where-to-start">Where to start<a class="headerlink" href="#where-to-start" title="Permanent link">&para;</a></h2>
@@ -1850,7 +1887,8 @@ validator reports every problem at once, each naming the field that is wrong.</p
 <hr />
 <p>Load documents, validate them together, and read the report.</p>
 <p><a href="guides/go/">Validate documents from Go</a> ·
-<a href="reference/kernel/">Kernel interface</a></p>
+<a href="reference/kernel/">Kernel interface</a> ·
+<a href="reference/embed/">Router contract</a></p>
 </li>
 <li>
 <p><strong>You want to know why it is built this way</strong></p>

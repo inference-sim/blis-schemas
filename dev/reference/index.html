@@ -6,7 +6,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="Go schemas and validators for the BLIS cost model: the shapes of the documents that describe a model, its hardware, its coefficients, a deployment, and a measured run.">
+        <meta name="description" content="Go schemas and validators for the BLIS cost model: the shapes of the documents that describe a model, its hardware, its coefficients, a deployment, and a measured run; and the two runtime contracts between BLIS repositories, the interface a cost model implements (kernel) and the contract between a simulator and the request router it hosts (embed).">
       
       
       
@@ -829,6 +829,8 @@
       
         
       
+        
+      
     
     
     
@@ -1181,6 +1183,34 @@
     
   
     Kernel interface
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="embed/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Router contract
   
 
     
@@ -1659,7 +1689,7 @@
 <h1 id="reference">Reference<a class="headerlink" href="#reference" title="Permanent link">&para;</a></h1>
 <p>| <a href="acceptance/">Acceptance profiles</a> | <code>AcceptanceProfileSet</code>, inline acceptance values, a scenario's pin | <a href="https://github.com/inference-sim/blis-schemas/tree/main/spec/acceptance"><code>spec/acceptance</code></a> |</p>
 <p>| <a href="acceptance/">Acceptance profiles</a> | <code>AcceptanceProfileSet</code>, inline acceptance values, a scenario's pin | <a href="https://github.com/inference-sim/blis-schemas/tree/main/spec/acceptance"><code>spec/acceptance</code></a> |</p>
-<p class="lede">One page per document kind, plus the kernel interface, the closed
+<p class="lede">One page per document kind, plus the kernel interface, the router contract, the closed
 | [Acceptance profiles](acceptance.md) | `AcceptanceProfileSet`, inline acceptance values, a scenario's pin | [`spec/acceptance`](https://github.com/inference-sim/blis-schemas/tree/main/spec/acceptance) |
 vocabularies, the rules packs and the two commands. Each document page opens with an
 | [Acceptance profiles](acceptance.md) | `AcceptanceProfileSet`, inline acceptance values, a scenario's pin | [`spec/acceptance`](https://github.com/inference-sim/blis-schemas/tree/main/spec/acceptance) |
@@ -1696,6 +1726,7 @@ than these pages, read the source; each page links to it.
 | <a href="evaluation/">Evaluation run</a> | <code>EvaluationRun</code> | <a href="https://github.com/inference-sim/blis-schemas/tree/main/spec/evaluation"><code>spec/evaluation</code></a> |
 | <a href="acceptance/">Acceptance profiles</a> | <code>AcceptanceProfileSet</code>, inline acceptance values, a scenario's pin | <a href="https://github.com/inference-sim/blis-schemas/tree/main/spec/acceptance"><code>spec/acceptance</code></a> |
 | <a href="kernel/">Kernel interface</a> | the <code>Kernel</code> a cost model implements | <a href="https://github.com/inference-sim/blis-schemas/tree/main/kernel"><code>kernel</code></a> |
+| <a href="embed/">Router contract</a> | the <code>Runtime</code> a simulator implements, and the <code>Router</code> a hosted router implements | <a href="https://github.com/inference-sim/blis-schemas/tree/main/embed"><code>embed</code></a> |
 | <a href="acceptance/">Acceptance profiles</a> | <code>AcceptanceProfileSet</code>, inline acceptance values, a scenario's pin | <a href="https://github.com/inference-sim/blis-schemas/tree/main/spec/acceptance"><code>spec/acceptance</code></a> |
 | <a href="vocabularies/">Vocabularies</a> | units, methods, scope keys, dtypes, and the rest | <a href="https://github.com/inference-sim/blis-schemas/tree/main/vocab"><code>vocab</code></a> and <code>spec/</code> |
 | <a href="acceptance/">Acceptance profiles</a> | <code>AcceptanceProfileSet</code>, inline acceptance values, a scenario's pin | <a href="https://github.com/inference-sim/blis-schemas/tree/main/spec/acceptance"><code>spec/acceptance</code></a> |
