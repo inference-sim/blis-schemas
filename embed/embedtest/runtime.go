@@ -49,7 +49,7 @@ type Runtime struct {
 	live     int
 	settling bool
 
-	randCalls    int  // Rand calls from the driving goroutine (not from Go's), to check that a Constructor makes none
+	randCalls    int  // Rand calls from any goroutine, to check that none happens during construction
 	stopped      bool // set by the checks once Router.Stop has returned
 	loopsStopped int  // Every callbacks run after stopped
 }
@@ -259,9 +259,7 @@ func (c *deadlineCtx) Err() error {
 
 // Rand implements embed.Runtime.
 func (r *Runtime) Rand(name string) embed.Rand {
-	if r.current == nil { // on the driving goroutine, not in a goroutine started with Go
-		r.randCalls++
-	}
+	r.randCalls++
 	if s, ok := r.streams[name]; ok {
 		return s
 	}

@@ -39,6 +39,7 @@ const (
 	admitNotShed        mutation = "sheddable requests admitted under saturation"
 	badBodyDispatched   mutation = "malformed body dispatched"
 	randAtConstruction  mutation = "randomness drawn at construction"
+	randInStartedWork   mutation = "randomness drawn at construction by a goroutine it started"
 	wallClockSeed       mutation = "picks seeded from a counter, not the Runtime"
 	leakOnStop          mutation = "Stop leaves a held request's goroutine parked"
 	loopAfterStop       mutation = "Stop leaves the scrape loop running"
@@ -88,8 +89,9 @@ func newStub(m mutation) embed.Constructor {
 		if m == randAtConstruction {
 			rt.Rand("picker").Float64()
 		}
-		// Work started through Go may draw at once, before the Constructor returns.
-		rt.Go(func() { rt.Rand("startup-jitter").Float64() })
+		if m == randInStartedWork {
+			rt.Go(func() { rt.Rand("startup-jitter").Float64() })
+		}
 		if cfg.Check != nil && m != checkIgnored && m != checkAfterPlugins {
 			if err := s.check(cfg.Check); err != nil {
 				return nil, err

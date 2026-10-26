@@ -180,11 +180,11 @@ type Config struct {
 // returns a router with no endpoints. Background work it starts runs on rt and ends at Stop or
 // when ctx is done.
 //
-// A Constructor never calls rt.Rand itself, on the goroutine it was called on. Work it starts
-// through rt.Go or rt.Every may draw randomness at any time, including before the Constructor
-// returns: a Runtime whose Go runs fn at once runs that work then. A host that fixes its
-// streams' seeds from facts it learns from the returned router (for example its Pool) seeds
-// only the draws made after the Constructor returns.
+// Neither the Constructor nor any work it starts (through rt.Go or rt.Every) may call rt.Rand
+// before the Constructor returns; work it starts may draw after it returns. A host derives its
+// streams' scope from the constructed router (for example its Pool), so a draw before the
+// router exists would come from a stream the host has not yet determined. On a Runtime whose Go
+// runs fn at once, work started with Go therefore waits (parks) before its first draw.
 //
 // A Constructor that fails has stopped whatever it started. A refusal of a plugin type is an
 // error that wraps a *RefusalError.

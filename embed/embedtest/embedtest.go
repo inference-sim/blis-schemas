@@ -16,8 +16,8 @@
 // not; each Termination; the eviction signal; KV-event ingest, removal and clear (with the index
 // itself for a router that implements embed.KVIndexInspector); refusal of a
 // plugin type through Config.Allow; a host refusal through Config.Check, before any plugin;
-// determinism over a seed; that the Constructor itself never calls Rand; and that Stop ends
-// every goroutine and loop.
+// determinism over a seed; that no draw happens before the Constructor returns; and that Stop
+// ends every goroutine and loop.
 package embedtest
 
 import (
@@ -198,7 +198,7 @@ func (e *env) build(cfg embed.Config) bool {
 	}
 	e.r, e.cancel = r, cancel
 	if n := e.rt.randCalls; n > 0 {
-		e.fail("the Constructor called Rand itself (%d calls); only work it starts through Go or Every may", n)
+		e.fail("Rand was called %d times before the Constructor returned, by it or by work it started; no draw may happen until it returns", n)
 	}
 	e.blocks = 16
 	if ix := r.Requirements().PrefixIndexes; len(ix) > 0 && ix[0].BlockSize > 0 {
