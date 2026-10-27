@@ -2,8 +2,10 @@
 
 Go schemas and validators for the BLIS cost model: what a model is, what hardware can do,
 what a coefficient claims, how far speculative decoding advances a request, what a
-deployment specifies, what a measured run recorded, the
-interface a cost model implements, and the interface an inference-engine model implements.
+deployment specifies, what a measured run recorded, and the runtime contracts between
+BLIS repositories: `kernel`, the interface a cost model implements, `engine`, the interface an
+inference-engine model implements, and `embed`, the interface between a simulator and the
+request router it hosts.
 
 **Documentation: <https://inference-sim.github.io/blis-schemas/>**
 
@@ -17,6 +19,9 @@ this module's validators in CI.
 implements the `Engine` interface for vLLM, and
 [inference-sim](https://github.com/inference-sim/inference-sim) calls the kernel on every
 simulated step.
+The [llm-d router fork](https://github.com/inference-sim/llm-d-router) implements the `embed`
+contract (`embed.Constructor`), inference-sim hosts the router (`embed.Runtime`), and
+`embed/embedtest` checks an implementation against the contract.
 
 ## Use
 

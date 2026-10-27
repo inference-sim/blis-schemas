@@ -99,3 +99,21 @@ func TestEngineIsEngineNeutral(t *testing.T) {
 		}
 	}
 }
+
+// TestEmbedImportsOnlyTheStandardLibrary: the router contract is implemented in a router's
+// repository and called from a simulator's, so importing it must cost either side nothing but
+// this module. A dependency here would become a dependency of every router that implements it.
+func TestEmbedImportsOnlyTheStandardLibrary(t *testing.T) {
+	for _, pkg := range []string{"./embed", "./embed/embedtest"} {
+		out, err := exec.Command("go", "list", "-deps", "-f", "{{if not .Standard}}{{.ImportPath}}{{end}}", pkg).Output()
+		if err != nil {
+			t.Fatalf("go list -deps %s: %v", pkg, err)
+		}
+		for _, dep := range strings.Fields(string(out)) {
+			if dep == "github.com/inference-sim/blis-schemas/embed" || dep == "github.com/inference-sim/blis-schemas/embed/embedtest" {
+				continue
+			}
+			t.Errorf("%s depends on %s; the router contract uses the standard library only", pkg, dep)
+		}
+	}
+}

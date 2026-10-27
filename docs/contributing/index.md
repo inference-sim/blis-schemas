@@ -34,6 +34,7 @@ differently gets its own pack.
 | `spec/workload/` | A workload shape, and a scenario's workload binding |
 | `spec/evaluation/` | A measured run |
 | `kernel/` | The interface a cost model implements |
+| `embed/` | The contract between a simulator and the router it hosts; `embed/embedtest` checks an implementation |
 | `rules/` | The rules-pack mechanism, with one package per engine release beneath it |
 | `internal/validate/` | The problem list every validator shares |
 | `internal/registry/` | Finding coefficient-set files in a registry checkout |

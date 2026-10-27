@@ -1,8 +1,9 @@
 # The BLIS repositories
 
-<p class="lede">BLIS is six repositories, each owning one kind of thing. blis-schemas is
-the one that holds no data and runs no simulation. It defines the documents the others
-exchange, the interfaces between them, and the checks those documents must pass.</p>
+<p class="lede">BLIS is six repositories, each owning one kind of thing, plus a fork of
+the llm-d router that the simulator hosts. blis-schemas is the one that holds no data and runs
+no simulation. It defines the documents the others exchange, the checks those documents must
+pass, and the interfaces between the Go repositories.</p>
 
 --8<-- "docs/figures/repositories.html"
 
@@ -13,6 +14,7 @@ exchange, the interfaces between them, and the checks those documents must pass.
 | [blis-latency-kernel](https://github.com/inference-sim/blis-latency-kernel) | The cost model: memory and step time for one pool of a deployment | Imports the document types and loaders, implements `kernel.Kernel`, and validates its inputs before it constructs a kernel |
 | [blis-vllm](https://github.com/inference-sim/blis-vllm) | vLLM's engine behaviour: its scheduler, KV cache and connectors as an `engine.Engine`, its rules packs, and its connector registry | Implements `engine.Engine` and `rules.EngineRules`, and checks its engine with `engine/enginetest` |
 | [inference-sim](https://github.com/inference-sim/inference-sim) | The discrete-event simulator: the clock, the event queue, routing and clusters | Calls a kernel each simulated step through the `kernel` package's types, and reads deployments and scenarios through this module's loaders |
+| [llm-d router fork](https://github.com/inference-sim/llm-d-router) | The request router the simulator hosts | Implements the `embed` contract (`embed.Constructor`) and runs `embed/embedtest` |
 | **blis-schemas** | The shapes of all of the above, and the checks on them | — |
 
 ## Shapes apart from contents
@@ -58,6 +60,11 @@ adapts a kernel to the simulator's latency interface and imports this module's `
 `spec/deployment` packages for the types that cross the boundary. It computes no cost of its
 own. The kernel integration arrived in pull request
 [#1851](https://github.com/inference-sim/inference-sim/pull/1851), merged on 2026-10-13.
+
+**The llm-d router fork** implements the [router contract](../reference/embed.md), package
+`embed`: inference-sim hosts the router on its discrete-event runtime (`embed.Runtime`) and
+calls it only through `embed.Router`. The contract lets a same-major router release reach
+the simulator as a version bump. The fork checks itself against `embed/embedtest`.
 
 ## Dependencies run one way
 
