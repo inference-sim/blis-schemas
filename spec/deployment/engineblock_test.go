@@ -153,3 +153,26 @@ func TestEngineBlockDecodeIsStrictAtEveryLevel(t *testing.T) {
 type selfDecoding struct{}
 
 func (*selfDecoding) UnmarshalYAML(*yaml.Node) error { return nil }
+
+// Equal compares what a block holds, not where it was read from: a block decoded from a file
+// equals one built from the same YAML, and a different value is not equal.
+func TestEngineBlockEqual(t *testing.T) {
+	var read holder
+	if err := yaml.Unmarshal([]byte("after: x\nengine:\n    block_size: 16\n    nested: {a: 1}\n"), &read); err != nil {
+		t.Fatal(err)
+	}
+	var n yaml.Node
+	if err := yaml.Unmarshal([]byte("block_size: 16\nnested:\n  a: 1\n"), &n); err != nil {
+		t.Fatal(err)
+	}
+	if !read.Engine.Equal(NewEngineBlock(n.Content[0])) {
+		t.Error("the same YAML read at another position is not equal")
+	}
+	n.Content[0].Content[1].Value = "32"
+	if read.Engine.Equal(NewEngineBlock(n.Content[0])) {
+		t.Error("blocks with different values are equal")
+	}
+	if !(EngineBlock{}).Equal(EngineBlock{}) || read.Engine.Equal(EngineBlock{}) {
+		t.Error("absent blocks: equal to each other only")
+	}
+}

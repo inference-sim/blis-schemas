@@ -50,7 +50,7 @@ func TestDocExamplesValidate(t *testing.T) {
 	ex := func(name string) string { return filepath.Join("docs", "examples", name) }
 
 	t.Run("colocated", func(t *testing.T) {
-		requireSilent(t, "colocated", Validate(Bundle{
+		requireSilent(t, "colocated", Validate(Bundle{Rules: openAnyEngine,
 			Scenario:   fixture(LoadScenario(ex("scenario.yaml"))),
 			Deployment: fixture(LoadDeployment(ex("deployment.yaml"))),
 			Model:      fixture(LoadModelGraph("testdata/models/llama-3.1-8b-instruct/graph.yaml")),
@@ -58,7 +58,7 @@ func TestDocExamplesValidate(t *testing.T) {
 		}))
 	})
 	t.Run("disaggregated", func(t *testing.T) {
-		requireSilent(t, "disaggregated", Validate(Bundle{
+		requireSilent(t, "disaggregated", Validate(Bundle{Rules: openAnyEngine,
 			Scenario:   fixture(LoadScenario(ex("scenario-disaggregated.yaml"))),
 			Deployment: fixture(LoadDeployment(ex("deployment-disaggregated.yaml"))),
 			Model:      fixture(LoadModelGraph("testdata/models/deepseek-v3/graph.yaml")),
@@ -78,7 +78,7 @@ func TestDocExamplesValidate(t *testing.T) {
 		}))
 	})
 	t.Run("replay", func(t *testing.T) {
-		requireSilent(t, "replay", Validate(Bundle{
+		requireSilent(t, "replay", Validate(Bundle{Rules: openAnyEngine,
 			Scenario: fixture(LoadScenario(ex("replay-binding.yaml"))),
 		}))
 	})
@@ -86,7 +86,7 @@ func TestDocExamplesValidate(t *testing.T) {
 		w := fixture(LoadCatalogWorkload(ex("workload-replay.yaml")))
 		requireSilent(t, "catalog replay", Validate(Bundle{ReplayWorkload: w.Replay}))
 		s := fixture(LoadScenario(ex("replay-reference.yaml")))
-		requireSilent(t, "replay reference", Validate(Bundle{Scenario: s}))
+		requireSilent(t, "replay reference", Validate(Bundle{Scenario: s, Rules: openAnyEngine}))
 		root := t.TempDir()
 		if err := os.MkdirAll(filepath.Join(root, "workloads"), 0o755); err != nil {
 			t.Fatal(err)
@@ -103,7 +103,7 @@ func TestDocExamplesValidate(t *testing.T) {
 		}
 	})
 	t.Run("acceptance pin", func(t *testing.T) {
-		requireSilent(t, "acceptance pin", Validate(Bundle{
+		requireSilent(t, "acceptance pin", Validate(Bundle{Rules: openAnyEngine,
 			Scenario: fixture(LoadScenario(ex("scenario-acceptance.yaml"))),
 		}))
 	})
@@ -134,7 +134,7 @@ func TestDocExamplesValidate(t *testing.T) {
 		}
 	})
 	t.Run("trace", func(t *testing.T) {
-		requireSilent(t, "trace", Validate(Bundle{
+		requireSilent(t, "trace", Validate(Bundle{Rules: openAnyEngine,
 			Scenario: fixture(LoadScenario(ex("trace-binding.yaml"))),
 		}))
 	})
@@ -202,12 +202,6 @@ var documented = map[string]struct {
 	"deployment.Deployment":       {typ: reflect.TypeOf(deployment.Deployment{})},
 	"deployment.Pool":             {typ: reflect.TypeOf(deployment.Pool{})},
 	"deployment.Parallelism":      {typ: reflect.TypeOf(deployment.Parallelism{})},
-	"deployment.Engine":           {typ: reflect.TypeOf(deployment.Engine{})},
-	"deployment.DBO":              {typ: reflect.TypeOf(deployment.DBO{})},
-	"deployment.EPLB":             {typ: reflect.TypeOf(deployment.EPLB{})},
-	"deployment.Speculative":      {typ: reflect.TypeOf(deployment.Speculative{})},
-	"deployment.EngramConfig":     {typ: reflect.TypeOf(deployment.EngramConfig{})},
-	"deployment.KVEvents":         {typ: reflect.TypeOf(deployment.KVEvents{})},
 	"deployment.Offload":          {typ: reflect.TypeOf(deployment.Offload{})},
 	"deployment.ConnectorOptions": {typ: reflect.TypeOf(deployment.ConnectorOptions{})},
 	"deployment.Tier":             {typ: reflect.TypeOf(deployment.Tier{})},
@@ -402,8 +396,10 @@ func TestDocEveryDocumentTypeHasATable(t *testing.T) {
 		reflect.TypeOf(measurement.MeasuredRun{}), reflect.TypeOf(measurement.Registry{}),
 		reflect.TypeOf(connector.Registry{}),
 	}
-	// Types whose wire form is not a mapping, so they have no key table.
-	notMappings := map[reflect.Type]bool{reflect.TypeOf(coefficient.Interval{}): true}
+	// Types whose wire form is not a mapping of this schema's keys, so they have no key table:
+	// an interval, and a pool's engine block, which is the engine model's and held unopened.
+	notMappings := map[reflect.Type]bool{reflect.TypeOf(coefficient.Interval{}): true,
+		reflect.TypeOf(deployment.EngineBlock{}): true}
 
 	have := map[reflect.Type]bool{}
 	for _, d := range documented {

@@ -54,38 +54,9 @@ jobs:
           BLIS_REGISTRY: ${{ github.workspace }}/blis-registry
         run: go test -v -run 'LoadRegistry' .
 
-  # The rules packs transcribe one engine release's configuration surface by hand.
-  # These tests re-derive those constants from a checkout and fail on any divergence:
-  # a value the pack accepts that the engine does not would validate a scenario that
-  # cannot launch, and the reverse would reject a valid one.
-  #
-  # Separate job because it needs the engine tree. The job above passes without it,
-  # and the tests there SKIP with a message naming what went unchecked, so a missing
-  # checkout is visible rather than silent.
-  constants-against-engine:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.24'
-      - name: check out the engine at the pinned release
-        uses: actions/checkout@v4
-        with:
-          repository: vllm-project/vllm
-          # The tag must match the version the pack under rules/ declares. A pack for
-          # a new release arrives with its own job rather than by moving this ref.
-          ref: v0.29.0
-          path: vllm-source
-          fetch-depth: 1
-      - name: verify pack constants
-        env:
-          VLLM_SOURCE: ${{ github.workspace }}/vllm-source
-          VLLM_SOURCE_REQUIRED: "1"
-        run: go test -v -run MatchSource ./rules/v0_29/
-
-  # The same check for the 0.31.0 pack, against its own release. Each pack is checked
-  # against the tag it describes, so neither job runs the other's package.
+  # The acceptance schedule and the kernel's DP padding are transcribed from vLLM v0.31.0; these
+  # tests re-derive them from a checkout and fail on any divergence. (The engine releases' rules
+  # packs, and their own constants checks, are the engine model's: blis-vllm's rules module.)
   constants-against-engine-v0_31:
     runs-on: ubuntu-latest
     steps:
@@ -104,7 +75,7 @@ jobs:
         env:
           VLLM_SOURCE: ${{ github.workspace }}/vllm-source
           VLLM_SOURCE_REQUIRED: "1"
-        run: go test -v -run MatchSource ./rules/v0_31/ ./spec/acceptance/ ./kernel/
+        run: go test -v -run MatchSource ./spec/acceptance/ ./kernel/
 
   # The replay descriptor's aiperf constants, re-derived from the aiperf release the
   # inferencex-agentx-mvp scenario is transcribed from.

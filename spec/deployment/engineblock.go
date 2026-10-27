@@ -71,6 +71,31 @@ func (b EngineBlock) Decode(v any) error {
 	return &yaml.TypeError{Errors: msgs}
 }
 
+// Equal reports whether two blocks hold the same YAML: the same keys, values, tags and
+// structure, whatever line, column or comment either was read with. Two absent blocks are
+// equal.
+func (b EngineBlock) Equal(o EngineBlock) bool {
+	return sameNode(b.node, o.node)
+}
+
+func sameNode(a, b *yaml.Node) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	if a.Kind != b.Kind || a.Value != b.Value || a.ShortTag() != b.ShortTag() || len(a.Content) != len(b.Content) {
+		return false
+	}
+	if (a.Alias == nil) != (b.Alias == nil) || a.Alias != nil && !sameNode(a.Alias, b.Alias) {
+		return false
+	}
+	for i := range a.Content {
+		if !sameNode(a.Content[i], b.Content[i]) {
+			return false
+		}
+	}
+	return true
+}
+
 // UnmarshalYAML holds the node as written.
 func (b *EngineBlock) UnmarshalYAML(n *yaml.Node) error {
 	*b = NewEngineBlock(n)

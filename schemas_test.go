@@ -1,7 +1,6 @@
 package blisschemas
 
 import (
-	"reflect"
 	"strings"
 	"testing"
 
@@ -21,15 +20,14 @@ func bundle() Bundle {
 			Kind: "Scenario", Name: "granite-230b-h200-tp8",
 			Model:         "granite-5-230b",
 			Coefficients:  []string{"cost-model-primitives-h200"},
-			EngineVersion: "0.29.0",
+			EngineVersion: "1.0.0",
 			Cluster:       scenario.Cluster{Hardware: "h200", Nodes: 1, GPUsPerNode: 8},
 		},
 		Deployment: &deployment.Deployment{
 			Kind: "Deployment", Name: "granite-230b-h200-tp8",
 			Pools: []deployment.Pool{{Role: deployment.RoleColocated, Nodes: 1,
 				Parallel: deployment.Parallelism{TP: 8, PP: 1, DP: 1},
-				Engine: deployment.Engine{CacheDType: "fp8", BlockSize: 16,
-					MaxNumBatchedTokens: 32768, GPUMemoryUtilization: 0.9}}},
+				Engine:   engineBlock("{backend: fast, block_size: 16, gpu_memory_utilization: 0.9}")}},
 		},
 		Model: &model.Graph{
 			Kind: "ModelGraph", Name: "granite-5-230b",
@@ -60,6 +58,8 @@ func bundle() Bundle {
 					Cite: "operator table", Role: vocab.RolePrimary}},
 			}},
 		}},
+		Rules:         testRulesFor,
+		RulesVersions: testRulesVersions,
 	}
 }
 
@@ -68,8 +68,8 @@ func TestValidBundlePasses(t *testing.T) {
 	if !rep.OK() {
 		t.Fatalf("a valid bundle was rejected:\n%s", renderAll(rep))
 	}
-	if rep.RulesApplied != "0.29.0" {
-		t.Errorf("RulesApplied = %q, want 0.29.0", rep.RulesApplied)
+	if rep.RulesApplied != "1.0.0" {
+		t.Errorf("RulesApplied = %q, want 1.0.0", rep.RulesApplied)
 	}
 }
 
@@ -99,7 +99,7 @@ func TestUnknownEngineVersionIsReported(t *testing.T) {
 func TestRulesDoNotRunOnMalformedDocuments(t *testing.T) {
 	b := bundle()
 	b.Scenario.Kind = "NotAScenario"
-	b.Deployment.Pools[0].Engine.All2AllBackend = "telepathy" // would fire a rule
+	b.Deployment.Pools[0].Engine = engineBlock("{backend: telepathy}") // would fire a rule
 	rep := Validate(b)
 	if rep.Field.OK() {
 		t.Fatal("expected a field problem")
@@ -116,7 +116,7 @@ func TestRulesDoNotRunOnMalformedDocuments(t *testing.T) {
 // from one that a particular engine would refuse.
 func TestLayersAreDistinguishable(t *testing.T) {
 	b := bundle()
-	b.Deployment.Pools[0].Engine.All2AllBackend = "telepathy"
+	b.Deployment.Pools[0].Engine = engineBlock("{backend: telepathy}")
 	rep := Validate(b)
 	if !rep.Field.OK() {
 		t.Fatalf("field layer should pass; got:\n%s", rep.Field.Error())
@@ -131,19 +131,62 @@ func TestLayersAreDistinguishable(t *testing.T) {
 	}
 }
 
-func TestRegisteredVersions(t *testing.T) {
-	vs := rules.Versions()
-	if len(vs) == 0 {
-		t.Fatal("no rules pack is registered, so no scenario can be rule-checked")
+// TestEngineRulesAreRequired: a scenario names an engine release, and this schema holds the
+// pools' engine blocks unopened, so without the release's rules nothing checks them. A bundle
+// with a scenario and no rules is refused, by a named rule, rather than passed unchecked.
+func TestEngineRulesAreRequired(t *testing.T) {
+	b := bundle()
+	b.Rules, b.RulesVersions = nil, nil
+	b.Deployment.Pools[0].Engine = engineBlock("{block_size: -1, backend: telepathy}")
+	rep := Validate(b)
+	if rep.OK() {
+		t.Fatal("a bundle with no engine rules passed")
+	}
+	if rep.RulesApplied != "" {
+		t.Errorf("RulesApplied = %q, want empty", rep.RulesApplied)
 	}
 	found := false
-	for _, v := range vs {
-		if v == "0.29.0" {
+	for _, p := range rep.Rule.Errors() {
+		if p.Rule == "engine-rules-given" && strings.Contains(p.Message, `"1.0.0"`) {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("0.29.0 is not registered; got %v", vs)
+		t.Errorf("want an engine-rules-given error naming the release; got:\n%s", renderAll(rep))
+	}
+	// A bundle with no scenario names no release and needs no rules.
+	if rep := Validate(Bundle{Chip: b.Chip}); !rep.OK() {
+		t.Errorf("a chip-only bundle needs no engine rules:\n%s", renderAll(rep))
+	}
+}
+
+// TestEngineBlockIsCheckedByTheRules: the engine block's field checks are the release's, run
+// in the field layer at the deployment's paths, and a block the release's rules cannot decode
+// is a field problem too.
+func TestEngineBlockIsCheckedByTheRules(t *testing.T) {
+	b := bundle()
+	b.Deployment.Pools[0].Engine = engineBlock("{block_size: -1, gpu_memory_utilization: 1.5}")
+	rep := Validate(b)
+	var paths []string
+	for _, p := range rep.Field.Errors() {
+		paths = append(paths, p.Path)
+	}
+	for _, want := range []string{"deployment.pools[0].engine.block_size", "deployment.pools[0].engine.gpu_memory_utilization"} {
+		found := false
+		for _, p := range paths {
+			found = found || p == want
+		}
+		if !found {
+			t.Errorf("no field problem at %s; got %v", want, paths)
+		}
+	}
+	b.Deployment.Pools[0].Engine = engineBlock("{blok_size: 16}")
+	rep = Validate(b)
+	if rep.Field.OK() || !strings.Contains(rep.Field.Error(), "blok_size") {
+		t.Errorf("an unknown engine key passed the field layer:\n%s", renderAll(rep))
+	}
+	if len(rep.Rule.All()) != 0 {
+		t.Errorf("rules ran over an engine block that does not decode:\n%s", rep.Rule.Error())
 	}
 }
 
@@ -165,7 +208,7 @@ func TestDeploymentWithoutScenarioIsRejected(t *testing.T) {
 	}
 
 	// The mirror: a scenario with no deployment is a complete problem and still validates.
-	if rep := Validate(Bundle{Scenario: b.Scenario}); !rep.OK() {
+	if rep := Validate(Bundle{Scenario: b.Scenario, Rules: testRulesFor}); !rep.OK() {
 		t.Fatalf("a scenario with no deployment should pass:\n%s", renderAll(rep))
 	}
 }
@@ -244,32 +287,6 @@ func TestEngineMustFitItsPool(t *testing.T) {
 	}
 }
 
-// TestPCPWithDPIsAVersionVerdict pins which layer answers whether prefill-context
-// parallelism may be combined with data parallelism. The schema admits it, because later
-// engines run it and llm-d deploys it; a scenario pinned to v0.29.0, which refuses it at
-// startup, is told so by that release's rules — as a rule problem, not a field one.
-func TestPCPWithDPIsAVersionVerdict(t *testing.T) {
-	b := bundle()
-	b.Scenario.Cluster.Nodes = 4
-	b.Scenario.Cluster.Fabric = "ib-400g"
-	b.Deployment.Pools[0].Nodes = 4
-	b.Deployment.Pools[0].Parallel = deployment.Parallelism{TP: 1, PP: 1, DP: 4, DPLocal: 1,
-		PCP: 8, DCP: 8}
-	rep := Validate(b)
-	if !rep.Field.OK() {
-		t.Fatalf("field validation must admit DP 4 x PCP 8:\n%s", renderAll(rep))
-	}
-	found := false
-	for _, p := range rep.Rule.Errors() {
-		if p.Rule == "pcp-excludes-data-parallelism" {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("the v0.29 rule should refuse DP 4 x PCP 8:\n%s", renderAll(rep))
-	}
-}
-
 func renderAll(r Report) string {
 	var b strings.Builder
 	for _, p := range r.Problems() {
@@ -279,8 +296,8 @@ func renderAll(r Report) string {
 	return b.String()
 }
 
-// fakeRules is a non-Pack EngineRules that records the version it was asked for and reports
-// one rule finding, so a test can tell the caller's rules ran rather than the packs here.
+// fakeRules is an EngineRules that records the version it was asked for and reports one rule
+// finding, so a test can tell the caller's rules ran. It takes every engine block as valid.
 type fakeRules struct {
 	rules.EngineRules
 	version string
@@ -292,38 +309,29 @@ func (f fakeRules) Check(rules.Input) *rules.Problems {
 	p.RuleErrorf("caller-rule", "the caller's rules ran for %s", f.version)
 	return p
 }
+func (f fakeRules) CheckEngineBlock(string, deployment.EngineBlock) *rules.Problems { return nil }
+func (f fakeRules) DraftTokens(deployment.EngineBlock) int                          { return 0 }
 
-// A caller that states its own rules gets them run, never this module's packs (inference-sim#2021 B4: the
-// packs move to the engine model); a version they do not know is reported, not passed in
-// silence; and a caller that states none still gets the packs here.
+// The caller's rules are what run: asked for the scenario's release, their findings reported,
+// and a release they do not know reported rather than passed in silence.
 func TestValidate_RunsTheCallersRules(t *testing.T) {
 	var asked string
 	b := bundle()
 	b.Rules = func(v string) rules.EngineRules { asked = v; return fakeRules{version: v} }
 	rep := Validate(b)
-	if asked != "0.29.0" || rep.RulesApplied != "0.29.0" {
-		t.Fatalf("asked %q, applied %q; want the scenario's 0.29.0", asked, rep.RulesApplied)
+	if asked != "1.0.0" || rep.RulesApplied != "1.0.0" {
+		t.Fatalf("asked %q, applied %q; want the scenario's 1.0.0", asked, rep.RulesApplied)
 	}
-	if !strings.Contains(rep.Rule.Error(), "the caller's rules ran for 0.29.0") {
+	if !strings.Contains(rep.Rule.Error(), "the caller's rules ran for 1.0.0") {
 		t.Errorf("the caller's rules did not run:\n%s", rep.Rule.Error())
 	}
 
 	b.Rules = func(string) rules.EngineRules { return nil }
-	b.RulesVersions = func() []string { return []string{"0.32.0"} }
+	b.RulesVersions = func() []string { return []string{"1.1.0"} }
 	rep = Validate(b)
 	if rep.RulesApplied != "" || !strings.Contains(rep.Rule.Error(), "no rules pack") ||
-		!strings.Contains(rep.Rule.Error(), "[0.32.0]") {
+		!strings.Contains(rep.Rule.Error(), "[1.1.0]") {
 		t.Errorf("a version the caller's rules do not know: applied %q, findings:\n%s", rep.RulesApplied, rep.Rule.Error())
-	}
-	var nilPack *rules.Pack
-	b.Rules = func(string) rules.EngineRules { return nilPack }
-	if rep = Validate(b); rep.RulesApplied != "" || !strings.Contains(rep.Rule.Error(), "no rules pack") {
-		t.Errorf("a typed-nil pack must read as unknown: applied %q", rep.RulesApplied)
-	}
-
-	b.Rules, b.RulesVersions = nil, nil
-	if rep = Validate(b); rep.RulesApplied != "0.29.0" || !rep.OK() {
-		t.Errorf("no caller rules: applied %q, want this module's 0.29.0 pack", rep.RulesApplied)
 	}
 }
 
@@ -332,28 +340,28 @@ type nilCheckRules struct{ fakeRules }
 
 func (nilCheckRules) Check(rules.Input) *rules.Problems { return nil }
 
-// ptrRules is a rules type of another pointer type, as an engine model's own rules may be.
+// ptrRules is a rules type of a pointer type, as an engine model's own rules may be.
 type ptrRules struct{ fakeRules }
 
 func (r *ptrRules) EngineVersion() string             { return r.version }
 func (r *ptrRules) Check(rules.Input) *rules.Problems { return &validate.Problems{} }
 
-// The caller's rules are held to what this module's own packs guarantee: a report whose rule
-// layer is never nil, an unknown release named as unknown whatever the rules' concrete type,
-// and rules answering for a release other than the scenario's refused rather than applied.
-func TestValidate_HoldsTheCallersRulesToThePacksContract(t *testing.T) {
+// The caller's rules are held to the contract: a report whose rule layer is never nil, an
+// unknown release named as unknown whatever the rules' concrete type, and rules answering for a
+// release other than the scenario's refused rather than applied.
+func TestValidate_HoldsTheCallersRulesToTheContract(t *testing.T) {
 	b := bundle()
 	b.Rules = func(v string) rules.EngineRules { return nilCheckRules{fakeRules{version: v}} }
 	rep := Validate(b)
-	if rep.Rule == nil || !rep.OK() || rep.RulesApplied != "0.29.0" || len(rep.Problems()) != 0 {
-		t.Errorf("rules whose Check returns nil: rule layer %v, applied %q; want an empty layer and 0.29.0", rep.Rule, rep.RulesApplied)
+	if rep.Rule == nil || !rep.OK() || rep.RulesApplied != "1.0.0" || len(rep.Problems()) != 0 {
+		t.Errorf("rules whose Check returns nil: rule layer %v, applied %q; want an empty layer and 1.0.0", rep.Rule, rep.RulesApplied)
 	}
 
 	var typedNil *ptrRules
-	b.Rules = func(string) rules.EngineRules { return typedNil }
+	b.Rules, b.RulesVersions = func(string) rules.EngineRules { return typedNil }, nil
 	rep = Validate(b)
 	if rep.RulesApplied != "" || !strings.Contains(rep.Rule.Error(), "no rules pack") || !rep.OK() {
-		t.Errorf("a typed nil of a non-Pack rules type must read as unknown: applied %q, findings:\n%s", rep.RulesApplied, rep.Rule.Error())
+		t.Errorf("a typed nil rules value must read as unknown: applied %q, findings:\n%s", rep.RulesApplied, rep.Rule.Error())
 	}
 	// With no RulesVersions the finding names no registered versions, rather than an empty list
 	// that would read as a rules source holding none.
@@ -361,47 +369,20 @@ func TestValidate_HoldsTheCallersRulesToThePacksContract(t *testing.T) {
 		t.Errorf("no RulesVersions: the finding must not list registered versions:\n%s", rep.Rule.Error())
 	}
 
-	for _, answered := range []string{"0.31.0", ""} {
+	for _, answered := range []string{"1.1.0", ""} {
 		b.Rules = func(string) rules.EngineRules { return fakeRules{version: answered} }
 		rep = Validate(b)
 		if rep.OK() || rep.RulesApplied != "" {
-			t.Errorf("rules answering for %q to a 0.29.0 scenario: OK %v, applied %q; want a refusal and nothing applied",
+			t.Errorf("rules answering for %q to a 1.0.0 scenario: OK %v, applied %q; want a refusal and nothing applied",
 				answered, rep.OK(), rep.RulesApplied)
 		}
-		for _, frag := range []string{"engine-version-matches", `"0.29.0"`, `"` + answered + `"`} {
+		for _, frag := range []string{"engine-version-matches", `"1.0.0"`, `"` + answered + `"`} {
 			if !strings.Contains(rep.Rule.Error(), frag) {
 				t.Errorf("rules answering for %q: the refusal must name %s; findings:\n%s", answered, frag, rep.Rule.Error())
 			}
 		}
 		if strings.Contains(rep.Rule.Error(), "caller's rules ran") {
-			t.Errorf("rules answering for %q were run against a 0.29.0 scenario", answered)
-		}
-	}
-}
-
-// The caller's rules, given this module's own lookup, report exactly what the in-module path
-// does: the same findings with the same rule, severity and path, the same applied release, the
-// same verdict. For a known release with a rule that fires, and for an unknown one.
-func TestValidate_CallersPathMatchesTheModulesPacks(t *testing.T) {
-	for _, version := range []string{"0.29.0", "0.31.0", "99.0.0"} {
-		b := bundle()
-		b.Scenario.EngineVersion = version
-		b.Deployment.Pools[0].Engine.All2AllBackend = "telepathy"
-		own := Validate(b)
-		b.Rules = func(v string) rules.EngineRules {
-			if p := rules.Lookup(v); p != nil {
-				return p
-			}
-			return nil
-		}
-		b.RulesVersions = rules.Versions
-		caller := Validate(b)
-		if !reflect.DeepEqual(own.Rule.All(), caller.Rule.All()) || own.RulesApplied != caller.RulesApplied || own.OK() != caller.OK() {
-			t.Errorf("%s: the caller's path differs from the module's:\n  module: applied %q ok %v %v\n  caller: applied %q ok %v %v",
-				version, own.RulesApplied, own.OK(), own.Rule.All(), caller.RulesApplied, caller.OK(), caller.Rule.All())
-		}
-		if version != "99.0.0" && len(own.Rule.All()) == 0 {
-			t.Errorf("%s: non-vacuity: the planted backend must make a rule fire", version)
+			t.Errorf("rules answering for %q were run against a 1.0.0 scenario", answered)
 		}
 	}
 }

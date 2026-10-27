@@ -46,20 +46,3 @@ func TestGeneratedDocsAreCurrent(t *testing.T) {
 		t.Fatal(err)
 	}
 }
-
-func TestVersionLess(t *testing.T) {
-	for _, c := range []struct {
-		a, b string
-		less bool
-	}{
-		{"0.29.0", "0.100.0", true},
-		{"0.100.0", "0.29.0", false},
-		{"0.29.0", "0.29.1", true},
-		{"0.29.0", "0.29.0", false},
-		{"1.0.0", "0.99.9", false},
-	} {
-		if got := versionLess(c.a, c.b); got != c.less {
-			t.Errorf("versionLess(%q, %q) = %v, want %v", c.a, c.b, got, c.less)
-		}
-	}
-}

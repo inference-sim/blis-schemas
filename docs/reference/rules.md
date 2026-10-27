@@ -1,8 +1,9 @@
-# Rules packs
+# Engine rules
 
-<p class="lede">A rules pack holds what one engine release accepts and what it refuses. A
-scenario's <code>engine_version</code> selects the pack; a version with no pack is reported
-as unchecked rather than assumed fine.</p>
+<p class="lede">An engine release's rules hold what that release accepts and what it refuses.
+They live with the engine model that owns the release, and a validator passes them in for the
+release a scenario's <code>engine_version</code> names (<code>Bundle.Rules</code>). This schema
+registers none of its own.</p>
 
 Rules run after the field layer passes and read the scenario, the deployment and the model
 graph together. Each problem names the rule that reported it. A rule that reports an
@@ -11,37 +12,23 @@ would price with the wrong constants. A rule that reports a *warning* describes 
 engine would run differently from what the document suggests, or a name the engine may
 accept from an out-of-tree plugin.
 
-One problem comes from no pack:
+A pool's `engine` block is opaque to this schema. The release's rules open it and check it
+(`EngineRules.CheckEngineBlock`), in the field layer, at the block's paths below
+`deployment.pools[i].engine`.
+
+Three problems come from no release's rules:
+
+`engine-rules-given`
+:   *error.* The bundle has a scenario but no engine rules were given. Nothing checked its
+    engine blocks or its version-specific rules, so it does not pass.
 
 `engine-version-known`
-:   *warning.* No pack is registered for the scenario's `engine_version`. Field validation
-    passed, but no version-specific rule ran.
+:   *warning.* The rules given know no release of the scenario's `engine_version`. Field
+    validation passed, but no version-specific rule ran.
 
-Everything below is generated from the registered packs. Each rule's text is the reason
-its source gives for it.
+`engine-version-matches`
+:   *error.* The rules given answered for a release other than the scenario's. No rule was
+    applied.
 
---8<-- "docs/generated/rules.md"
-
-The constants in each pack are transcribed from the engine's source. A test re-derives most
-of them from a checkout of the engine and fails on any difference in either direction; CI
-runs it against each pack's tagged release. For 0.31.0 the speculative-method lists are the
-engine's whole literals and are re-derived too. Each architecture's sequence-parallelism
-condition is parsed from its model module clause by clause, and the facts the collectives
-rule rests on are pinned. For the startup refusals the rules encode, the test checks that
-each refusal's message is still in the source, not the condition that triggers it. The 0.29.0 pack's speculative-method
-lists, and both packs' all-reduce backend names, are not re-derived and rest on review
-alone. See [A new engine release](../contributing/engine-release.md).
-
-Besides checks, a pack carries version-specific arithmetic a consumer applies:
-`ResolveCacheDType`, `WindowPagesPerRequest`, `ModelSequenceParallel`, `CUDAGraphCaptureSizes`,
-which resolves the CUDA graph capture sizes a deployment's stated knobs run with, and
-`KVCacheGroups`,
-which groups a graph's stated caches into the KV cache groups that share one block pool
-and returns the bytes each block costs. Its tests compare it with groupings computed by
-running the engine's own packing functions, and pin those functions by digest. The
-goldens stub the step before them, mapping each cache to a spec (its kind, block size and
-page bytes), with the same mapping `KVCacheGroups` uses, so they prove the packing and the
-block size given that mapping, not the mapping; the engine facts the mapping rests on are
-pinned by source tests instead.
-
-Source: [`rules`](https://github.com/inference-sim/blis-schemas/tree/main/rules).
+For vLLM the rules packs, their constants and their reference are blis-vllm's
+(`rules/v0_*`).

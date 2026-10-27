@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/inference-sim/blis-schemas/spec/deployment"
 )
 
 func decodeStrict(t *testing.T, b []byte, dst any) {
@@ -46,7 +48,9 @@ func TestGoldenRoundTrip(t *testing.T) {
 			}
 			got := reflect.New(reflect.TypeOf(want).Elem()).Interface()
 			decodeStrict(t, golden, got)
-			if !reflect.DeepEqual(got, want) {
+			// A pool's engine block is held as a YAML node, which records the line it was read
+			// at; compare what the run holds, with each block compared by its content.
+			if !reflect.DeepEqual(withoutEngineBlocks(got), withoutEngineBlocks(want)) || !sameEngineBlocks(got, want) {
 				t.Fatalf("%s does not decode to the fixture", path)
 			}
 			again, err := Marshal(got)
@@ -78,4 +82,40 @@ func TestUnknownFieldIsAnError(t *testing.T) {
 	if err := dec.Decode(&r); err == nil {
 		t.Fatal("an unknown field decoded silently")
 	}
+}
+
+// withoutEngineBlocks is a copy of a measured run with its deployment's engine blocks cleared,
+// for a comparison that takes the blocks separately (sameEngineBlocks). Other documents pass
+// through.
+func withoutEngineBlocks(v any) any {
+	r, ok := v.(*MeasuredRun)
+	if !ok || r.Deployment == nil {
+		return v
+	}
+	c := *r
+	d := *r.Deployment
+	d.Pools = append([]deployment.Pool(nil), d.Pools...)
+	for i := range d.Pools {
+		d.Pools[i].Engine = deployment.EngineBlock{}
+	}
+	c.Deployment = &d
+	return &c
+}
+
+// sameEngineBlocks reports whether two measured runs' pools hold the same engine blocks.
+func sameEngineBlocks(a, b any) bool {
+	ra, okA := a.(*MeasuredRun)
+	rb, okB := b.(*MeasuredRun)
+	if !okA || !okB || ra.Deployment == nil || rb.Deployment == nil {
+		return true
+	}
+	if len(ra.Deployment.Pools) != len(rb.Deployment.Pools) {
+		return false
+	}
+	for i := range ra.Deployment.Pools {
+		if !ra.Deployment.Pools[i].Engine.Equal(rb.Deployment.Pools[i].Engine) {
+			return false
+		}
+	}
+	return true
 }

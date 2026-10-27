@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/inference-sim/blis-schemas/rules"
 	"github.com/inference-sim/blis-schemas/spec/deployment"
 	"github.com/inference-sim/blis-schemas/spec/model"
 	"github.com/inference-sim/blis-schemas/spec/scenario"
@@ -106,7 +105,6 @@ func TestV41KVPerContextToken(t *testing.T) {
 // carries every input it needs. One decode token in flight and no extra retention.
 func TestV41WindowRingTerm(t *testing.T) {
 	g := v41(t)
-	pack := rules.Lookup("0.31.0")
 	kinds := map[string]model.LayerKind{}
 	for _, lk := range g.LayerKinds {
 		kinds[lk.ID] = lk
@@ -123,7 +121,7 @@ func TestV41WindowRingTerm(t *testing.T) {
 					if !c.Owned || c.Kind != model.CacheWindow {
 						continue
 					}
-					pages := pack.WindowPagesPerRequest(c, engineBlock, inFlight, 0, maxModelLen)
+					pages := windowPagesPerRequest(c, engineBlock, inFlight, maxModelLen)
 					page := c.BlockSize * c.BytesPerEntry
 					if a := c.PageAlignment; a > 0 {
 						page = (page + a - 1) / a * a
@@ -138,6 +136,17 @@ func TestV41WindowRingTerm(t *testing.T) {
 	if want := int64(43 * 6 * 19008); total != want {
 		t.Errorf("window rings hold %d B per request, want %d", total, want)
 	}
+}
+
+// windowPagesPerRequest is the admission cap the comment above states, applied as a consumer
+// applies it: cdiv(min(window - 1 + inFlight, maxModelLen), block) + 1, with no extra retention.
+func windowPagesPerRequest(c model.Cache, engineBlock, inFlight, maxModelLen int) int {
+	block := c.BlockSize
+	if block < 1 {
+		block = engineBlock
+	}
+	tokens := min(c.Window-1+inFlight, maxModelLen)
+	return (tokens+block-1)/block + 1
 }
 
 // TestV41WeightBytes is #54's case: MXFP4 experts at 0.53125 B per parameter, FP8 weights
@@ -243,36 +252,24 @@ func TestV41ArchOverride(t *testing.T) {
 	}
 }
 
-// TestV41BundleOnEngine031 validates the graph with a deployment the v0.31.0 pack checks:
-// dspark is an accepted method, and Engram rules see the Engram lookups.
-func TestV41BundleOnEngine031(t *testing.T) {
+// TestV41BundleValidates: the V4.1 graph and a deployment of it validate together, field by
+// field; the engine block is the release's rules', which the caller supplies.
+func TestV41BundleValidates(t *testing.T) {
 	g := v41(t)
 	s := &scenario.Scenario{
 		Kind: "Scenario", Name: "v41", Model: "deepseek-v4.1-flash",
-		Coefficients: []string{"c"}, EngineVersion: "0.31.0",
+		Coefficients: []string{"c"}, EngineVersion: "1.0.0",
 		Cluster: scenario.Cluster{Hardware: "h200", Nodes: 1, GPUsPerNode: 8},
 	}
-	offload := true
 	d := &deployment.Deployment{Kind: "Deployment", Name: "v41", Pools: []deployment.Pool{{
 		Role: deployment.RoleColocated, Nodes: 1,
 		Parallel: deployment.Parallelism{TP: 8, PP: 1, DP: 1},
-		Engine: deployment.Engine{
-			MaxModelLen:  deployment.MaxModelLenAuto,
-			Speculative:  &deployment.Speculative{Method: "dspark", NumSpecTokens: 5},
-			EngramConfig: &deployment.EngramConfig{CPUOffload: &offload},
-		},
+		Engine:   engineBlock("{backend: fast, draft_tokens: 5}"),
 	}}}
-	rep := Validate(Bundle{Scenario: s, Deployment: d, Model: g})
-	requireSilent(t, "v41 on 0.31.0", rep)
-	if rep.RulesApplied != "0.31.0" {
-		t.Errorf("RulesApplied = %q, want 0.31.0", rep.RulesApplied)
-	}
-
-	// The same deployment with dual-batch overlap does not start beside Engram.
-	d.Pools[0].Engine.DBO = &deployment.DBO{Enabled: true}
-	rep = Validate(Bundle{Scenario: s, Deployment: d, Model: g})
-	if rep.Rule.OK() {
-		t.Error("DBO beside Engram passed the 0.31.0 rules")
+	rep := Validate(Bundle{Scenario: s, Deployment: d, Model: g, Rules: testRulesFor})
+	requireSilent(t, "v41", rep)
+	if rep.RulesApplied != "1.0.0" {
+		t.Errorf("RulesApplied = %q, want 1.0.0", rep.RulesApplied)
 	}
 }
 
