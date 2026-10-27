@@ -218,7 +218,7 @@ func (d *Deployment) ValidateAgainstCluster(c ClusterConstraints) *validate.Prob
 // (get_physical_gpu_ids_for_local_dp_rank). That share depends on the engine's node
 // count n, which the schema does not carry and the launch chooses:
 //
-//   - n is 1 for each process llm-d starts — one vLLM per pod, joined by
+//   - n is 1 for each process llm-d starts — one engine per pod, joined by
 //     --data-parallel-start-rank — so local_world is the whole replica.
 //   - For n above 1, the engine splits each replica over n / (dp / dp_local) nodes
 //     (nnodes_within_dp); that must divide world, which the multiprocessing executor
@@ -227,7 +227,7 @@ func (d *Deployment) ValidateAgainstCluster(c ClusterConstraints) *validate.Prob
 // So the bound asserted is: some n from 1 to the pool's node count gives a split under
 // which every local replica's devices lie on the node. That refuses exactly what no
 // launch can place — including a split that would need more nodes than the pool owns —
-// and nothing the engine runs. It is the same at v0.29.0, which rounds n / (dp /
+// and nothing the engine runs. It is the same in a release that rounds n / (dp /
 // dp_local) down, and later releases, which require it to divide: rounding n down to a
 // multiple gives the same split, so the set of placeable layouts is identical.
 //
@@ -520,7 +520,7 @@ func validateParallelism(p *validate.Problems, at string, pl Parallelism) {
 		p.Field(at+".parallel", "context-parallel widths must not be negative")
 	}
 	// Whether prefill-context parallelism may be combined with data parallelism is
-	// not a field check: it depends on the engine release. v0.29.0 refuses it; the
+	// not a field check: it depends on the engine release. An earlier release refuses it; the
 	// engine supports it from e6dc16cebd, and llm-d deploys it (DP 4 x PCP 8). A
 	// release that refuses it says so in its rules pack.
 	validateDecodeContextParallel(p, at, pl)
@@ -661,13 +661,5 @@ func (d *Deployment) validateOffload(p *validate.Problems) {
 	}
 	if o.PrefetchDepth < 0 {
 		p.Field("offload.prefetch_depth", "must not be negative")
-	}
-	if c := o.ConnectorOptions; c != nil {
-		if c.BlocksPerChunk < 0 {
-			p.Field("offload.connector_options.blocks_per_chunk", "must not be negative; omit it, or 0, for the connector's default")
-		}
-		if f := c.KVLoadFailurePolicy; f != "" && !kvLoadFailurePolicies[f] {
-			p.Field("offload.connector_options.kv_load_failure_policy", "%q is not recompute or fail", f)
-		}
 	}
 }

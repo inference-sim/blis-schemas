@@ -49,8 +49,8 @@ func (n Node) validateNodeCaches(p *validate.Problems, at string) {
 				p.Field(ca+".entries", "a state cache requires a positive entry count")
 			}
 		}
-		// Fixed per-request state is the writing layer's own: every vLLM compressor owns
-		// its ring (vllm/models/deepseek_v41/compressor.py), and a reader layer has no
+		// Fixed per-request state is the writing layer's own: every compressor owns
+		// its ring (models/deepseek_v41/compressor.py), and a reader layer has no
 		// compressor to read one with. A state cache marked as read would silently drop
 		// the ring's residency, so it is refused.
 		if c.Kind == CacheState && !c.Owned {
@@ -226,7 +226,7 @@ func readShape(c Cache) string {
 // validateWindowReads requires a sliding-window read to be exactly as wide as the window
 // cache it reads, with one exception the engine makes: a parallel-block drafter's query
 // reads the trailing window plus every position of its block, non-causally, so its read is
-// window + num_spec_tokens (vllm/v1/attention/backends/mla/sparse_swa.py;
+// window + num_spec_tokens (v1/attention/backends/mla/sparse_swa.py;
 // compressor_utils.py get_dspark_swa_index_width). That holds only for layer kinds the
 // draft stack alone runs; any other excess describes no read the engine makes.
 func (g *Graph) validateWindowReads(p *validate.Problems) {

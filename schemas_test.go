@@ -180,6 +180,21 @@ func TestEngineBlockIsCheckedByTheRules(t *testing.T) {
 			t.Errorf("no field problem at %s; got %v", want, paths)
 		}
 	}
+	// An offload's connector options are the release's to check too, at the offload's paths.
+	b.Deployment.Pools[0].Engine = engineBlock("{backend: fast}")
+	b.Scenario.Cluster.Storage = []string{"cpu_dram"}
+	b.Deployment.Offload = &deployment.Offload{Tiers: []deployment.Tier{{Device: "cpu_dram", Bytes: 1}},
+		ConnectorOptions: engineBlock("{blocks_per_chunk: -1}")}
+	rep = Validate(b)
+	found := false
+	for _, p := range rep.Field.Errors() {
+		found = found || p.Path == "deployment.offload.connector_options.blocks_per_chunk"
+	}
+	if !found {
+		t.Errorf("no field problem at deployment.offload.connector_options.blocks_per_chunk:\n%s", renderAll(rep))
+	}
+	b.Deployment.Offload, b.Scenario.Cluster.Storage = nil, nil
+
 	b.Deployment.Pools[0].Engine = engineBlock("{blok_size: 16}")
 	rep = Validate(b)
 	if rep.Field.OK() || !strings.Contains(rep.Field.Error(), "blok_size") {
@@ -311,6 +326,9 @@ func (f fakeRules) Check(rules.Input) *rules.Problems {
 }
 func (f fakeRules) CheckEngineBlock(string, deployment.EngineBlock) *rules.Problems { return nil }
 func (f fakeRules) DraftTokens(deployment.EngineBlock) int                          { return 0 }
+func (f fakeRules) CheckConnectorOptions(string, deployment.EngineBlock) *rules.Problems {
+	return nil
+}
 
 // The caller's rules are what run: asked for the scenario's release, their findings reported,
 // and a release they do not know reported rather than passed in silence.

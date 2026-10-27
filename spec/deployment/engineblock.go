@@ -10,12 +10,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// EngineBlock is a pool's engine: block, held unopened. Which keys it may carry, their
-// defaults and which values are valid are the engine model's to say, not this schema's: an
-// engine model opens the block when it builds an engine for the pool, and a schema that knew
-// one engine's keys would churn with that engine's releases. So the block passes through
-// this package unchanged: decoding a deployment keeps the node as written, and encoding it
-// writes the node back.
+// EngineBlock is a block of a deployment that belongs to its engine, held unopened: a pool's
+// engine: block, or an offload's connector_options. Which keys it may carry, their defaults
+// and which values are valid are the engine model's to say, not this schema's: an engine
+// model opens the block when it builds an engine, and a schema that knew one engine's keys
+// would churn with that engine's releases. So the block passes through this package
+// unchanged: decoding a deployment keeps the node as written, and encoding it writes the node
+// back.
 //
 // The zero value is an absent block.
 type EngineBlock struct {

@@ -43,6 +43,10 @@ type EngineRules interface {
 	// declare. at is the pool's path within the deployment, such as "pools[0]", and each
 	// finding is at a path below at + ".engine".
 	CheckEngineBlock(at string, b deployment.EngineBlock) *Problems
+	// CheckConnectorOptions is the release's checks of an offload's connector options, which
+	// this schema holds unopened as it does an engine block. at is the offload block's path,
+	// "offload", and each finding is at a path below at + ".connector_options".
+	CheckConnectorOptions(at string, b deployment.EngineBlock) *Problems
 	// DraftTokens is the speculative tokens a pool's engine block drafts per step, zero when
 	// it drafts none or does not decode.
 	DraftTokens(b deployment.EngineBlock) int

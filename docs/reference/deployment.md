@@ -80,24 +80,13 @@ blis-vllm's (`rules/engineconfig`, with its reference in blis-vllm's `docs/engin
 | `prefetch_depth` | integer | no | How many steps ahead a fetch is issued. |
 | `connector` | string | no | The KV connector that implements offload. |
 | `spec` | string | no | The offloading spec, such as `CPUOffloadingSpec`. |
-| `connector_options` | mapping | no | The connector's own options, below. |
+| `connector_options` | mapping | no | The connector's own options, held unopened for the engine model; see below. |
 
 ### `offload.connector_options`
 
-The options vLLM's `kv_transfer_config.kv_connector_extra_config` gives the offload connector.
-Each is optional and takes the connector's default when omitted; a misspelled one fails to load.
-
-<!-- fields: deployment.ConnectorOptions -->
-
-| Key | Type | Required | Meaning |
-|---|---|---|---|
-| `load_async` | boolean | no | Load a hit asynchronously (MooncakeStoreConnector; default true). |
-| `lookup_async` | boolean | no | Look a prefix up without blocking the scheduler (MooncakeStoreConnector; default false). |
-| `enable_offload` | boolean | no | Write KV to the store as well as read it (Mooncake; default false). |
-| `enable_cross_layers_blocks` | boolean | no | Store one block across all layers rather than per layer (MooncakeStoreConnector). |
-| `lazy_offload` | boolean | no | Defer a CPU write until the block is evicted (SimpleCPUOffloadConnector; default false). |
-| `blocks_per_chunk` | integer | no | GPU blocks per offload chunk (OffloadingConnector). Not negative; omitted or 0 is the connector's default. |
-| `kv_load_failure_policy` | string | no | What a failed KV load does: `recompute` the failed blocks, or `fail` the request (the default). |
+The offload connector's own options. This schema holds them unopened, as it does a pool's
+`engine` block, and the engine model's rules check them (`Bundle.Rules`). A problem in them
+is reported at its path below `deployment.offload.connector_options`.
 
 ### `offload.tiers`
 
@@ -162,8 +151,6 @@ A deployment is invalid if
 - a `prefill` pool is present and `pd_transfer` is absent;
 - `offload` is present with no tiers, a tier is unnamed or named twice, a tier's `bytes`
   is below 1, or `prefetch_depth` is negative;
-- `offload.connector_options.blocks_per_chunk` is negative, or its `kv_load_failure_policy`
-  is not `recompute` or `fail`.
 
 It draws a warning if expert parallelism is enabled but the derived width is 1. The checks of
 a pool's `engine` block are its engine model's.

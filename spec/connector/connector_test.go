@@ -10,11 +10,11 @@ import (
 func valid() *Registry {
 	return &Registry{Kind: "ConnectorRegistry", Name: "builtin", Connectors: map[string]Entry{
 		"OffloadingConnector": {
-			Upstream: UpstreamKVConnectorBaseV1, BehavesLike: "offloading",
+			Upstream: "KVConnectorBase_V1", BehavesLike: "offloading",
 			Roles: []Role{RoleOffload}, Evidence: "diff-test @ vLLM v0.32.0",
 		},
 		"NixlConnector": {
-			Upstream: UpstreamKVConnectorBaseV1, BehavesLike: "nixl-pull",
+			Upstream: "KVConnectorBase_V1", BehavesLike: "nixl-pull",
 			Roles: []Role{RolePDTransfer}, Evidence: "diff-test @ vLLM v0.32.0",
 		},
 	}}
@@ -44,9 +44,9 @@ func TestEachFailureModeIsRefused(t *testing.T) {
 		{"a connector name with surrounding spaces", func(r *Registry) {
 			r.Connectors[" NixlConnector "] = r.Connectors["NixlConnector"]
 		}, "connectors"},
-		{"an unknown upstream interface", func(r *Registry) {
+		{"no upstream interface", func(r *Registry) {
 			e := r.Connectors["NixlConnector"]
-			e.Upstream = "KVConnectorBase_V2"
+			e.Upstream = " "
 			r.Connectors["NixlConnector"] = e
 		}, "connectors.NixlConnector.upstream"},
 		{"no behaves_like", func(r *Registry) {

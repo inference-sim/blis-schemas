@@ -207,7 +207,7 @@ func (d *driver) step() error {
 
 // checkMembers checks who a decision names. A batch runs only requests the engine holds
 // (added and not finished), each once. It preempts only requests it holds and does not
-// run, each once: vLLM unschedules a request it preempts within the step. That holds for a
+// run, each once: the engine unschedules a request it preempts within the step. That holds for a
 // decision that runs nothing too, as a step that preempts every running request does.
 func (d *driver) checkMembers(b engine.Batch) error {
 	inBatch := map[string]bool{}

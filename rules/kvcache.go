@@ -7,7 +7,7 @@ import (
 )
 
 // KVCacheLayer is one engine KV cache layer: one owned cache of one layer of the graph.
-// vLLM registers each such cache as its own layer with its own spec.
+// the engine registers each such cache as its own layer with its own spec.
 type KVCacheLayer struct {
 	Name  string
 	Cache model.Cache
@@ -57,7 +57,7 @@ type KVCacheGroupsInput struct {
 	// BlockStrideAlignment is the least common multiple of the block_stride_alignment the
 	// engine's backends state for these layers, which the graph does not carry: on
 	// DeepSeek-V4.1 the indexer's lcm(512, page alignment) when indexer_sparse_logits is
-	// on (vllm/models/deepseek_v41/attention.py). Zero means none.
+	// on (models/deepseek_v41/attention.py). Zero means none.
 	BlockStrideAlignment int
 	// NumSpecTokens is the deployment's speculative K, which sizes a state cache's ring
 	// where the release derives it from K (KVCachePacking.StateRingFromSpecTokens). Nil

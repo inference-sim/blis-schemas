@@ -11,7 +11,7 @@
 // against the engine release. A connector with no such evidence is not registered.
 //
 // This package holds the shape only. The entries live with the engine model that owns the
-// behaviour (for vLLM, the blis-vllm module).
+// behaviour (the engine module that owns the engine model).
 package connector
 
 import (
@@ -21,18 +21,9 @@ import (
 	"github.com/inference-sim/blis-schemas/internal/validate"
 )
 
-// Upstream names the engine interface a connector implements.
+// Upstream names the engine interface a connector implements, as the engine names it. Which
+// interfaces exist is the engine module's to say, and it checks the name.
 type Upstream string
-
-// UpstreamKVConnectorBaseV1 is vLLM's connector interface, KVConnectorBase_V1
-// (vllm/distributed/kv_transfer/kv_connector/v1/base.py:180@5df63a72), which every built-in
-// connector and every connector loaded through kv_connector_module_path implements.
-const UpstreamKVConnectorBaseV1 Upstream = "KVConnectorBase_V1"
-
-var upstreams = map[Upstream]bool{UpstreamKVConnectorBaseV1: true}
-
-// Valid reports whether u is a recognized engine connector interface.
-func (u Upstream) Valid() bool { return upstreams[u] }
 
 // Role is what a deployment uses a connector for.
 type Role string
@@ -43,7 +34,7 @@ const (
 	// RolePDTransfer: moving KV from a prefill engine to a decode engine
 	// (pd_transfer.connector).
 	RolePDTransfer Role = "pd_transfer"
-	// RoleComposite: composing other connectors, as vLLM's MultiConnector does.
+	// RoleComposite: composing other connectors, as the engine's MultiConnector does.
 	RoleComposite Role = "composite"
 )
 
@@ -56,7 +47,7 @@ func (r Role) Valid() bool { return roles[r] }
 type Registry struct {
 	Kind string `yaml:"kind"` // "ConnectorRegistry"
 	Name string `yaml:"name"`
-	// Connectors maps a connector name, exactly as the engine registers it (for vLLM,
+	// Connectors maps a connector name, exactly as the engine registers it (its
 	// KVConnectorFactory.register_connector), to its entry.
 	Connectors map[string]Entry `yaml:"connectors"`
 }
@@ -70,7 +61,7 @@ type Entry struct {
 	BehavesLike string `yaml:"behaves_like"`
 	// Roles are what a deployment may use the connector for.
 	Roles []Role `yaml:"roles"`
-	// Evidence is how the entry earned BehavesLike, such as "diff-test @ vLLM v0.32.0".
+	// Evidence is how the entry earned BehavesLike, such as a differential test against the engine release.
 	Evidence string `yaml:"evidence"`
 }
 
@@ -128,8 +119,8 @@ func (r *Registry) Validate() *validate.Problems {
 			continue
 		}
 		at := "connectors." + name
-		if !e.Upstream.Valid() {
-			p.Field(at+".upstream", "%q is not a known connector interface (%s)", e.Upstream, UpstreamKVConnectorBaseV1)
+		if strings.TrimSpace(string(e.Upstream)) == "" {
+			p.Field(at+".upstream", "required: the engine interface the connector implements")
 		}
 		if strings.TrimSpace(e.BehavesLike) == "" {
 			p.Field(at+".behaves_like", "required: the engine model that reproduces this connector")

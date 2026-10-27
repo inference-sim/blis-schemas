@@ -124,7 +124,7 @@ func (s *TraceServer) Validate() *validate.Problems {
 	// gpu_memory_utilization is a non-pointer float, so an omitted one is zero. Zero is
 	// the unset sentinel and a stated fraction lies in (0, 1], so the accepted range is
 	// [0, 1]; the message states [0, 1] rather than (0, 1] so it does not read as
-	// rejecting the zero the check deliberately allows. Mirrors deployment.Engine.
+	// rejecting the zero the check deliberately allows. The engine block uses the same sentinel.
 	if p.FiniteField("gpu_memory_utilization", s.GPUMemoryUtilization) &&
 		(s.GPUMemoryUtilization < 0 || s.GPUMemoryUtilization > 1) {
 		p.Field("gpu_memory_utilization",

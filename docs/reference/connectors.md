@@ -28,7 +28,7 @@ live with the engine model, in blis-vllm.
 
 | Key | Type | Required | Meaning |
 |---|---|---|---|
-| `upstream` | string | yes | The engine interface the connector implements. `KVConnectorBase_V1` is vLLM's. |
+| `upstream` | string | yes | The engine interface the connector implements, as the engine names it. Which interfaces exist is the engine module's to check. |
 | `behaves_like` | string | yes | The engine model that reproduces the connector's behaviour, in the engine module that owns the registry. |
 | `roles` | list | yes | What a deployment may use it for: `offload`, `pd_transfer`, `composite`. Each at most once. |
 | `evidence` | string | yes | How the entry earned `behaves_like`, such as `diff-test @ vLLM v0.32.0`. |
@@ -37,7 +37,7 @@ live with the engine model, in blis-vllm.
 
 A registry is invalid if `kind` is not `ConnectorRegistry`, `name` is empty, it has no
 connectors, a connector name is blank or has surrounding spaces (names match the engine's
-exactly), or an entry names an unknown `upstream`, omits
+exactly), or an entry omits `upstream`,
 `behaves_like` or `evidence`, has no roles, or lists an unknown or repeated role.
 
 Source: [`spec/connector`](https://github.com/inference-sim/blis-schemas/tree/main/spec/connector).

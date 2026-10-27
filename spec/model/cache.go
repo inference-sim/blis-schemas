@@ -15,7 +15,7 @@ import (
 // It exists because an attention node's read shape (heads, window, compress_ratio,
 // index_topk) does not say what is RESIDENT. A consumer that had only the read shape had
 // to treat every attention layer as owning one full-length cache of the read width. For
-// DeepSeek-V4.1-Flash on vLLM v0.31.0 that is 40 x 584 = 23,360 B per context token,
+// DeepSeek-V4.1-Flash on the engine that is 40 x 584 = 23,360 B per context token,
 // against a real 1,790 B: only layers 2, 8, 14 and 20 own a compressed cache, a
 // compressed cache holds one entry per compress_ratio tokens, and the 40 sliding-window
 // caches are bounded rings rather than one entry per context token.
@@ -34,8 +34,8 @@ type Cache struct {
 	// Owned says whether this layer allocates the cache. A layer that does not own one
 	// reads the same-named cache of the NEAREST PRECEDING layer of its stack that owns
 	// it. That is DeepSeek-V4.1's own rule for its compressed cache, whose readers bind
-	// max(s for s in kv_source_layer_ids if s <= layer_id) (v0.31.0
-	// vllm/models/deepseek_v41/attention.py). vLLM binds its indexer keys to that same
+	// max(s for s in kv_source_layer_ids if s <= layer_id) (the engine's
+	// models/deepseek_v41/attention.py). The engine binds its indexer keys to that same
 	// kv source and refuses a source owning none, where this rule would look further
 	// back; on V4.1's configuration the two coincide. A reference by rule rather than by
 	// layer index is what lets one layer kind repeat across several source spans: a kind
@@ -55,9 +55,9 @@ type Cache struct {
 	// entry the layer reads, which must equal its owner's, as must every field but the
 	// owner's paging (BlockSize, PageAlignment), which a reader does not state.
 	// It is the whole layer's entry: an entry is not divided across tensor-parallel ranks
-	// (a latent cache has one head, and vLLM's window spec states max_tp_shards=1), and
+	// (a latent cache has one head, and the engine's window spec states max_tp_shards=1), and
 	// where the engine shards a cache by decode-context parallelism each rank holds 1/dcp
-	// of the entries (vllm/v1/kv_cache_interface.py max_num_blocks_per_req). A page of
+	// of the entries (v1/kv_cache_interface.py max_num_blocks_per_req). A page of
 	// block_size tokens holds block_size / tokens_per_entry entries.
 	//
 	// It is the record under the cache dtype the graph's base description assumes, which
@@ -79,9 +79,9 @@ type Cache struct {
 	// one.
 	TokensPerEntry int `yaml:"tokens_per_entry,omitempty"`
 
-	// Window bounds a kind: window cache to the most recent Window tokens. vLLM caps a
+	// Window bounds a kind: window cache to the most recent Window tokens. The engine caps a
 	// request at cdiv(min(Window - 1 + extra retained + tokens in flight, max_model_len),
-	// block) + 1 pages of it (v0.31.0 vllm/v1/kv_cache_interface.py
+	// block) + 1 pages of it (the engine's v1/kv_cache_interface.py
 	// max_admission_blocks_per_request), and frees pages that fall out of the window, so
 	// its residency does not grow with context. The engine reserves for tokens in flight
 	// at its max_in_flight_tokens (concurrent batches x max_num_batched_tokens); a request
@@ -90,8 +90,8 @@ type Cache struct {
 	//
 	// The window is bounded only under the hybrid KV cache manager. With it off -- which
 	// the engine does on its own for a KV connector that does not support it
-	// (vllm/config/vllm.py) -- unify_hybrid_kv_cache_specs turns every sliding-window spec
-	// into a full-attention one (vllm/v1/core/kv_cache_utils.py), and the cache grows with
+	// (the engine's top-level configuration) -- unify_hybrid_kv_cache_specs turns every sliding-window spec
+	// into a full-attention one (v1/core/kv_cache_utils.py), and the cache grows with
 	// context like a kv cache.
 	Window int `yaml:"window,omitempty"`
 

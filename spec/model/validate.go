@@ -530,7 +530,7 @@ func (n Node) validate(p *validate.Problems, at string) {
 		// A window is the third bound. DeepSeek-V4.1's window-only layers (compress ratio
 		// 0, and its DSpark draft layers) run the same sparse FlashMLA kernel as its
 		// compressed ones, with the window's positions as the indices and no extra cache
-		// (v0.31.0 vllm/models/deepseek_v41/nvidia/flashmla.py: tile_sched_swaonly,
+		// (the engine's models/deepseek_v41/nvidia/flashmla.py: tile_sched_swaonly,
 		// indices=swa_indices). Stating them as mla would route them to a different
 		// kernel's coefficients.
 		if n.AttentionKind == AttentionSparseMLA {

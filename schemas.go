@@ -133,6 +133,11 @@ func Validate(b Bundle) Report {
 				field.Merge("deployment", pp)
 			}
 		}
+		if o := b.Deployment.Offload; o != nil && !o.ConnectorOptions.IsZero() {
+			if pp := er.CheckConnectorOptions("offload", o.ConnectorOptions); pp != nil {
+				field.Merge("deployment", pp)
+			}
+		}
 	}
 	if b.Deployment != nil {
 		checkAcceptanceK(field, b, er)

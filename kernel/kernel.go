@@ -134,10 +134,9 @@ type Kernel interface {
 	// parallelism or the all-reduce backend reads Resolved, and reads the pool for the
 	// settings resolution does not touch, which is what the admission settings are.
 	//
-	// It returns a copy, which is what a value return gives, but not a deep one:
-	// Engine's tri-state requests are *bool and its DBO, EPLB and Speculative blocks
-	// are pointers, so those pointees are shared with whatever the implementation
-	// holds. A caller must treat the result as read-only. Deep-copying instead would
+	// It returns a copy, which is what a value return gives, but not a deep one: its
+	// slices, maps and engine block are shared with whatever the implementation holds.
+	// A caller must treat the result as read-only. Deep-copying instead would
 	// cost an allocation on every call for a guarantee no caller in this design
 	// needs, and the purity the package comment requires is a promise about what the
 	// kernel does, not a defence against a caller that writes through a borrowed
@@ -223,10 +222,10 @@ type Batch struct {
 	// bandwidth-bound, which is the per-stage max rule working as intended.
 	SMBudget int
 
-	// PadTokens are the tokens this data-parallel rank pads its step with under vLLM's DP
+	// PadTokens are the tokens this data-parallel rank pads its step with under the engine's DP
 	// lockstep. Every rank of a data-parallel group runs each step at the group's largest
-	// token count (v0.31.0 vllm/v1/worker/dp_utils.py:99-111 _post_process_dp_padding),
-	// passed to the forward context as num_tokens (vllm/v1/worker/gpu_model_runner.py:
+	// token count (v1/worker/dp_utils.py:99-111 _post_process_dp_padding),
+	// passed to the forward context as num_tokens (v1/worker/gpu_model_runner.py:
 	// 4407-4413); a rank with nothing scheduled runs a dummy batch of
 	// num_tokens_unpadded = 0 (:6090, _dummy_run from :5784). Pad tokens run the GEMMs, the
 	// MoE dispatch and combine, and the expert paths, but never the logits, the LM head,

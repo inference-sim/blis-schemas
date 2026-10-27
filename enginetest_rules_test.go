@@ -49,6 +49,21 @@ func (r testRules) CheckEngineBlock(at string, b deployment.EngineBlock) *rules.
 	return p
 }
 
+func (r testRules) CheckConnectorOptions(at string, b deployment.EngineBlock) *rules.Problems {
+	p := &validate.Problems{}
+	var o struct {
+		BlocksPerChunk int `yaml:"blocks_per_chunk"`
+	}
+	if err := b.Decode(&o); err != nil {
+		p.Field(at+".connector_options", "%v", err)
+		return p
+	}
+	if o.BlocksPerChunk < 0 {
+		p.Field(at+".connector_options.blocks_per_chunk", "must not be negative")
+	}
+	return p
+}
+
 func (r testRules) DraftTokens(b deployment.EngineBlock) int {
 	var e testEngine
 	if b.Decode(&e) != nil {

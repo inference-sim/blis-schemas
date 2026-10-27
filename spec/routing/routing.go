@@ -6,9 +6,9 @@
 // traffic, so it is keyed by model and workload category, not stored as a hardware
 // coefficient.
 //
-// The canonical quantity is vLLM's own. In v0.31.0 a step's load on rank r in layer l is the
+// The canonical quantity is the engine's own. In the engine, a step's load on rank r in layer l is the
 // count of routed (token, expert) assignments that land on r's physical experts
-// (vllm/distributed/eplb/eplb_state.py:601-608), and vLLM logs balancedness as
+// (distributed/eplb/eplb_state.py:601-608), and the engine logs balancedness as
 // sum_l mean_r T[l,r] / sum_l max_r T[l,r] (:66-71, :623-636). TokenImbalance is its
 // reciprocal: the busiest rank's routed tokens over the mean rank's, aggregated over layers.
 // It is at least 1. Every layer ends in a combine that waits for its slowest rank, so a
@@ -21,8 +21,8 @@
 // experts than a uniform one.
 //
 // Both depend on the expert-parallel width and on the tokens in the step (the finite-sample
-// term falls as the batch grows), and on placement: the values here are for vLLM's default
-// linear placement (vllm/config/parallel.py:192) with EPLB off (enable_eplb defaults False,
+// term falls as the batch grows), and on placement: the values here are for the engine's default
+// linear placement (config/parallel.py:192) with EPLB off (enable_eplb defaults False,
 // :188).
 package routing
 
@@ -61,7 +61,7 @@ const (
 	RoleSensitivity Role = "sensitivity"
 )
 
-// Placement is how logical experts are laid out over ranks. Only vLLM's default is
+// Placement is how logical experts are laid out over ranks. Only the engine's default is
 // described; EPLB's rearranged placement would need its own curves.
 const PlacementLinear = "linear"
 

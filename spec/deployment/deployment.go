@@ -145,7 +145,7 @@ type Parallelism struct {
 //
 // The width is tp x pcp x dp: the engine lays ranks out DP x PP x PCP x TP and builds
 // the expert group over the DP, PCP and TP axes together (initialize_model_parallel,
-// the same at v0.29.0 and later). An unset or non-positive width counts as one, the
+// in every release). An unset or non-positive width counts as one, the
 // same floor every other reader of these fields applies.
 //
 // An earlier form was tp x max(dp, pcp). That agrees with the product exactly when one
@@ -178,7 +178,7 @@ func (p Parallelism) ExpertParallelWidth() int {
 type Offload struct {
 	Tiers []Tier `yaml:"tiers"`
 	// EvictionPolicy names the KV-offload cache policy. The engine registers its in-tree
-	// policies with a CachePolicyFactory (lru, arc in v0.29.0) and admits out-of-tree ones
+	// policies with a CachePolicyFactory (lru, arc) and admits out-of-tree ones
 	// through a module path — the same extensible-registry shape as the connector and
 	// quantization vocabularies. "lru" is the default only when the field is ABSENT; a
 	// SUPPLIED name the factory does not know raises at launch rather than falling back. So
@@ -196,42 +196,11 @@ type Offload struct {
 	Connector string `yaml:"connector,omitempty"`
 	// Spec names the offloading spec, e.g. a CPU-only spec or a tiering spec.
 	Spec string `yaml:"spec,omitempty"`
-	// ConnectorOptions are the connector's own options, as kv_connector_extra_config gives
-	// them to vLLM. See ConnectorOptions.
-	ConnectorOptions *ConnectorOptions `yaml:"connector_options,omitempty"`
+	// ConnectorOptions are the offload connector's own options, held unopened like a pool's
+	// engine block: the engine model opens and checks them
+	// (rules.EngineRules.CheckConnectorOptions).
+	ConnectorOptions EngineBlock `yaml:"connector_options,omitempty"`
 }
-
-// ConnectorOptions are the KV connector options a deployment states, from vLLM's
-// kv_transfer_config (vllm/config/kv_transfer.py@5df63a72) and its kv_connector_extra_config,
-// each read by the connector named. Typed rather than a free map, so a misspelled option fails
-// to load instead of being dropped. Every one is a tri-state request: nil is the connector's
-// default.
-type ConnectorOptions struct {
-	// LoadAsync loads a hit asynchronously (MooncakeStoreConnector, default true:
-	// vllm/distributed/kv_transfer/kv_connector/v1/mooncake/store/worker.py:1397@5df63a72).
-	LoadAsync *bool `yaml:"load_async,omitempty"`
-	// LookupAsync looks a prefix up without blocking the scheduler (MooncakeStoreConnector,
-	// default false: .../mooncake/store/scheduler.py:147@5df63a72).
-	LookupAsync *bool `yaml:"lookup_async,omitempty"`
-	// EnableOffload writes KV to the store as well as reading it (Mooncake's store config,
-	// default false: vllm/distributed/mooncake_store.py:37,66@5df63a72).
-	EnableOffload *bool `yaml:"enable_offload,omitempty"`
-	// EnableCrossLayersBlocks stores one block across all layers rather than per layer
-	// (MooncakeStoreConnector's layout check, .../mooncake/store/worker.py:1553@5df63a72).
-	EnableCrossLayersBlocks *bool `yaml:"enable_cross_layers_blocks,omitempty"`
-	// LazyOffload defers a CPU write until a block is evicted (SimpleCPUOffloadConnector,
-	// default false: .../simple_cpu_offload_connector.py:104@5df63a72).
-	LazyOffload *bool `yaml:"lazy_offload,omitempty"`
-	// BlocksPerChunk groups GPU blocks into one offload chunk (OffloadingConnector,
-	// .../offloading/config.py:99-112@5df63a72). Zero means unset; a stated one is positive.
-	BlocksPerChunk int `yaml:"blocks_per_chunk,omitempty"`
-	// KVLoadFailurePolicy is what a failed KV load does: "recompute" the failed blocks, or
-	// "fail" the request, the default (vllm/config/kv_transfer.py:88@5df63a72).
-	KVLoadFailurePolicy string `yaml:"kv_load_failure_policy,omitempty"`
-}
-
-// kvLoadFailurePolicies is vLLM v0.32.0's closed literal (vllm/config/kv_transfer.py:88@5df63a72).
-var kvLoadFailurePolicies = map[string]bool{"recompute": true, "fail": true}
 
 // Tier is one offload level: a device class from the catalog, and how much of it.
 // Where the Scenario cluster declares a storage inventory, the device class must be one
@@ -250,11 +219,11 @@ type PDTransfer struct {
 	Connector string `yaml:"connector"`
 }
 
-// DPLoadBalancing is how a data-parallel pool's ranks are exposed to clients, vLLM's
-// three launch modes (v0.31.0 vllm/engine/arg_utils.py:536-538, 1225-1242):
+// DPLoadBalancing is how a data-parallel pool's ranks are exposed to clients, the engine's
+// three launch modes (engine/arg_utils.py:536-538, 1225-1242):
 //
 //   - internal, the default: one API endpoint, and the engine's core client balances
-//     every request across all ranks (DPLBAsyncMPClient, vllm/v1/engine/core_client.py:
+//     every request across all ranks (DPLBAsyncMPClient, v1/engine/core_client.py:
 //     155-166);
 //   - hybrid (--data-parallel-hybrid-lb): one endpoint per node, balancing across that
 //     node's ranks; a router chooses the node;
@@ -263,7 +232,7 @@ type PDTransfer struct {
 //     endpoint (DPAsyncMPClient), and a router chooses the rank.
 //
 // The api server count is not part of it: --api-server-count sets how many frontend
-// processes share an endpoint (vllm/entrypoints/cli/serve.py:105-127), not which ranks a
+// processes share an endpoint (entrypoints/cli/serve.py:105-127), not which ranks a
 // router can reach.
 type DPLoadBalancing string
 

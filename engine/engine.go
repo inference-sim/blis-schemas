@@ -73,7 +73,7 @@ type Engine interface {
 
 	// Finish ends a request at now for a reason the engine did not decide: a client abort
 	// or a timeout. It frees what the request holds. Finishing an unknown or an already
-	// finished request is a no-op, as vLLM's finish_requests is.
+	// finished request is a no-op, as the engine's finish_requests is.
 	Finish(id string, why FinishReason, now Time) error
 
 	// NextWake is the earliest instant after now at which engine state may change without
@@ -83,7 +83,7 @@ type Engine interface {
 	NextWake(now Time) (Time, bool)
 
 	// InFlightLimit is how many batches may be in flight at once: the engine's own bound
-	// (for vLLM, max_concurrent_batches), fixed at construction and at least one.
+	// (for the engine, max_concurrent_batches), fixed at construction and at least one.
 	InFlightLimit() int
 
 	// Metrics returns the engine's exported metrics as of now.

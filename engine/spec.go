@@ -17,7 +17,7 @@ import (
 // up in the factory registry and passes the rest through; a second engine registers
 // another kind and needs no change here or in the simulator.
 type Spec struct {
-	// Kind names the engine model, such as "vllm".
+	// Kind names the engine model, as its factory registers it.
 	Kind string
 	// UpstreamVersion is the release of the real engine the configuration was written
 	// for, such as "0.32.0". An engine refuses a release it does not model rather than

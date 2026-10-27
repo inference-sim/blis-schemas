@@ -37,6 +37,9 @@ func (exampleRules) RuleNames() []string     { return []string{"enum-values-know
 func (exampleRules) DraftTokens(deployment.EngineBlock) int {
 	return 0
 }
+func (exampleRules) CheckConnectorOptions(string, deployment.EngineBlock) *rules.Problems {
+	return nil
+}
 func (exampleRules) CheckEngineBlock(at string, b deployment.EngineBlock) *rules.Problems {
 	p := &rules.Problems{}
 	var e exampleEngine

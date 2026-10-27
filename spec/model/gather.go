@@ -8,8 +8,8 @@ const (
 	ResidencyDevice Residency = "device"
 	// ResidencyHost: the table is in pinned host memory and the GPU reads its rows over
 	// the host link. DeepSeek-V4.1's Engram tables live here by default -- 264 B rows,
-	// about 189 GiB across its two Engram layers -- read through UVA (v0.31.0
-	// vllm/models/deepseek_v41/nvidia/engram.py).
+	// about 189 GiB across its two Engram layers -- read through UVA (the engine's
+	// models/deepseek_v41/nvidia/engram.py).
 	ResidencyHost Residency = "host"
 )
 
@@ -36,8 +36,8 @@ type ResidencyControl string
 const (
 	// ResidencyFixed is the zero value: no setting moves the table.
 	ResidencyFixed ResidencyControl = ""
-	// ResidencyEngramCPUOffload: vLLM's EngramConfig.cpu_offload, set through
-	// --engram-config (vllm/config/engram.py) and stated in a deployment as
+	// ResidencyEngramCPUOffload: the engine's EngramConfig.cpu_offload, set through
+	// --engram-config (config/engram.py) and stated in a deployment as
 	// engine.engram_config.cpu_offload. True keeps the table in host memory and false in
 	// HBM. Its default is an engine-release fact, so the rules pack, not this schema,
 	// checks that a graph's stated residency is the release's default.
@@ -61,7 +61,7 @@ const (
 	ShardReplicated GatherShard = "replicated"
 	// ShardRows: the table's rows split evenly across ranks, and each token's row is
 	// read by the one rank that holds it; the others contribute zeros to a reduction.
-	// vLLM's VocabParallelEmbedding divides the padded vocabulary this way and ends
+	// the engine's VocabParallelEmbedding divides the padded vocabulary this way and ends
 	// with a tensor-parallel all-reduce, which the graph states as its own collective
 	// node after the gather.
 	ShardRows GatherShard = "rows"
@@ -70,7 +70,7 @@ const (
 	// each for every token (common/engram.py: part_n_hash_cols = cdiv(n_hash_cols,
 	// num_shards)). S is the tensor-parallel width, or that times the node-local
 	// data-parallel replicas when they split the table rather than share one copy; the
-	// deployment's Engram config decides which (deployment.EngramConfig). The heads'
+	// deployment's Engram config decides which (in the pool's engine block). The heads'
 	// sub-tables are of near-equal prime sizes, so a shard's share of rows is its share
 	// of heads.
 	ShardHeads GatherShard = "heads"
