@@ -212,6 +212,11 @@ type Scheduled struct {
 	// CachedTokens is the part of Computed that a prefix-cache hit supplied at this
 	// batch's admission, zero otherwise.
 	CachedTokens int
+	// PrefixLookup reports that the engine looked the request's prompt up in its prefix
+	// cache at this batch's admission, so CachedTokens is that lookup's hit, zero for a miss.
+	// An engine with no prefix cache, or one that skipped the lookup, leaves it false. A
+	// simulator counts a hit rate over the lookups a request's first admission made.
+	PrefixLookup bool
 	// Drafts is how many of Tokens are speculative tokens being verified.
 	Drafts int
 }
