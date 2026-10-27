@@ -161,6 +161,16 @@ type Request struct {
 	// Tags are opaque facts a simulator passes through for an engine that reads them. An
 	// engine ignores keys it does not know.
 	Tags map[string]string
+	// RemoteDecode marks a disaggregated prefill: the request computes its prompt here and a
+	// peer engine decodes it, pulling its KV. When it finishes, the engine holds that KV for
+	// the pull and reports it in Result.Handoffs, until the simulator ends the handoff
+	// (TransferDone with Handoff.Transfer). An engine that does not disaggregate refuses it.
+	RemoteDecode bool
+	// RemotePrefill marks a disaggregated decode: a peer engine computed the prompt, and this
+	// engine loads its KV rather than computing it. The engine decides when the load starts (a
+	// TransferLoad among a Batch's TransfersStarted), and runs the request once the simulator
+	// reports that transfer done. An engine that does not disaggregate refuses it.
+	RemotePrefill bool
 }
 
 // Batch is one scheduling decision.
@@ -249,6 +259,21 @@ type Result struct {
 	Finished []Finished
 	// KVEvents are the prefix-cache changes this batch caused, in order.
 	KVEvents []KVEvent
+	// Handoffs are the disaggregated prefills (Request.RemoteDecode) this batch finished whose
+	// KV the engine holds for a peer's pull, in the order they finished.
+	Handoffs []Handoff
+}
+
+// Handoff is the KV a finished disaggregated prefill left for a peer engine to pull. The
+// engine holds it until the simulator reports Transfer done: when the peer's pull has landed,
+// or when the hold has run out.
+type Handoff struct {
+	ID string
+	// Transfer is the handoff, which the simulator ends with TransferDone.
+	Transfer TransferID
+	// Blocks are the engine's IDs of the KV blocks held, opaque to the simulator, which may
+	// count distinct blocks across handoffs: a block a prefix cache shares appears in several.
+	Blocks []int64
 }
 
 // Finished is one request an engine finished.
