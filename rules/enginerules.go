@@ -67,7 +67,7 @@ type EngineRules interface {
 	ResolveCacheDType(architecture string, family, tp int, requested string) string
 	WindowPagesPerRequest(c model.Cache, engineBlock, inFlight, extraRetained, maxModelLen int) int
 	KVCacheGroups(in KVCacheGroupsInput) (KVCacheGrouping, error)
-	CUDAGraphCaptureSizes(e deployment.Engine) (CUDAGraphCapture, bool, error)
+	CUDAGraphCaptureSizes(in CUDAGraphCaptureInput) (CUDAGraphCapture, bool, error)
 	ResolveDPLoadBalancing(pl deployment.Parallelism) deployment.DPLoadBalancing
 }
 

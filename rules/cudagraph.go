@@ -3,8 +3,6 @@ package rules
 import (
 	"fmt"
 	"sort"
-
-	"github.com/inference-sim/blis-schemas/spec/deployment"
 )
 
 // CUDAGraphCapture is the CUDA graph capture a deployment's stated knobs resolve to.
@@ -25,6 +23,17 @@ type CUDAGraphCapture struct {
 // maximum and capture sizes and the maximum is not the largest size the engine keeps,
 // which the engine refuses at startup.
 var ErrCUDAGraphCaptureInconsistent = fmt.Errorf("max_cudagraph_capture_size is not the largest of the cudagraph_capture_sizes the engine keeps")
+
+// CUDAGraphCaptureInput is the stated knobs CUDAGraphCaptureSizes resolves the capture from,
+// as a deployment's engine block states them: the graph mode, the stated maximum capture size
+// (nil when unstated), the stated capture sizes (nil when unstated) and the per-step token
+// budget.
+type CUDAGraphCaptureInput struct {
+	Mode                string
+	MaxCaptureSize      *int
+	CaptureSizes        []int
+	MaxNumBatchedTokens int
+}
 
 // CUDAGraphCaptureSizes resolves the CUDA graph capture a deployment's stated knobs give,
 // as both registered releases' VllmConfig._set_cudagraph_sizes does (v0.31.0
@@ -49,21 +58,21 @@ var ErrCUDAGraphCaptureInconsistent = fmt.Errorf("max_cudagraph_capture_size is 
 // performance_mode interactivity, which captures every size up to 32, or the
 // sequence-parallel rounding the engine applies under tensor parallelism with SP enabled;
 // the schema states neither.
-func (p *Pack) CUDAGraphCaptureSizes(e deployment.Engine) (CUDAGraphCapture, bool, error) {
-	if e.CUDAGraphMode == "NONE" {
+func (p *Pack) CUDAGraphCaptureSizes(in CUDAGraphCaptureInput) (CUDAGraphCapture, bool, error) {
+	if in.Mode == "NONE" {
 		return CUDAGraphCapture{Sizes: []int{}}, true, nil
 	}
-	if e.MaxCUDAGraphCaptureSize == nil && e.CUDAGraphCaptureSizes == nil {
+	if in.MaxCaptureSize == nil && in.CaptureSizes == nil {
 		return CUDAGraphCapture{}, false, nil
 	}
-	mnbt := e.MaxNumBatchedTokens
+	mnbt := in.MaxNumBatchedTokens
 	if mnbt < 1 {
 		return CUDAGraphCapture{}, true, fmt.Errorf("resolving CUDA graph capture sizes needs max_num_batched_tokens, which the deployment does not state")
 	}
 	var out CUDAGraphCapture
-	if e.CUDAGraphCaptureSizes != nil {
+	if in.CaptureSizes != nil {
 		seen := map[int]bool{}
-		for _, s := range e.CUDAGraphCaptureSizes {
+		for _, s := range in.CaptureSizes {
 			if seen[s] {
 				continue
 			}
@@ -77,7 +86,7 @@ func (p *Pack) CUDAGraphCaptureSizes(e deployment.Engine) (CUDAGraphCapture, boo
 		sort.Ints(out.Sizes)
 		sort.Ints(out.Dropped)
 	} else {
-		m := *e.MaxCUDAGraphCaptureSize
+		m := *in.MaxCaptureSize
 		if m > mnbt {
 			m, out.Capped = mnbt, true
 		}
@@ -111,8 +120,8 @@ func (p *Pack) CUDAGraphCaptureSizes(e deployment.Engine) (CUDAGraphCapture, boo
 	if n := len(out.Sizes); n > 0 {
 		out.Max = out.Sizes[n-1]
 	}
-	if m := e.MaxCUDAGraphCaptureSize; m != nil && *m != out.Max {
-		if e.CUDAGraphCaptureSizes != nil {
+	if m := in.MaxCaptureSize; m != nil && *m != out.Max {
+		if in.CaptureSizes != nil {
 			return out, true, ErrCUDAGraphCaptureInconsistent
 		}
 		out.Truncated = out.Max < min(*m, mnbt)
