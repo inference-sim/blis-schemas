@@ -132,3 +132,21 @@ func TestIsSHA256(t *testing.T) {
 		}
 	}
 }
+
+// TestRebaseStripsOnlyAWholeLeadingSegment: a path equal to the prefix becomes empty, a
+// path under it loses it, and a path that merely starts with the same letters keeps it.
+func TestRebaseStripsOnlyAWholeLeadingSegment(t *testing.T) {
+	p := &Problems{}
+	p.Field("def", "a")
+	p.Field("def.cite", "b")
+	p.Field("define.x", "c")
+	p.Field("defx", "d")
+	var got []string
+	for _, it := range p.Rebase("def").All() {
+		got = append(got, it.Path)
+	}
+	want := []string{"", "cite", "define.x", "defx"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("Rebase paths = %q, want %q", got, want)
+	}
+}

@@ -137,6 +137,7 @@ nav:
       - Connector registry: reference/connectors.md
       - Evaluation run: reference/evaluation.md
       - Measured run: reference/measurement.md
+      - Result: reference/result.md
       - Kernel interface: reference/kernel.md
       - Engine interface: reference/engine.md
       - Router contract: reference/embed.md

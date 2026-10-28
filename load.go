@@ -19,6 +19,7 @@ import (
 	"github.com/inference-sim/blis-schemas/spec/hardware"
 	"github.com/inference-sim/blis-schemas/spec/measurement"
 	"github.com/inference-sim/blis-schemas/spec/model"
+	"github.com/inference-sim/blis-schemas/spec/result"
 	"github.com/inference-sim/blis-schemas/spec/routing"
 	"github.com/inference-sim/blis-schemas/spec/scenario"
 	"github.com/inference-sim/blis-schemas/spec/workload"
@@ -239,6 +240,20 @@ func LoadMeasuredRun(path string) (*measurement.MeasuredRun, error) {
 	var r measurement.MeasuredRun
 	if err := decodeStrict(path, &r); err != nil {
 		return nil, err
+	}
+	return &r, nil
+}
+
+// LoadResult reads a Result document, JSON or YAML (result.Unmarshal), refusing an
+// unknown key in either.
+func LoadResult(path string) (*result.Result, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("opening %s: %w", path, err)
+	}
+	var r result.Result
+	if err := result.Unmarshal(data, &r); err != nil {
+		return nil, fmt.Errorf("decoding %s: %w", path, err)
 	}
 	return &r, nil
 }

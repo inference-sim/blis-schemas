@@ -39,6 +39,7 @@ than these pages, read the source; each page links to it.
 | [Coefficient set](coefficients.md) | `CoefficientSet` | [`spec/coefficient`](https://github.com/inference-sim/blis-schemas/tree/main/spec/coefficient) |
 | [Acceptance profiles](acceptance.md) | `AcceptanceProfileSet`, inline acceptance values, a scenario's pin | [`spec/acceptance`](https://github.com/inference-sim/blis-schemas/tree/main/spec/acceptance) |
 | [Evaluation run](evaluation.md) | `EvaluationRun` | [`spec/evaluation`](https://github.com/inference-sim/blis-schemas/tree/main/spec/evaluation) |
+| [Result](result.md) | `Result` | [`spec/result`](https://github.com/inference-sim/blis-schemas/tree/main/spec/result) |
 | [Acceptance profiles](acceptance.md) | `AcceptanceProfileSet`, inline acceptance values, a scenario's pin | [`spec/acceptance`](https://github.com/inference-sim/blis-schemas/tree/main/spec/acceptance) |
 | [Kernel interface](kernel.md) | the `Kernel` a cost model implements | [`kernel`](https://github.com/inference-sim/blis-schemas/tree/main/kernel) |
 | [Engine interface](engine.md) | the `Engine` an inference-engine model implements, its `Spec` envelope and its contract checks | [`engine`](https://github.com/inference-sim/blis-schemas/tree/main/engine) |

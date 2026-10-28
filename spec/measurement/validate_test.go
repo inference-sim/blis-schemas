@@ -162,6 +162,7 @@ func TestRejects(t *testing.T) {
 		}},
 		{"unknown formula", "metric_defs.ttft_p50.formula", func(r *MeasuredRun) { setDef(r, "ttft_p50", func(d *MetricDef) { d.Formula = "vibes" }) }},
 		{"unknown statistic", "metric_defs.ttft_p50.statistic", func(r *MeasuredRun) { setDef(r, "ttft_p50", func(d *MetricDef) { d.Statistic = "p100" }) }},
+		{"simulated clock", "metric_defs.ttft_p50.clock", func(r *MeasuredRun) { setDef(r, "ttft_p50", func(d *MetricDef) { d.Clock = ClockSimulated }) }},
 		{"throughput with a statistic", "metric_defs.output_tps.statistic", func(r *MeasuredRun) {
 			setDef(r, "output_tps", func(d *MetricDef) { d.Statistic = StatMean })
 		}},
@@ -411,5 +412,27 @@ func unflow(n *yaml.Node) {
 	n.Style &^= yaml.FlowStyle
 	for _, c := range n.Content {
 		unflow(c)
+	}
+}
+
+// TestValidateMetricDefPathsAreRelative: a document outside this package merges the
+// problems under its own location, so each path must start at the definition's fields.
+func TestValidateMetricDefPathsAreRelative(t *testing.T) {
+	ok := MetricDef{Formula: FormulaTTFT, Statistic: "p99", Population: PopulationPerRequest,
+		Clock: ClockSimulated, PercentileMethod: PercentileNumpyLinear, Unit: UnitMs, Cite: "x"}
+	if p := ValidateMetricDef(ok); !p.OK() {
+		t.Fatalf("a valid definition on the simulated clock must pass:\n%s", p.Error())
+	}
+	bad := ok
+	bad.PercentileMethod = ""
+	bad.Cite = ""
+	paths := map[string]bool{}
+	for _, it := range ValidateMetricDef(bad).All() {
+		paths[it.Path] = true
+	}
+	for _, want := range []string{"percentile_method", "cite"} {
+		if !paths[want] {
+			t.Errorf("expected a problem at %q, got paths %v", want, paths)
+		}
 	}
 }

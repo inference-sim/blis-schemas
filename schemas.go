@@ -24,6 +24,7 @@ import (
 	"github.com/inference-sim/blis-schemas/spec/evaluation"
 	"github.com/inference-sim/blis-schemas/spec/hardware"
 	"github.com/inference-sim/blis-schemas/spec/model"
+	"github.com/inference-sim/blis-schemas/spec/result"
 	"github.com/inference-sim/blis-schemas/spec/routing"
 	"github.com/inference-sim/blis-schemas/spec/scenario"
 	"github.com/inference-sim/blis-schemas/spec/workload"
@@ -61,6 +62,12 @@ type Bundle struct {
 	// RulesVersions lists the versions Rules answers, for the finding when it answers none.
 	// nil with Rules set: the finding says only that the version is unknown, listing none.
 	RulesVersions func() []string
+	// Result is a simulator run's predicted output, validated field by field together with
+	// the input it embeds. Rules do not run on that embedded input: to rule-check it, pass
+	// &Result.Input.Scenario and &Result.Input.Deployment as Scenario and Deployment too.
+	// With Rules set, a Result and no Scenario, the rule layer warns (result-input-rules)
+	// rather than read as a rule-checked pass.
+	Result *result.Result
 }
 
 // Report is the outcome of validating a bundle, with the two layers kept apart.
@@ -171,6 +178,9 @@ func Validate(b Bundle) Report {
 			field.Merge("routing:"+r.Name, r.Validate())
 		}
 	}
+	if b.Result != nil {
+		field.Merge("result", b.Result.Validate())
+	}
 	if b.Workload != nil {
 		field.Merge("workload", b.Workload.Validate())
 	}
@@ -187,6 +197,11 @@ func Validate(b Bundle) Report {
 	// a reader cannot separate from genuine rule violations.
 	if !field.OK() {
 		return rep
+	}
+	if b.Result != nil && b.Rules != nil && b.Scenario == nil {
+		rep.Rule.RuleWarnf("result-input-rules",
+			"the result's embedded input was not rule-checked: pass its scenario and deployment as "+
+				"Bundle.Scenario and Bundle.Deployment to apply the engine rules to them")
 	}
 	if b.Scenario != nil {
 		in := rules.Input{Scenario: b.Scenario, Deployment: b.Deployment, Model: b.Model}
