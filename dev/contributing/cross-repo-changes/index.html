@@ -827,6 +827,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1112,6 +1116,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../reference/connectors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connector registry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../reference/evaluation/" class="md-nav__link">
         
   
@@ -1176,6 +1208,34 @@
     
   
     Kernel interface
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/engine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Engine interface
   
 
     
@@ -2116,13 +2176,13 @@
 
 
 <h1 id="changes-across-the-blis-repositories">Changes across the BLIS repositories<a class="headerlink" href="#changes-across-the-blis-repositories" title="Permanent link">&para;</a></h1>
-<p class="lede">Most improvements to BLIS touch more than one of its five repositories. A schema
+<p class="lede">Most improvements to BLIS touch more than one of its six repositories. A schema
 field, a catalog fact, a fitted coefficient, the kernel that reads them and the simulator that
 calls the kernel have to land together, and every number published from them has to be
 reproducible from what is public. This page is the one description of how such a change is
-made. Each of the other four repositories links here and adds only its own steps.</p>
+made. Each of the other five repositories links here and adds only its own steps.</p>
 
-<p>The rules below were worked out over several rounds of changes made across all five repositories
+<p>The rules below were worked out over several rounds of changes made across all the repositories
 at once. They exist because each one, when skipped, produced a published number that nobody
 could reproduce, a pull request that could not merge, or a fix that made the overall estimate
 worse.</p>
@@ -2152,18 +2212,24 @@ worse.</p>
 <td><code>.github/workflows/validate.yml</code> checks out blis-schemas at a tag or a full commit; <code>.github/workflows/rederive.yml</code> pins the catalog (<code>CATALOG_SHA</code>) and the fitting data (<code>AISIMULATE_SHA</code>) by commit</td>
 </tr>
 <tr>
+<td><a href="https://github.com/inference-sim/blis-vllm">blis-vllm</a></td>
+<td>blis-schemas</td>
+<td><code>go.mod</code> (and <code>rules/go.mod</code>, its rules-pack module) requires blis-schemas</td>
+</tr>
+<tr>
 <td><a href="https://github.com/inference-sim/blis-latency-kernel">blis-latency-kernel</a></td>
-<td>blis-schemas; catalog and registry as test inputs</td>
-<td><code>go.mod</code> requires blis-schemas; <code>testdata/upstream.lock</code> names a catalog and a registry commit, which <code>scripts/fetch-testdata.sh</code> fetches and verifies</td>
+<td>blis-schemas; blis-vllm's rules packs in its commands and tests only; catalog and registry as test inputs</td>
+<td><code>go.mod</code> requires blis-schemas and blis-vllm/rules; <code>testdata/upstream.lock</code> names a catalog and a registry commit, which <code>scripts/fetch-testdata.sh</code> fetches and verifies</td>
 </tr>
 <tr>
 <td><a href="https://github.com/inference-sim/inference-sim">inference-sim</a></td>
-<td>blis-latency-kernel, blis-schemas; catalog and registry as vendored test data</td>
-<td><code>go.mod</code> requires the kernel and blis-schemas; <code>testdata/catalog</code> and <code>testdata/registry</code> are vendored copies with <code>.upstream-commit</code> stamps; <code>testdata/upstream-prerelease.lock</code> overlays the kernel's lock while the inputs are unreleased</td>
+<td>blis-latency-kernel, blis-vllm, blis-schemas; catalog and registry as vendored test data</td>
+<td><code>go.mod</code> requires the kernel, blis-vllm and blis-schemas; <code>testdata/catalog</code> and <code>testdata/registry</code> are vendored copies with <code>.upstream-commit</code> stamps; <code>testdata/upstream-prerelease.lock</code> overlays the kernel's lock while the inputs are unreleased</td>
 </tr>
 </tbody>
 </table>
-<p>Changes flow one way: schemas, then catalog, registry and kernel, then inference-sim. Nothing
+<p>Changes flow one way: schemas, then catalog, registry and blis-vllm, then the kernel, then
+inference-sim. Nothing
 imports in the other direction. blis-schemas' own CI reads a registry checkout at <code>main</code> to
 check that committed data still parses; that job does not test an open registry pull request.</p>
 <h3 id="go-pseudo-versions">Go pseudo-versions<a class="headerlink" href="#go-pseudo-versions" title="Permanent link">&para;</a></h3>
@@ -2191,15 +2257,17 @@ the <code>replace</code> and pins the dependency's pushed head instead.</p>
 <p>Every pull request in a cross-repository change stays a draft until all of them are ready. Then:</p>
 <ol>
 <li><strong>Push blis-schemas.</strong> Its head is the pin every other repository uses.</li>
-<li><strong>Repin and push the middle three</strong>, in any order:<ul>
+<li><strong>Repin and push the middle four</strong>, in any order except that blis-vllm comes before the
+   kernel, whose tests use its rules packs:<ul>
 <li>blis-catalog: the <code>validate-catalog@&lt;version&gt;</code> pin in <code>ci.yml</code> and the README;</li>
+<li>blis-vllm: <code>go.mod</code> and <code>rules/go.mod</code>;</li>
 <li>blis-registry: the schema ref in <code>validate.yml</code>, and <code>CATALOG_SHA</code> in <code>rederive.yml</code> if
   the change needs a newer catalog;</li>
-<li>blis-latency-kernel: <code>go.mod</code>, and <code>testdata/upstream.lock</code> if the tests need the new
+<li>blis-latency-kernel: <code>go.mod</code> (blis-schemas and blis-vllm/rules), and <code>testdata/upstream.lock</code> if the tests need the new
   catalog or registry; regenerate <code>docs/generated/</code> (its <code>sources.md</code> lists the pin).</li>
 </ul>
 </li>
-<li><strong>Repin, re-vendor and push inference-sim</strong>: <code>go.mod</code> to the kernel and schemas heads;
+<li><strong>Repin, re-vendor and push inference-sim</strong>: <code>go.mod</code> to the kernel, blis-vllm and schemas heads;
    <code>testdata/catalog</code> and <code>testdata/registry</code> from the catalog and registry heads, with their
    <code>.upstream-commit</code> stamps; <code>testdata/upstream-prerelease.lock</code> to those heads.</li>
 <li><strong>Run every repository's suite against the others' pushed heads</strong>, not against local
@@ -2207,7 +2275,7 @@ the <code>replace</code> and pins the dependency's pushed head instead.</p>
 <li><strong>Regenerate every pull request body</strong> from the pushed heads (see <a href="#parity">Parity</a>).</li>
 </ol>
 <p>If any head changes after a downstream repository pinned it, repeat the steps below it. A
-change to the schemas head means repinning all four.</p>
+change to the schemas head means repinning all five.</p>
 <p>Merging follows the same order, with a release between each step: merge blis-schemas and tag
 it; move the catalog's and registry's CI pins to that tag and merge each, then tag them; move
 the kernel's <code>go.mod</code> and <code>upstream.lock</code> to the tags, merge and tag it; move inference-sim's
@@ -2347,15 +2415,15 @@ absent prints why; an unexpected skip is a test that did not run.</p>
 <h2 id="review-before-each-push">Review before each push<a class="headerlink" href="#review-before-each-push" title="Permanent link">&para;</a></h2>
 <ol>
 <li><strong>An expert self-audit.</strong> Before an integration point and before every push, write down the
-   ten correctness questions each of three experts would ask of the five pull requests together:
+   ten correctness questions each of three experts would ask of all the pull requests together:
    an engineer of the modelled engine, a benchmark engineer who produced the measurements, and a
    distributed-inference simulation researcher. Answer each from code and data, with file and
    line evidence, and grade it sound, weak or wrong. Fix every wrong answer that affects
    correctness before pushing; file the rest. This extends inference-sim's
    <a href="https://github.com/inference-sim/inference-sim/blob/main/docs/contributing/pr-workflow.md#step-475-pre-commit-self-audit">pre-commit self-audit</a>
    and its <a href="https://github.com/inference-sim/inference-sim/blob/main/docs/contributing/perspectives.md">review perspectives</a>
-   to all five repositories.</li>
-<li><strong>A holistic review across all five pull requests</strong>, as one change, not five, with the
+   to every repository.</li>
+<li><strong>A holistic review across all the pull requests</strong>, as one change, not one per repository, with the
    findings that affect correctness fixed before the push.</li>
 </ol>
 <h2 id="recording-decisions-and-deviations">Recording decisions and deviations<a class="headerlink" href="#recording-decisions-and-deviations" title="Permanent link">&para;</a></h2>

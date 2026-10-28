@@ -892,6 +892,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Ask a rules pack">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pass-the-engines-own-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pass the engine's own rules
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
     </ul>
@@ -921,6 +938,10 @@
       
         
           
+        
+      
+        
+      
         
       
         
@@ -1238,6 +1259,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../reference/connectors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connector registry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../reference/evaluation/" class="md-nav__link">
         
   
@@ -1302,6 +1351,34 @@
     
   
     Kernel interface
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/engine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Engine interface
   
 
     
@@ -1858,6 +1935,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Ask a rules pack">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pass-the-engines-own-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pass the engine's own rules
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
     </ul>
@@ -1902,11 +1996,12 @@ the output shown is checked against what they print.</p>
 <a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>
 <a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="nx">rep</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">blisschemas</span><span class="p">.</span><span class="nx">Validate</span><span class="p">(</span><span class="nx">blisschemas</span><span class="p">.</span><span class="nx">Bundle</span><span class="p">{</span>
 <a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">    </span><span class="nx">Scenario</span><span class="p">:</span><span class="w"> </span><span class="nx">s</span><span class="p">,</span><span class="w"> </span><span class="nx">Deployment</span><span class="p">:</span><span class="w"> </span><span class="nx">d</span><span class="p">,</span><span class="w"> </span><span class="nx">Model</span><span class="p">:</span><span class="w"> </span><span class="nx">g</span><span class="p">,</span><span class="w"> </span><span class="nx">Chip</span><span class="p">:</span><span class="w"> </span><span class="nx">c</span><span class="p">,</span>
-<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="p">})</span>
-<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">p</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">rep</span><span class="p">.</span><span class="nx">Problems</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">p</span><span class="p">)</span>
-<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="p">}</span>
-<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">"ok:"</span><span class="p">,</span><span class="w"> </span><span class="nx">rep</span><span class="p">.</span><span class="nx">OK</span><span class="p">(),</span><span class="w"> </span><span class="s">"rules applied:"</span><span class="p">,</span><span class="w"> </span><span class="nx">rep</span><span class="p">.</span><span class="nx">RulesApplied</span><span class="p">)</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">    </span><span class="nx">Rules</span><span class="p">:</span><span class="w"> </span><span class="nx">exampleRulesFor</span><span class="p">,</span><span class="w"> </span><span class="c1">// the release's rules, from its engine model</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="p">})</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">p</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">rep</span><span class="p">.</span><span class="nx">Problems</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">p</span><span class="p">)</span>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="p">}</span>
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">"ok:"</span><span class="p">,</span><span class="w"> </span><span class="nx">rep</span><span class="p">.</span><span class="nx">OK</span><span class="p">(),</span><span class="w"> </span><span class="s">"rules applied:"</span><span class="p">,</span><span class="w"> </span><span class="nx">rep</span><span class="p">.</span><span class="nx">RulesApplied</span><span class="p">)</span>
 </code></pre></div>
 <div class="language-text highlight"><span class="filename">Output</span><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>ok: true rules applied: 0.29.0
 </code></pre></div>
@@ -2002,9 +2097,9 @@ field layer passed; they read the deployment and the model graph when those are 
 <div class="language-go highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nx">pool</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="o">&amp;</span><span class="nx">d</span><span class="p">.</span><span class="nx">Pools</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
 <a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="nx">pool</span><span class="p">.</span><span class="nx">Parallel</span><span class="p">.</span><span class="nx">TP</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">8</span><span class="w">  </span><span class="c1">// 8 x 4 data-parallel ranks needs 32 GPUs</span>
 <a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="nx">pool</span><span class="p">.</span><span class="nx">Parallel</span><span class="p">.</span><span class="nx">DCP</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">3</span><span class="w"> </span><span class="c1">// does not divide tp</span>
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="nx">pool</span><span class="p">.</span><span class="nx">Engine</span><span class="p">.</span><span class="nx">GPUMemoryUtilization</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">1.5</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="nx">setEngineKey</span><span class="p">(</span><span class="nx">pool</span><span class="p">,</span><span class="w"> </span><span class="s">"gpu_memory_utilization"</span><span class="p">,</span><span class="w"> </span><span class="s">"1.5"</span><span class="p">)</span>
 <a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>
-<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="nx">rep</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">blisschemas</span><span class="p">.</span><span class="nx">Validate</span><span class="p">(</span><span class="nx">blisschemas</span><span class="p">.</span><span class="nx">Bundle</span><span class="p">{</span><span class="nx">Scenario</span><span class="p">:</span><span class="w"> </span><span class="nx">s</span><span class="p">,</span><span class="w"> </span><span class="nx">Deployment</span><span class="p">:</span><span class="w"> </span><span class="nx">d</span><span class="p">})</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="nx">rep</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">blisschemas</span><span class="p">.</span><span class="nx">Validate</span><span class="p">(</span><span class="nx">blisschemas</span><span class="p">.</span><span class="nx">Bundle</span><span class="p">{</span><span class="nx">Scenario</span><span class="p">:</span><span class="w"> </span><span class="nx">s</span><span class="p">,</span><span class="w"> </span><span class="nx">Deployment</span><span class="p">:</span><span class="w"> </span><span class="nx">d</span><span class="p">,</span><span class="w"> </span><span class="nx">Rules</span><span class="p">:</span><span class="w"> </span><span class="nx">exampleRulesFor</span><span class="p">})</span>
 <a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">p</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">rep</span><span class="p">.</span><span class="nx">Problems</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
 <a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">p</span><span class="p">)</span>
 <a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="p">}</span>
@@ -2018,9 +2113,9 @@ field layer passed; they read the deployment and the model graph when those are 
 problem. <code>rep.OK()</code> is false here because errors are present; warnings alone leave it true.</p>
 <p>To treat the layers differently, read <code>rep.Field</code> and <code>rep.Rule</code>. Each has <code>OK()</code>, <code>All()</code>
 for every problem and <code>Errors()</code> for errors only.</p>
-<div class="language-go highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nx">d</span><span class="p">.</span><span class="nx">Pools</span><span class="p">[</span><span class="mi">0</span><span class="p">].</span><span class="nx">Engine</span><span class="p">.</span><span class="nx">CacheDType</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">"fp8_e4m3fn"</span><span class="w"> </span><span class="c1">// not a name vLLM 0.29.0 accepts</span>
+<div class="language-go highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nx">setEngineKey</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">d</span><span class="p">.</span><span class="nx">Pools</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span><span class="w"> </span><span class="s">"cache_dtype"</span><span class="p">,</span><span class="w"> </span><span class="s">"fp8_e4m3fn"</span><span class="p">)</span><span class="w"> </span><span class="c1">// not a name the release accepts</span>
 <a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
-<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="nx">rep</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">blisschemas</span><span class="p">.</span><span class="nx">Validate</span><span class="p">(</span><span class="nx">blisschemas</span><span class="p">.</span><span class="nx">Bundle</span><span class="p">{</span><span class="nx">Scenario</span><span class="p">:</span><span class="w"> </span><span class="nx">s</span><span class="p">,</span><span class="w"> </span><span class="nx">Deployment</span><span class="p">:</span><span class="w"> </span><span class="nx">d</span><span class="p">})</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="nx">rep</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">blisschemas</span><span class="p">.</span><span class="nx">Validate</span><span class="p">(</span><span class="nx">blisschemas</span><span class="p">.</span><span class="nx">Bundle</span><span class="p">{</span><span class="nx">Scenario</span><span class="p">:</span><span class="w"> </span><span class="nx">s</span><span class="p">,</span><span class="w"> </span><span class="nx">Deployment</span><span class="p">:</span><span class="w"> </span><span class="nx">d</span><span class="p">,</span><span class="w"> </span><span class="nx">Rules</span><span class="p">:</span><span class="w"> </span><span class="nx">exampleRulesFor</span><span class="p">})</span>
 <a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">"field layer ok:"</span><span class="p">,</span><span class="w"> </span><span class="nx">rep</span><span class="p">.</span><span class="nx">Field</span><span class="p">.</span><span class="nx">OK</span><span class="p">())</span>
 <a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">p</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">rep</span><span class="p">.</span><span class="nx">Rule</span><span class="p">.</span><span class="nx">All</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
 <a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">p</span><span class="p">)</span>
@@ -2068,6 +2163,25 @@ pack answers questions about what the release does:</p>
 </code></pre></div>
 <p>Packs are registered when the root package <code>blisschemas</code> is imported. A program that
 imports <code>rules</code> but not the root package has no packs, so <code>Lookup</code> returns nil.</p>
+<h3 id="pass-the-engines-own-rules">Pass the engine's own rules<a class="headerlink" href="#pass-the-engines-own-rules" title="Permanent link">&para;</a></h3>
+<p>The vLLM packs are moving to the engine model that owns them, blis-vllm
+(inference-sim#2021 B4). A consumer that has them passes them to <code>Validate</code> instead of using
+this module's packs: <code>Bundle.Rules</code> returns a release's rules as a <code>rules.EngineRules</code>, and
+<code>Bundle.RulesVersions</code>, which is optional, lists the releases it knows, for the finding a
+scenario naming another one gets.</p>
+<div class="language-go highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="nx">b</span><span class="p">.</span><span class="nx">Rules</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kd">func</span><span class="p">(</span><span class="nx">v</span><span class="w"> </span><span class="kt">string</span><span class="p">)</span><span class="w"> </span><span class="nx">rules</span><span class="p">.</span><span class="nx">EngineRules</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="nx">p</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">vllmrules</span><span class="p">.</span><span class="nx">Lookup</span><span class="p">(</span><span class="nx">v</span><span class="p">);</span><span class="w"> </span><span class="nx">p</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="c1">// github.com/inference-sim/blis-vllm/rules</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="w">        </span><span class="k">return</span><span class="w"> </span><span class="nx">p</span>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="kc">nil</span><span class="w"> </span><span class="c1">// a typed nil reads as unknown too</span>
+<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="p">}</span>
+<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="nx">b</span><span class="p">.</span><span class="nx">RulesVersions</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nx">vllmrules</span><span class="p">.</span><span class="nx">Versions</span>
+<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="nx">rep</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">blisschemas</span><span class="p">.</span><span class="nx">Validate</span><span class="p">(</span><span class="nx">b</span><span class="p">)</span>
+</code></pre></div>
+<p>The report is the same as with this module's packs. A release the rules do not know gets the
+<code>engine-version-known</code> warning. Rules that answer for a release other than the scenario's are
+an error, <code>engine-version-matches</code>, and are not applied: a lookup that falls back to a nearby
+release would pass a scenario its own release refuses.</p>
 <p>The full API is on <a href="https://pkg.go.dev/github.com/inference-sim/blis-schemas">pkg.go.dev</a>.</p>
 
 

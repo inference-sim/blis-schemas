@@ -936,6 +936,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1221,6 +1225,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../../reference/connectors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connector registry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../reference/evaluation/" class="md-nav__link">
         
   
@@ -1285,6 +1317,34 @@
     
   
     Kernel interface
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/engine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Engine interface
   
 
     
@@ -1924,9 +1984,9 @@ exist, for vLLM <code>0.29.0</code> and <code>0.31.0</code>; their rules are lis
 <p>A rule problem does not always mean the document is wrong. It may mean the document is
 right and names the wrong engine version, or that a rule needs extending for a release it
 has not seen. That is why the layers are reported separately:</p>
-<div class="language-go highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nx">d</span><span class="p">.</span><span class="nx">Pools</span><span class="p">[</span><span class="mi">0</span><span class="p">].</span><span class="nx">Engine</span><span class="p">.</span><span class="nx">CacheDType</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">"fp8_e4m3fn"</span><span class="w"> </span><span class="c1">// not a name vLLM 0.29.0 accepts</span>
+<div class="language-go highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nx">setEngineKey</span><span class="p">(</span><span class="o">&amp;</span><span class="nx">d</span><span class="p">.</span><span class="nx">Pools</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span><span class="w"> </span><span class="s">"cache_dtype"</span><span class="p">,</span><span class="w"> </span><span class="s">"fp8_e4m3fn"</span><span class="p">)</span><span class="w"> </span><span class="c1">// not a name the release accepts</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="nx">rep</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">blisschemas</span><span class="p">.</span><span class="nx">Validate</span><span class="p">(</span><span class="nx">blisschemas</span><span class="p">.</span><span class="nx">Bundle</span><span class="p">{</span><span class="nx">Scenario</span><span class="p">:</span><span class="w"> </span><span class="nx">s</span><span class="p">,</span><span class="w"> </span><span class="nx">Deployment</span><span class="p">:</span><span class="w"> </span><span class="nx">d</span><span class="p">})</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="nx">rep</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="nx">blisschemas</span><span class="p">.</span><span class="nx">Validate</span><span class="p">(</span><span class="nx">blisschemas</span><span class="p">.</span><span class="nx">Bundle</span><span class="p">{</span><span class="nx">Scenario</span><span class="p">:</span><span class="w"> </span><span class="nx">s</span><span class="p">,</span><span class="w"> </span><span class="nx">Deployment</span><span class="p">:</span><span class="w"> </span><span class="nx">d</span><span class="p">,</span><span class="w"> </span><span class="nx">Rules</span><span class="p">:</span><span class="w"> </span><span class="nx">exampleRulesFor</span><span class="p">})</span>
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="s">"field layer ok:"</span><span class="p">,</span><span class="w"> </span><span class="nx">rep</span><span class="p">.</span><span class="nx">Field</span><span class="p">.</span><span class="nx">OK</span><span class="p">())</span>
 <a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="k">for</span><span class="w"> </span><span class="nx">_</span><span class="p">,</span><span class="w"> </span><span class="nx">p</span><span class="w"> </span><span class="o">:=</span><span class="w"> </span><span class="k">range</span><span class="w"> </span><span class="nx">rep</span><span class="p">.</span><span class="nx">Rule</span><span class="p">.</span><span class="nx">All</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
 <a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">    </span><span class="nx">fmt</span><span class="p">.</span><span class="nx">Println</span><span class="p">(</span><span class="nx">p</span><span class="p">)</span>
@@ -1947,6 +2007,10 @@ warning, <code>engine-version-known</code>, and <code>RulesApplied</code> is emp
 report, so <code>OK()</code> is still true. A caller that requires rules to have run should also
 check that <code>RulesApplied</code> is not empty.</p>
 </div>
+<p>A caller can pass the engine's own rules instead of using this module's packs, through
+<code>Bundle.Rules</code> (see <a href="../../guides/go/#pass-the-engines-own-rules">the Go guide</a>). The same
+warning applies to a release they do not know. Rules that answer for a release other than the
+scenario's are an error, <code>engine-version-matches</code>, and nothing is applied.</p>
 <h2 id="reports">Reports<a class="headerlink" href="#reports" title="Permanent link">&para;</a></h2>
 <p><code>Validate</code> returns a <code>Report</code>:</p>
 <dl>
@@ -1955,8 +2019,8 @@ check that <code>RulesApplied</code> is not empty.</p>
 <dt><code>Rule</code></dt>
 <dd>The rule layer's problems, each carrying the name of the rule that reported it.</dd>
 <dt><code>RulesApplied</code></dt>
-<dd>The engine version whose pack ran. Empty if the field layer failed, if the bundle has
-no scenario, or if no pack matched.</dd>
+<dd>The engine version whose rules ran. Empty if the field layer failed, if the bundle has
+no scenario, if no rules matched, or if the caller's rules answered for another release.</dd>
 </dl>
 <p><code>OK()</code> is true when neither layer holds an error. <code>Problems()</code> returns everything, field
 problems first. Each problem has a severity, a dotted path to the field and a message:</p>
