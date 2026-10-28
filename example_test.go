@@ -11,7 +11,77 @@ import (
 	"path/filepath"
 
 	blisschemas "github.com/inference-sim/blis-schemas"
+	"github.com/inference-sim/blis-schemas/rules"
+	"github.com/inference-sim/blis-schemas/spec/deployment"
+	"gopkg.in/yaml.v3"
 )
+
+// exampleRules are an engine release's rules as an engine model supplies them, for the
+// examples: they open a pool's engine block, check one bound and refuse one value by a named
+// rule. A real caller passes its engine model's rules (blis-vllm/rules for vLLM).
+type exampleRules struct {
+	rules.EngineRules
+	version string
+}
+
+type exampleEngine struct {
+	BlockSize            int     `yaml:"block_size"`
+	MaxNumSeqs           int     `yaml:"max_num_seqs"`
+	MaxNumBatchedTokens  int     `yaml:"max_num_batched_tokens"`
+	GPUMemoryUtilization float64 `yaml:"gpu_memory_utilization"`
+	CacheDType           string  `yaml:"cache_dtype"`
+}
+
+func (r exampleRules) EngineVersion() string { return r.version }
+func (exampleRules) RuleNames() []string     { return []string{"enum-values-known"} }
+func (exampleRules) DraftTokens(deployment.EngineBlock) int {
+	return 0
+}
+func (exampleRules) CheckConnectorOptions(string, deployment.EngineBlock) *rules.Problems {
+	return nil
+}
+func (exampleRules) CheckEngineBlock(at string, b deployment.EngineBlock) *rules.Problems {
+	p := &rules.Problems{}
+	var e exampleEngine
+	if err := b.Decode(&e); err != nil {
+		p.Field(at+".engine", "%v", err)
+		return p
+	}
+	if e.GPUMemoryUtilization < 0 || e.GPUMemoryUtilization > 1 {
+		p.Field(at+".engine.gpu_memory_utilization", "must lie in [0, 1] (0 means unset), got %v", e.GPUMemoryUtilization)
+	}
+	return p
+}
+func (r exampleRules) Check(in rules.Input) *rules.Problems {
+	p := &rules.Problems{}
+	for i, pool := range in.Deployment.Pools {
+		var e exampleEngine
+		if pool.Engine.Decode(&e) == nil && e.CacheDType != "" && e.CacheDType != "auto" && e.CacheDType != "fp8" {
+			p.RuleErrorf("enum-values-known", "pools[%d].engine.cache_dtype: %q is not accepted by engine %s", i, e.CacheDType, r.version)
+		}
+	}
+	return p
+}
+
+func exampleRulesFor(version string) rules.EngineRules { return exampleRules{version: version} }
+
+// setEngineKey sets one key of a pool's engine block, as an author edits the file.
+func setEngineKey(pool *deployment.Pool, key, value string) {
+	n := pool.Engine.Node()
+	if n == nil {
+		n = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	}
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		if n.Content[i].Value == key {
+			n.Content[i+1] = &yaml.Node{Kind: yaml.ScalarNode, Value: value}
+			pool.Engine = deployment.NewEngineBlock(n)
+			return
+		}
+	}
+	n.Content = append(n.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key},
+		&yaml.Node{Kind: yaml.ScalarNode, Value: value})
+	pool.Engine = deployment.NewEngineBlock(n)
+}
 
 func must[T any](v T, err error) T {
 	if err != nil {
@@ -31,6 +101,7 @@ func ExampleValidate() {
 
 	rep := blisschemas.Validate(blisschemas.Bundle{
 		Scenario: s, Deployment: d, Model: g, Chip: c,
+		Rules: exampleRulesFor, // the release's rules, from its engine model
 	})
 	for _, p := range rep.Problems() {
 		fmt.Println(p)
@@ -51,9 +122,9 @@ func ExampleValidate_problems() {
 	pool := &d.Pools[0]
 	pool.Parallel.TP = 8  // 8 x 4 data-parallel ranks needs 32 GPUs
 	pool.Parallel.DCP = 3 // does not divide tp
-	pool.Engine.GPUMemoryUtilization = 1.5
+	setEngineKey(pool, "gpu_memory_utilization", "1.5")
 
-	rep := blisschemas.Validate(blisschemas.Bundle{Scenario: s, Deployment: d})
+	rep := blisschemas.Validate(blisschemas.Bundle{Scenario: s, Deployment: d, Rules: exampleRulesFor})
 	for _, p := range rep.Problems() {
 		fmt.Println(p)
 	}
@@ -71,9 +142,9 @@ func ExampleValidate_rules() {
 	s := must(blisschemas.LoadScenario("docs/examples/scenario.yaml"))
 	d := must(blisschemas.LoadDeployment("docs/examples/deployment.yaml"))
 	// --8<-- [start:rules]
-	d.Pools[0].Engine.CacheDType = "fp8_e4m3fn" // not a name vLLM 0.29.0 accepts
+	setEngineKey(&d.Pools[0], "cache_dtype", "fp8_e4m3fn") // not a name the release accepts
 
-	rep := blisschemas.Validate(blisschemas.Bundle{Scenario: s, Deployment: d})
+	rep := blisschemas.Validate(blisschemas.Bundle{Scenario: s, Deployment: d, Rules: exampleRulesFor})
 	fmt.Println("field layer ok:", rep.Field.OK())
 	for _, p := range rep.Rule.All() {
 		fmt.Println(p)

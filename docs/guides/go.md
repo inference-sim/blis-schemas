@@ -132,4 +132,28 @@ pack.TritonFetchWithholdsSMs(pageBytes)
 Packs are registered when the root package `blisschemas` is imported. A program that
 imports `rules` but not the root package has no packs, so `Lookup` returns nil.
 
+### Pass the engine's own rules
+
+The vLLM packs are moving to the engine model that owns them, blis-vllm
+(inference-sim#2021 B4). A consumer that has them passes them to `Validate` instead of using
+this module's packs: `Bundle.Rules` returns a release's rules as a `rules.EngineRules`, and
+`Bundle.RulesVersions`, which is optional, lists the releases it knows, for the finding a
+scenario naming another one gets.
+
+```go
+b.Rules = func(v string) rules.EngineRules {
+	if p := vllmrules.Lookup(v); p != nil { // github.com/inference-sim/blis-vllm/rules
+		return p
+	}
+	return nil // a typed nil reads as unknown too
+}
+b.RulesVersions = vllmrules.Versions
+rep := blisschemas.Validate(b)
+```
+
+The report is the same as with this module's packs. A release the rules do not know gets the
+`engine-version-known` warning. Rules that answer for a release other than the scenario's are
+an error, `engine-version-matches`, and are not applied: a lookup that falls back to a nearby
+release would pass a scenario its own release refuses.
+
 The full API is on [pkg.go.dev](https://pkg.go.dev/github.com/inference-sim/blis-schemas).

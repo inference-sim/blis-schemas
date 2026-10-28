@@ -106,7 +106,9 @@ type Pool struct {
 	Role     Role        `yaml:"role"`
 	Nodes    int         `yaml:"nodes"`
 	Parallel Parallelism `yaml:"parallel"`
-	Engine   Engine      `yaml:"engine"`
+	// Engine is the pool's engine settings, held unopened: the engine model a scenario's
+	// engine_version selects opens it (EngineBlock).
+	Engine EngineBlock `yaml:"engine"`
 	// Labels are the Kubernetes labels on the pool's model-server pods, as the pool's pod
 	// template sets them. The router selects and filters endpoints by them (an InferencePool
 	// selector, the llm-d.ai/role label of a disaggregated deployment). llm-d.ai/role is derived
@@ -143,7 +145,7 @@ type Parallelism struct {
 //
 // The width is tp x pcp x dp: the engine lays ranks out DP x PP x PCP x TP and builds
 // the expert group over the DP, PCP and TP axes together (initialize_model_parallel,
-// the same at v0.29.0 and later). An unset or non-positive width counts as one, the
+// in every release). An unset or non-positive width counts as one, the
 // same floor every other reader of these fields applies.
 //
 // An earlier form was tp x max(dp, pcp). That agrees with the product exactly when one
@@ -172,258 +174,11 @@ func (p Parallelism) ExpertParallelWidth() int {
 	return width
 }
 
-// Engine is the per-pool settings that change step time or occupancy. Values are
-// held as declared, including the tri-state cases where a nil pointer means "let
-// the engine decide" and the resolver reports what it decided.
-type Engine struct {
-	// All2AllBackend selects the MoE dispatch/combine implementation. It sets both
-	// the volume basis and the cross-node scaling: an all-gather-family backend
-	// moves dense per-token bytes in two ring phases, where a routed backend moves
-	// top-k-selected bytes point to point.
-	All2AllBackend string `yaml:"all2all_backend,omitempty"`
-	// DisableCustomAllReduce mirrors the engine's own boolean. The SM-consuming
-	// all-reduce kernel is used when this is false AND the layout permits it:
-	// crossing a node boundary without multi-node NVLink disqualifies it whatever
-	// the field says, moving the cost from SMs to the NIC. So this is a REQUEST, and
-	// the resolver reports what will actually run.
-	//
-	// Tri-state: nil takes the engine default, which is false — the kernel is used
-	// where reachable.
-	DisableCustomAllReduce *bool `yaml:"disable_custom_all_reduce,omitempty"`
-
-	// AllReduceBackend records the resolved choice where a caller wants to state it
-	// directly rather than derive it. Values are "custom" and "nccl"; it is an
-	// override, and a deployment that states both this and DisableCustomAllReduce in
-	// conflict is rejected.
-	AllReduceBackend string `yaml:"allreduce_backend,omitempty"`
-	// CUDAGraphMode selects capture strategy, which sets the host launch term.
-	CUDAGraphMode string `yaml:"cudagraph_mode,omitempty"`
-	// MaxCUDAGraphCaptureSize is compilation_config.max_cudagraph_capture_size: the
-	// largest step, in tokens, a CUDA graph is captured for. A larger step runs eager,
-	// so with DSpark at K=5, where a decode step verifies 6 tokens per request, a size of
-	// 64 sends every step of more than 10 decoding requests eager. Nil takes the release
-	// default, min(max_num_seqs x decode query length x 2, 512), or 1024 on SM100 (v0.31.0
-	// vllm/config/vllm.py _set_cudagraph_sizes). The engine caps it at
-	// max_num_batched_tokens; Pack.CUDAGraphCaptureSizes resolves the sizes that run.
-	//
-	// A pointer, because a stated 0 is not unset: the engine refuses it.
-	MaxCUDAGraphCaptureSize *int `yaml:"max_cudagraph_capture_size,omitempty"`
-	// CUDAGraphCaptureSizes is compilation_config.cudagraph_capture_sizes: the exact
-	// step sizes, in tokens, to capture. Nil generates them from the maximum. The engine
-	// drops sizes above max_num_batched_tokens, and refuses a stated maximum that is not
-	// the largest size it keeps.
-	CUDAGraphCaptureSizes []int `yaml:"cudagraph_capture_sizes,omitempty"`
-	// AsyncScheduling is tri-state: nil lets the engine resolve it through its
-	// disqualifying conditions, which is what a real deployment does.
-	AsyncScheduling *bool `yaml:"async_scheduling,omitempty"`
-	// Frontend is the API server that renders and tokenizes each request before the
-	// engine sees it: python, the default, or rust (VLLM_USE_RUST_FRONTEND=1). See
-	// Frontend.
-	Frontend Frontend `yaml:"frontend,omitempty"`
-
-	// DisableCascadeAttn follows the engine default of true: cascade attention is
-	// opt-in. When enabled it changes the attention primitive itself, reading a
-	// shared prefix once per batch rather than once per request.
-	DisableCascadeAttn *bool `yaml:"disable_cascade_attn,omitempty"`
-
-	// EnablePrefixCaching decides whether a request may skip recomputing a prefix
-	// another request already placed in the cache. It changes the WORK a prefill does,
-	// not only the memory it occupies: with caching on, a matched prefix arrives as
-	// already-computed tokens and only the remainder is charged, so the same prompt
-	// costs a different number of scheduled tokens depending on this one field.
-	//
-	// A cost model cannot derive it. Whether a prefix hits depends on what else the
-	// deployment served, so the engine's own setting is the only way to know whether
-	// the hit was available at all.
-	//
-	// Tri-state: nil takes the engine default, which is TRUE in vLLM -- caching is on
-	// unless disabled. A deployment that omits this therefore describes one WITH prefix
-	// caching, which is why the field is a pointer: false and unstated are different
-	// deployments, and a benchmark that passes --no-enable-prefix-caching cannot be
-	// expressed by omission.
-	//
-	// The field name follows the engine's CLI flag (--enable-prefix-caching /
-	// --no-enable-prefix-caching).
-	EnablePrefixCaching *bool `yaml:"enable_prefix_caching,omitempty"`
-
-	// SWABoundedReplay is CacheConfig.swa_bounded_replay, DeepSeek-V4.1's sliding-window
-	// bounded replay (--swa-bounded-replay / --no-swa-bounded-replay). True keeps the
-	// sliding-window cache out of prefix caching and recomputes a hit's last sliding window;
-	// false lets the window cache take part in prefix caching (retained window tails).
-	//
-	// Tri-state: nil is the engine's resolution. vLLM v0.31.0 defaults it to true
-	// (vllm/config/cache.py:242) and keeps it only under the V2 model runner, without
-	// prefill context parallelism and not on ROCm (models/deepseek_v41/attention.py:519-546).
-	// Only DeepSeek-V4.1 reads it.
-	SWABoundedReplay *bool `yaml:"swa_bounded_replay,omitempty"`
-
-	BlockSize           int `yaml:"block_size,omitempty"`
-	MaxNumBatchedTokens int `yaml:"max_num_batched_tokens,omitempty"`
-	MaxNumSeqs          int `yaml:"max_num_seqs,omitempty"`
-	// LongPrefillTokenThreshold is SchedulerConfig.long_prefill_token_threshold: the most
-	// tokens of one prefill scheduled in a step, so a long prompt cannot take the whole
-	// token budget and stall the decodes beside it. Zero, the default, leaves prefills
-	// uncapped. The engine refuses one above max_model_len (vllm/config/scheduler.py
-	// verify_max_model_len), and whether a request alone in the batch is exempt is a
-	// release fact (rules.Pack.LongPrefillExemptsLoneRequest).
-	//
-	// The field name follows the engine's CLI flag (--long-prefill-token-threshold).
-	LongPrefillTokenThreshold int `yaml:"long_prefill_token_threshold,omitempty"`
-	// MaxModelLen is the context length: omitted, auto, or a count. See MaxModelLen.
-	MaxModelLen MaxModelLen `yaml:"max_model_len,omitempty"`
-
-	// Quantization is the weight format the engine serves in, where it differs from
-	// the format the checkpoint is stored in. A model whose config.json says bfloat16
-	// can be served fp8, and the served format is what sets the weight-read bytes, the
-	// compute peak and the GEMM efficiency envelope — so a deployment that omits this
-	// when it set it is priced against the wrong three constants at once.
-	//
-	// Empty means the checkpoint's own format governs, which is the common case: a
-	// checkpoint that already carries a quantization_config needs nothing here,
-	// because the model graph records the format the weights are in.
-	//
-	// The field name follows the engine's CLI flag (--quantization).
-	Quantization string `yaml:"quantization,omitempty"`
-
-	// CacheDType is the KV cache format. With TP it is one of the two fields that
-	// divide per-rank KV bytes, so a capacity answer is wrong without it.
-	CacheDType string `yaml:"cache_dtype,omitempty"`
-	// MambaCacheDType and MambaSSMCacheDType size a recurrent stack's state; the
-	// second covers the SSM state alone where it differs from the convolutional one.
-	MambaCacheDType    string `yaml:"mamba_cache_dtype,omitempty"`
-	MambaSSMCacheDType string `yaml:"mamba_ssm_cache_dtype,omitempty"`
-	// MoEBackend selects the expert-kernel backend (--moe-backend). Empty is the engine's
-	// "auto". A mega-MoE backend changes more than the expert kernel: it is one of the
-	// conditions under which DeepSeek-V4.1 turns on its own sequence parallelism, which
-	// replaces each attention all-reduce with an all-gather and reduce-scatter pair.
-	// Which names a release accepts is its rules pack's to say.
-	MoEBackend string `yaml:"moe_backend,omitempty"`
-	// MambaCacheMode decides whether recurrent state is fixed per sequence or
-	// proportional to the context bound — a difference of three orders of magnitude,
-	// and the reason a memory interface needs both a fixed and a variable term.
-	MambaCacheMode string `yaml:"mamba_cache_mode,omitempty"`
-
-	GPUMemoryUtilization float64 `yaml:"gpu_memory_utilization,omitempty"`
-
-	// SchedulingPolicy affects which requests join a batch and whether one is
-	// preempted, not what a batch costs — so a cost model reads it only to reproduce
-	// a trace faithfully, and a preempted request's recompute arrives as ordinary
-	// scheduled tokens on a later step.
-	//
-	// The field name follows the engine's CLI flag (--scheduling-policy) rather than
-	// its internal config field (policy), because a deployment is written by whoever
-	// launched the engine.
-	SchedulingPolicy string `yaml:"scheduling_policy,omitempty"`
-
-	DBO         *DBO         `yaml:"dbo,omitempty"`
-	EPLB        *EPLB        `yaml:"eplb,omitempty"`
-	Speculative *Speculative `yaml:"speculative,omitempty"`
-
-	// EngramConfig is where DeepSeek-V4.1's Engram tables live and how they are shared.
-	// It decides the residency of every model Gather whose residency_control is
-	// engram_cpu_offload. Absent means the engine's defaults.
-	EngramConfig *EngramConfig `yaml:"engram_config,omitempty"`
-
-	// The decode-context-parallel knobs. Each changes what a DCP decode step costs, and
-	// each is a REQUEST: the engine fills an unstated one with its default, and a model
-	// may override the first two from its own configuration hook (set_dcp_defaults), so
-	// the value that runs is the resolver's to report. They have no effect when dcp is 1.
-	//
-	// DCPCommBackend selects the collectives a DCP decode layer runs: "ag_rs" is a query
-	// all-gather, an LSE all-gather and an output reduce-scatter; "a2a" replaces the last
-	// two with one all-to-all. Empty takes the engine default, "ag_rs". Which names a
-	// release accepts is that release's rules pack's to say.
-	DCPCommBackend string `yaml:"dcp_comm_backend,omitempty"`
-	// DCPQReplicate requests replicating the MLA query projection at load time, so each
-	// rank materialises the full group-local head set and skips the query all-gather, at
-	// the cost of computing the projection redundantly.
-	//
-	// Tri-state: nil lets the engine (or the model's hook) decide, which by default is
-	// false.
-	DCPQReplicate *bool `yaml:"dcp_q_replicate,omitempty"`
-	// CPKVCacheInterleaveSize is how many consecutive tokens one DCP rank holds before
-	// the next rank takes over, which sets each rank's share of a sequence: 1 stripes
-	// token by token, block_size block by block.
-	//
-	// Zero means unstated, which is not the same request as 1 even though 1 is the
-	// default. With a KV connector configured the engine pins the size to the block
-	// size, and when it does depends on the release: v0.29.0 pins it under any KV
-	// connector, stated or not; v0.31.0 only under NIXL, and only when unstated. So the
-	// size that runs is the resolver's to report, and stating 1 is a different request
-	// from stating nothing. The deprecated dcp_kv_cache_interleave_size it replaced is
-	// deliberately not carried.
-	CPKVCacheInterleaveSize int `yaml:"cp_kv_cache_interleave_size,omitempty"`
-}
-
-// DBO is dual-batch overlap: splitting a batch so one microbatch's communication
-// hides under the other's compute. The thresholds are in total batch tokens, and
-// which one applies turns on whether every request schedules the same token count.
-//
-// The YAML names match the engine's own flags (--enable-dbo,
-// --dbo-decode-token-threshold) rather than being shortened by the nesting, because
-// a deployment is written by whoever launched the engine and a renamed field makes
-// them translate.
-//
-// The thresholds are pointers because a stated 0 and an unstated threshold are
-// different launches: unstated takes the engine's default, and 0 is a value the engine
-// accepts as a field and refuses at startup once dual-batch overlap is on.
-type DBO struct {
-	Enabled               bool `yaml:"enable_dbo"`
-	DecodeTokenThreshold  *int `yaml:"dbo_decode_token_threshold,omitempty"`
-	PrefillTokenThreshold *int `yaml:"dbo_prefill_token_threshold,omitempty"`
-}
-
-// EPLB is expert-parallel load balancing. NumRedundantExperts is not cosmetic: with
-// EPLB enabled the EP width must divide the physical expert count, so this field
-// decides whether a layout is feasible at all.
-type EPLB struct {
-	Enabled             bool `yaml:"enable_eplb"`
-	NumRedundantExperts int  `yaml:"num_redundant_experts,omitempty"`
-	WindowSize          int  `yaml:"window_size,omitempty"`
-	StepInterval        int  `yaml:"step_interval,omitempty"`
-}
-
-// Speculative is the draft configuration. The method name is engine-version data,
-// validated by a rules pack rather than by this schema.
-type Speculative struct {
-	Method        string `yaml:"method"`
-	NumSpecTokens int    `yaml:"num_spec_tokens"`
-}
-
-// EngramConfig mirrors the cost-bearing keys of vLLM's --engram-config (v0.31.0
-// vllm/config/engram.py). Each is a tri-state request: nil takes the engine default.
-//
-// Together they decide where each table lives and how many ranks split it. A table is
-// always split by hash head across the tensor-parallel ranks. When the node's
-// data-parallel replicas do not share one host copy and more than one of them is on the
-// node, it is split across those replicas too, tp x local-dp ways, and each lookup is
-// all-gathered over them (vllm/models/deepseek_v41/nvidia/engram.py _get_shard_info).
-// When they share one, each replica keeps the TP split and the node holds one copy.
-//
-// embedding_across_dp is not carried: in v0.31.0 it sizes a process group that
-// DeepSeek-V4.1's Engram path does not use.
-type EngramConfig struct {
-	// CPUOffload keeps the tables in pinned host memory, read over the host link through
-	// UVA. Nil is the default, true. False allocates them in HBM, split the same way.
-	CPUOffload *bool `yaml:"cpu_offload,omitempty"`
-	// DPSharedMemory keeps one host copy of every tensor-parallel shard per node, in
-	// /dev/shm, shared by the node's data-parallel replicas. Nil lets the engine decide,
-	// which it does by enabling it when cpu_offload is on, use_thp is off, dp exceeds
-	// one and elastic EP is off (resolve_dp_shared_memory). It then falls back to
-	// splitting the table across the replicas when they are not co-located or /dev/shm
-	// cannot hold it.
-	DPSharedMemory *bool `yaml:"dp_shared_memory,omitempty"`
-	// UseTHP backs a per-rank host table with transparent huge pages. It is carried
-	// because it changes placement, not only page size: the engine refuses it with
-	// dp_shared_memory, and its default resolution leaves sharing off when it is on.
-	UseTHP *bool `yaml:"use_thp,omitempty"`
-}
-
 // Offload is the KV tier hierarchy below HBM.
 type Offload struct {
 	Tiers []Tier `yaml:"tiers"`
 	// EvictionPolicy names the KV-offload cache policy. The engine registers its in-tree
-	// policies with a CachePolicyFactory (lru, arc in v0.29.0) and admits out-of-tree ones
+	// policies with a CachePolicyFactory (lru, arc) and admits out-of-tree ones
 	// through a module path — the same extensible-registry shape as the connector and
 	// quantization vocabularies. "lru" is the default only when the field is ABSENT; a
 	// SUPPLIED name the factory does not know raises at launch rather than falling back. So
@@ -441,6 +196,10 @@ type Offload struct {
 	Connector string `yaml:"connector,omitempty"`
 	// Spec names the offloading spec, e.g. a CPU-only spec or a tiering spec.
 	Spec string `yaml:"spec,omitempty"`
+	// ConnectorOptions are the offload connector's own options, held unopened like a pool's
+	// engine block: the engine model opens and checks them
+	// (rules.EngineRules.CheckConnectorOptions).
+	ConnectorOptions EngineBlock `yaml:"connector_options,omitempty"`
 }
 
 // Tier is one offload level: a device class from the catalog, and how much of it.
@@ -460,43 +219,11 @@ type PDTransfer struct {
 	Connector string `yaml:"connector"`
 }
 
-// Frontend is the API server process a pool serves through, which renders the chat
-// template and tokenizes every prompt before the request reaches the engine core. vLLM
-// selects it with an environment variable, not a flag: VLLM_USE_RUST_FRONTEND defaults to
-// 0 (v0.31.0 vllm/envs.py:169, 1441-1443; the same at v0.29.0), and only when it is set
-// does `vllm serve` launch the vllm-rs binary instead of the Python API server
-// (vllm/entrypoints/cli/serve.py:64-66). The two tokenize the same prompt at very
-// different rates -- the Rust frontend loads its tokenizer through fastokens -- so the
-// per-prompt-token admission time a request waits before it is scheduled depends on it.
-//
-//   - python, the default: the Python OpenAI server, which renders and tokenizes with the
-//     HF fast tokenizer before it answers (vllm/entrypoints/openai/chat_completion/
-//     serving.py:285, 378).
-//   - rust: the vllm-rs frontend (rust/src/chat/src/lib.rs:364-368 prepares, then
-//     generates).
-type Frontend string
-
-const (
-	FrontendPython Frontend = "python"
-	FrontendRust   Frontend = "rust"
-)
-
-// Valid reports whether f is a recognized frontend; empty is the default, python.
-func (f Frontend) Valid() bool { return f == "" || f == FrontendPython || f == FrontendRust }
-
-// Effective returns the frontend with its default applied.
-func (f Frontend) Effective() Frontend {
-	if f == "" {
-		return FrontendPython
-	}
-	return f
-}
-
-// DPLoadBalancing is how a data-parallel pool's ranks are exposed to clients, vLLM's
-// three launch modes (v0.31.0 vllm/engine/arg_utils.py:536-538, 1225-1242):
+// DPLoadBalancing is how a data-parallel pool's ranks are exposed to clients, the engine's
+// three launch modes (engine/arg_utils.py:536-538, 1225-1242):
 //
 //   - internal, the default: one API endpoint, and the engine's core client balances
-//     every request across all ranks (DPLBAsyncMPClient, vllm/v1/engine/core_client.py:
+//     every request across all ranks (DPLBAsyncMPClient, v1/engine/core_client.py:
 //     155-166);
 //   - hybrid (--data-parallel-hybrid-lb): one endpoint per node, balancing across that
 //     node's ranks; a router chooses the node;
@@ -505,7 +232,7 @@ func (f Frontend) Effective() Frontend {
 //     endpoint (DPAsyncMPClient), and a router chooses the rank.
 //
 // The api server count is not part of it: --api-server-count sets how many frontend
-// processes share an endpoint (vllm/entrypoints/cli/serve.py:105-127), not which ranks a
+// processes share an endpoint (entrypoints/cli/serve.py:105-127), not which ranks a
 // router can reach.
 type DPLoadBalancing string
 

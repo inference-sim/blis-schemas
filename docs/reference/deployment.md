@@ -31,7 +31,7 @@ makes a layout feasible depends on the cluster.</p>
 | `role` | string | yes | `colocated`, `prefill` or `decode`. |
 | `nodes` | integer | yes | Nodes in the pool, at least 1. |
 | `parallel` | mapping | yes | The parallel layout of each engine in the pool. |
-| `engine` | mapping | no | Engine settings for the pool. Each omitted setting takes the engine's default. |
+| `engine` | mapping | no | The engine's settings for the pool, held unopened; the engine model opens and checks it. See below. |
 | `labels` | mapping | no | Kubernetes labels on the pool's model-server pods, as its pod template sets them. The router selects and filters endpoints by them. `llm-d.ai/role` is derived from `role` (`colocated` -> `prefill-decode`, `prefill` -> `prefill`, `decode` -> `decode`); given here, it must have that value. |
 
 A pool may run several engines with the same layout and settings. Its `nodes` is the
@@ -62,121 +62,12 @@ checks below in more depth.
 
 ### `engine`
 
-Every engine key is optional. Some are requests the engine may not honor:
-`disable_custom_all_reduce`, `allreduce_backend`, `async_scheduling`,
-`disable_cascade_attn` and the decode-context keys. A cost model reports what it resolved
-in its [`Resolution`](kernel.md#resolution). Which values each string key accepts depends
-on the engine release and is checked by its [rules pack](rules.md).
-
-Communication:
-
-<!-- fields: deployment.Engine -->
-
-| Key | Type | Required | Meaning |
-|---|---|---|---|
-| `all2all_backend` | string | no | How a mixture-of-experts (MoE) layer sends tokens to their experts and back. |
-| `disable_custom_all_reduce` | boolean | no | Disable the custom all-reduce GPU kernel, which runs on the streaming multiprocessors (SMs) rather than the network. Omitted means false, so the kernel is used where the layout allows. |
-| `allreduce_backend` | string | no | `custom` or `nccl`, stated directly instead of through `disable_custom_all_reduce`. Must not contradict it. |
-| `dbo` | mapping | no | Dual-batch overlap, below. |
-
-Scheduling and memory:
-
-<!-- fields: deployment.Engine -->
-
-| Key | Type | Required | Meaning |
-|---|---|---|---|
-| `block_size` | integer | no | KV block size in tokens. |
-| `max_num_batched_tokens` | integer | no | Token budget per step. |
-| `max_num_seqs` | integer | no | Sequence cap per step. |
-| `long_prefill_token_threshold` | integer | no | The most tokens of one prefill scheduled in a step, so a long prompt cannot take the whole token budget from the decodes beside it. Not negative; omitted or 0 leaves prefills uncapped. The engine refuses one above `max_model_len`. 0.31.0 waives it for a request alone in the scheduler; 0.29.0 does not. |
-| `max_model_len` | integer or `auto` | no | Context length. `auto` (or `-1`) asks the engine to fit the window to the KV memory it has left, which is a different request from omitting the key: omitted, the engine uses the model's whole window and refuses to start if it does not fit. |
-| `gpu_memory_utilization` | number | no | Fraction of GPU memory the engine may use, in [0, 1]. Zero means the engine's default. |
-| `scheduling_policy` | string | no | `fcfs` or `priority` in vLLM 0.29.0. |
-| `async_scheduling` | boolean | no | Omitted means the engine decides through its own disqualifying conditions. |
-| `frontend` | string | no | The API server that renders and tokenizes each prompt: one of the [frontends](vocabularies.md#frontends). Omitted, `python`. `rust` is vLLM's vllm-rs frontend, selected by the environment variable `VLLM_USE_RUST_FRONTEND=1`, not a flag. It changes how long a request waits for admission, per prompt token. |
-| `cudagraph_mode` | string | no | CUDA graph capture strategy. |
-| `max_cudagraph_capture_size` | integer | no | `compilation_config.max_cudagraph_capture_size`: the largest step, in tokens, a CUDA graph is captured for; a larger step runs eager. At least 1. Omitted, the release default, min(`max_num_seqs` x decode query length x 2, 512), or 1024 on SM100. The engine caps it at `max_num_batched_tokens` and truncates it to the largest size it generates. `cudagraph_mode: NONE`, or `--enforce-eager`, which has no field here, captures nothing. |
-| `cudagraph_capture_sizes` | list of integers | no | `compilation_config.cudagraph_capture_sizes`: the exact step sizes to capture, each at least 1, not empty. Sizes above `max_num_batched_tokens` are dropped. With `max_cudagraph_capture_size` too, that must be the largest kept, or the engine refuses the pair. |
-
-Weights and caches:
-
-<!-- fields: deployment.Engine -->
-
-| Key | Type | Required | Meaning |
-|---|---|---|---|
-| `quantization` | string | no | Weight format the engine serves, where it differs from the checkpoint's. Omitted means the checkpoint's own format. |
-| `moe_backend` | string | no | The expert-kernel backend, `--moe-backend`. Omitted means `auto`. A mega-MoE backend is one of the conditions under which DeepSeek-V4.1 turns on its own sequence parallelism. |
-| `cache_dtype` | string | no | KV cache format. |
-| `enable_prefix_caching` | boolean | no | Omitted means true, vLLM's default. `false` describes a deployment without prefix caching. |
-| `swa_bounded_replay` | boolean | no | DeepSeek-V4.1 SWA bounded replay (`--swa-bounded-replay` / `--no-swa-bounded-replay`). `true` keeps the sliding-window cache out of prefix caching and recomputes a hit's last sliding window; `false` lets the window cache take part in prefix caching (retained window tails). Omitted, the engine's resolution: on in vLLM 0.31.0 under the V2 model runner, without prefill context parallelism and not on ROCm. Only DeepSeek-V4.1 reads it. |
-| `mamba_cache_dtype` | string | no | Format of a recurrent layer's state. |
-| `mamba_ssm_cache_dtype` | string | no | Format of the SSM state alone, where it differs. |
-| `mamba_cache_mode` | string | no | Whether recurrent state is fixed per sequence or grows with context. |
-| `disable_cascade_attn` | boolean | no | Cascade attention reads a prefix shared by a batch once rather than once per request. Omitted means `true`, so it is disabled unless this is set to `false`. |
-
-Speculation and experts:
-
-<!-- fields: deployment.Engine -->
-
-| Key | Type | Required | Meaning |
-|---|---|---|---|
-| `speculative` | mapping | no | Speculative decoding, below. |
-| `eplb` | mapping | no | Expert-parallel load balancing, below. |
-| `engram_config` | mapping | no | Where DeepSeek-V4.1's Engram tables live, below. Decides the residency of every model `Gather` whose `residency_control` is `engram_cpu_offload`. |
-
-Decode-context parallelism. These have no effect when `dcp` is 0 or 1:
-
-<!-- fields: deployment.Engine -->
-
-| Key | Type | Required | Meaning |
-|---|---|---|---|
-| `dcp_comm_backend` | string | no | The collectives a decode step runs: `ag_rs` (the default) or `a2a` in vLLM 0.29.0. |
-| `dcp_q_replicate` | boolean | no | Replicate the query projection of multi-head latent attention (MLA) on every rank, to skip a query all-gather. |
-| `cp_kv_cache_interleave_size` | integer | no | Consecutive tokens one rank holds before the next takes over. Zero means unstated, which is a different request from 1. |
-
-#### `engine.dbo`
-
-<!-- fields: deployment.DBO -->
-
-| Key | Type | Required | Meaning |
-|---|---|---|---|
-| `enable_dbo` | boolean | no | Split a batch so one half's communication overlaps the other's compute. |
-| `dbo_decode_token_threshold` | integer | no | Batch size in tokens at or above which a uniform-decode batch is split. Omitted takes the engine's default. With `enable_dbo` on, vLLM 0.31.0 refuses a stated value below the two microbatches, 0 or 1. Not negative. |
-| `dbo_prefill_token_threshold` | integer | no | Batch size in tokens at or above which any other batch is split. As for the decode threshold. |
-
-#### `engine.eplb`
-
-<!-- fields: deployment.EPLB -->
-
-| Key | Type | Required | Meaning |
-|---|---|---|---|
-| `enable_eplb` | boolean | no | Enable expert-parallel load balancing. |
-| `num_redundant_experts` | integer | no | Extra expert replicas. With load balancing on, the expert-parallel width must divide the experts plus these. |
-| `window_size` | integer | no | Load-balancing window. |
-| `step_interval` | integer | no | Steps between rebalances. |
-
-#### `engine.speculative`
-
-<!-- fields: deployment.Speculative -->
-
-| Key | Type | Required | Meaning |
-|---|---|---|---|
-| `method` | string | yes | The draft method. Which names are valid depends on the engine release. |
-| `num_spec_tokens` | integer | yes | Draft tokens per step, at least 1. |
-
-#### `engine.engram_config`
-
-The cost-bearing keys of vLLM's `--engram-config`. All three are optional and take the engine's
-default when omitted. The rules pack for 0.31.0 refuses the block on a model with no Engram
-lookups.
-
-<!-- fields: deployment.EngramConfig -->
-
-| Key | Type | Required | Meaning |
-|---|---|---|---|
-| `cpu_offload` | boolean | no | Keep the tables in pinned host memory, read over the host link. Omitted means true. `false` puts them in GPU memory. |
-| `dp_shared_memory` | boolean | no | Keep one host copy per node, shared by its data-parallel replicas. Omitted lets the engine decide: it enables it when `cpu_offload` is on, `use_thp` is off, `dp` exceeds 1 and elastic EP is off. Without sharing, the node's co-located replicas split each table between them instead. |
-| `use_thp` | boolean | no | Back a per-rank host table with transparent huge pages. Refused with `dp_shared_memory`. |
+A pool's `engine` block is the engine's own settings, and this schema holds it unopened: it
+loads the block as written and passes it through unchanged. The engine model that a
+scenario's `engine_version` selects opens it, and its rules check it. A validator passes
+those rules in (`Bundle.Rules`), and they report a problem in the block at its path below
+`deployment.pools[i].engine`. For vLLM the keys, their defaults and their checks are
+blis-vllm's (`rules/engineconfig`, with its reference in blis-vllm's `docs/engine-config.md`).
 
 ## Offload
 
@@ -189,6 +80,13 @@ lookups.
 | `prefetch_depth` | integer | no | How many steps ahead a fetch is issued. |
 | `connector` | string | no | The KV connector that implements offload. |
 | `spec` | string | no | The offloading spec, such as `CPUOffloadingSpec`. |
+| `connector_options` | mapping | no | The connector's own options, held unopened for the engine model; see below. |
+
+### `offload.connector_options`
+
+The offload connector's own options. This schema holds them unopened, as it does a pool's
+`engine` block, and the engine model's rules check them (`Bundle.Rules`). A problem in them
+is reported at its path below `deployment.offload.connector_options`.
 
 ### `offload.tiers`
 
@@ -251,23 +149,11 @@ A deployment is invalid if
 - a `prefill` pool has no `decode` pool, a `decode` pool has no `prefill` pool, or a
   `colocated` pool appears beside either;
 - a `prefill` pool is present and `pd_transfer` is absent;
-- an engine count (`block_size`, `max_num_batched_tokens`, `max_num_seqs`,
-  `cp_kv_cache_interleave_size`) is negative, or `max_model_len` is below `-1`. A
-  `max_model_len` that is not a whole number, `auto`, or a number with a `k`/`m`/`g`/`t`
-  or `K`/`M`/`G`/`T` suffix fails to load, and so does one that comes to zero or is too
-  large to hold;
-- `gpu_memory_utilization` is not finite or lies outside [0, 1];
-- `max_cudagraph_capture_size` is stated below 1, or `cudagraph_capture_sizes` is stated
-  empty or lists a size below 1;
-- `disable_custom_all_reduce` is true while `allreduce_backend` is `custom`;
-- `dbo` states a negative threshold, or an enabled `eplb` a negative
-  `num_redundant_experts`;
-- `speculative` is present with an empty `method` or with `num_spec_tokens` below 1;
 - `offload` is present with no tiers, a tier is unnamed or named twice, a tier's `bytes`
-  is below 1, or `prefetch_depth` is negative.
+  is below 1, or `prefetch_depth` is negative;
 
-It draws a warning if expert parallelism is enabled but the derived width is 1, or if
-`allreduce_backend` is `nccl` while `disable_custom_all_reduce` is explicitly `false`.
+It draws a warning if expert parallelism is enabled but the derived width is 1. The checks of
+a pool's `engine` block are its engine model's.
 
 ### Against its scenario's cluster
 

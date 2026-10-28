@@ -7,7 +7,7 @@ package model
 // enough to guess. DeepSeek-V4.1-Flash's routed experts are MXFP4, one E8M0 byte per 32
 // elements, so 0.53125 B per parameter rather than 0.5: 288.8 GB for the 40 target
 // layers' 384 experts rather than 271.8. Its dense FP8 weights ship with one E8M0 byte
-// per 32 x 32 block, and vLLM v0.31.0 expands those to one per 1 x 32 at load
+// per 32 x 32 block, and the engine expands those to one per 1 x 32 at load
 // (modelopt.py KMxfp8Static, repeat_interleave over the block rows), so the resident
 // overhead is 1/32 B per parameter, 32 times what the checkpoint's own scale tensors
 // suggest. What is resident is what a cost model

@@ -9,6 +9,7 @@ import (
 	"github.com/inference-sim/blis-schemas/spec/router"
 	"github.com/inference-sim/blis-schemas/spec/scenario"
 	"github.com/inference-sim/blis-schemas/spec/workload"
+	"gopkg.in/yaml.v3"
 )
 
 func digest(c string) string { return strings.Repeat(c, 64) }
@@ -42,7 +43,7 @@ func exactRun() *MeasuredRun {
 		Deployment: &deployment.Deployment{Kind: "Deployment", Name: "tp4", Pools: []deployment.Pool{{
 			Role: deployment.RoleColocated, Nodes: 1,
 			Parallel: deployment.Parallelism{TP: 4, PP: 1, DP: 1},
-			Engine:   deployment.Engine{MaxModelLen: 8192}}}},
+			Engine:   engineBlock("{max_model_len: 8192}")}}},
 		Router: &router.Router{Kind: router.KindDirect},
 		Workload: &workload.Binding{Trace: &workload.TraceRef{Data: "trace.csv", SHA256: digest("d"),
 			Header: workload.TraceHeader{Version: 2, TimeUnit: "us", Mode: "generated"}}},
@@ -392,5 +393,23 @@ func TestVocabulariesAreClosed(t *testing.T) {
 		if strings.Join(c.got, ",") != strings.Join(c.want, ",") {
 			t.Errorf("%s = %v, want %v", name, c.got, c.want)
 		}
+	}
+}
+
+// engineBlock is a pool's engine block as a document states it, held unopened.
+func engineBlock(doc string) deployment.EngineBlock {
+	var n yaml.Node
+	if err := yaml.Unmarshal([]byte(doc), &n); err != nil {
+		panic(err)
+	}
+	// A block stated in flow style is written back in block style, as a document holds it.
+	unflow(n.Content[0])
+	return deployment.NewEngineBlock(n.Content[0])
+}
+
+func unflow(n *yaml.Node) {
+	n.Style &^= yaml.FlowStyle
+	for _, c := range n.Content {
+		unflow(c)
 	}
 }

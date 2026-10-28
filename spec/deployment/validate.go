@@ -218,7 +218,7 @@ func (d *Deployment) ValidateAgainstCluster(c ClusterConstraints) *validate.Prob
 // (get_physical_gpu_ids_for_local_dp_rank). That share depends on the engine's node
 // count n, which the schema does not carry and the launch chooses:
 //
-//   - n is 1 for each process llm-d starts — one vLLM per pod, joined by
+//   - n is 1 for each process llm-d starts — one engine per pod, joined by
 //     --data-parallel-start-rank — so local_world is the whole replica.
 //   - For n above 1, the engine splits each replica over n / (dp / dp_local) nodes
 //     (nnodes_within_dp); that must divide world, which the multiprocessing executor
@@ -227,7 +227,7 @@ func (d *Deployment) ValidateAgainstCluster(c ClusterConstraints) *validate.Prob
 // So the bound asserted is: some n from 1 to the pool's node count gives a split under
 // which every local replica's devices lie on the node. That refuses exactly what no
 // launch can place — including a split that would need more nodes than the pool owns —
-// and nothing the engine runs. It is the same at v0.29.0, which rounds n / (dp /
+// and nothing the engine runs. It is the same in a release that rounds n / (dp /
 // dp_local) down, and later releases, which require it to divide: rounding n down to a
 // multiple gives the same split, so the set of placeable layouts is identical.
 //
@@ -492,7 +492,6 @@ func (d *Deployment) validatePools(p *validate.Problems) {
 			p.Field(at+".nodes", "must be at least 1")
 		}
 		validateParallelism(p, at, pool.Parallel)
-		validateEngine(p, at, pool.Engine)
 	}
 
 	// A disaggregated deployment needs both halves; one alone has nowhere to send or
@@ -521,7 +520,7 @@ func validateParallelism(p *validate.Problems, at string, pl Parallelism) {
 		p.Field(at+".parallel", "context-parallel widths must not be negative")
 	}
 	// Whether prefill-context parallelism may be combined with data parallelism is
-	// not a field check: it depends on the engine release. v0.29.0 refuses it; the
+	// not a field check: it depends on the engine release. An earlier release refuses it; the
 	// engine supports it from e6dc16cebd, and llm-d deploys it (DP 4 x PCP 8). A
 	// release that refuses it says so in its rules pack.
 	validateDecodeContextParallel(p, at, pl)
@@ -637,88 +636,6 @@ func admissibleDCP(pcp int, block *big.Int) []*big.Int {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Cmp(out[j]) < 0 })
 	return out
-}
-
-func validateEngine(p *validate.Problems, at string, e Engine) {
-	if !e.Frontend.Valid() {
-		p.Field(at+".engine.frontend", "%q is not one of %v", e.Frontend,
-			[]Frontend{FrontendPython, FrontendRust})
-	}
-	for field, v := range map[string]int{
-		"block_size": e.BlockSize, "max_num_batched_tokens": e.MaxNumBatchedTokens,
-		"max_num_seqs":                 e.MaxNumSeqs,
-		"long_prefill_token_threshold": e.LongPrefillTokenThreshold,
-		"cp_kv_cache_interleave_size":  e.CPKVCacheInterleaveSize,
-	} {
-		if v < 0 {
-			p.Field(at+".engine."+field, "must not be negative")
-		}
-	}
-	// -1 is auto, the one negative the engine gives a meaning; anything below it is a
-	// mistake.
-	if e.MaxModelLen < MaxModelLenAuto {
-		p.Field(at+".engine.max_model_len", "must be a positive count, or auto (-1), got %d", e.MaxModelLen)
-	}
-	// Stating both the boolean and the resolved name invites them to disagree, and
-	// which one an implementation honours would be arbitrary.
-	if e.DisableCustomAllReduce != nil && e.AllReduceBackend != "" {
-		disabled := *e.DisableCustomAllReduce
-		if disabled && e.AllReduceBackend == "custom" {
-			p.Field(at+".engine.allreduce_backend",
-				"requests the custom kernel while disable_custom_all_reduce is true")
-		}
-		if !disabled && e.AllReduceBackend == "nccl" {
-			p.Warnf("%s.engine: allreduce_backend names nccl while disable_custom_all_reduce is false; the engine would use the custom kernel where reachable", at)
-		}
-	}
-	// gpu_memory_utilization is a non-pointer float, so an omitted one is zero. Zero is
-	// the unset sentinel — the engine picks its default — and a stated fraction lies in
-	// (0, 1], so the accepted range is [0, 1]. The message states that range rather than
-	// (0, 1] so it does not read as rejecting the zero the check deliberately allows. The
-	// finite check runs first: a NaN would pass the range comparison (NaN < 0 and NaN > 1
-	// are both false) and reach the engine as a garbage fraction.
-	if p.FiniteField(at+".engine.gpu_memory_utilization", e.GPUMemoryUtilization) &&
-		(e.GPUMemoryUtilization < 0 || e.GPUMemoryUtilization > 1) {
-		p.Field(at+".engine.gpu_memory_utilization",
-			"must lie in [0, 1] (0 means unset), got %v", e.GPUMemoryUtilization)
-	}
-	// The engine asserts the capture maximum is at least 1 once it is capped at
-	// max_num_batched_tokens, and that a stated size list is non-empty (v0.31.0
-	// vllm/config/vllm.py _set_cudagraph_sizes). A size below 1 captures no step.
-	if m := e.MaxCUDAGraphCaptureSize; m != nil && *m < 1 {
-		p.Field(at+".engine.max_cudagraph_capture_size", "must be at least 1, got %d; omit it for the release default", *m)
-	}
-	if e.CUDAGraphCaptureSizes != nil && len(e.CUDAGraphCaptureSizes) == 0 {
-		p.Field(at+".engine.cudagraph_capture_sizes", "must list at least one size; omit it to generate them")
-	}
-	for i, s := range e.CUDAGraphCaptureSizes {
-		if s < 1 {
-			p.Field(fmt.Sprintf("%s.engine.cudagraph_capture_sizes[%d]", at, i), "must be at least 1, got %d", s)
-		}
-	}
-	// The engine types both thresholds Field(ge=0) whether or not overlap is enabled.
-	if e.DBO != nil {
-		for field, v := range map[string]*int{
-			"dbo_decode_token_threshold":  e.DBO.DecodeTokenThreshold,
-			"dbo_prefill_token_threshold": e.DBO.PrefillTokenThreshold,
-		} {
-			if v != nil && *v < 0 {
-				p.Field(at+".engine.dbo."+field, "must not be negative")
-			}
-		}
-	}
-	if e.EPLB != nil && e.EPLB.Enabled && e.EPLB.NumRedundantExperts < 0 {
-		p.Field(at+".engine.eplb.num_redundant_experts", "must not be negative")
-	}
-	if e.Speculative != nil {
-		if e.Speculative.Method == "" {
-			p.Field(at+".engine.speculative.method", "required")
-		}
-		if e.Speculative.NumSpecTokens < 1 {
-			p.Field(at+".engine.speculative.num_spec_tokens",
-				"must be at least 1; omit the block instead of declaring zero drafts")
-		}
-	}
 }
 
 func (d *Deployment) validateOffload(p *validate.Problems) {

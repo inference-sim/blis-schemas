@@ -5,22 +5,22 @@ import (
 	"math"
 )
 
-// RatesSumTolerance is how far stated per-position rates may sum from AL-1. vLLM logs AL
+// RatesSumTolerance is how far stated per-position rates may sum from AL-1. The engine logs AL
 // to two decimals and each rate to three, so a faithful transcription at K=8 can be off by
 // up to 0.005 + 8*0.0005 = 0.009.
 const RatesSumTolerance = 0.01
 
-// MinimumVarianceRates derives per-position rates from an acceptance length the way vLLM
-// v0.31.0 does for synthetic rejection sampling (SpeculativeConfig.
-// _acceptance_length_to_rates, vllm/config/speculative.py:557-564):
+// MinimumVarianceRates derives per-position rates from an acceptance length the way the engine
+// the engine does for synthetic rejection sampling (SpeculativeConfig.
+// _acceptance_length_to_rates, config/speculative.py:557-564):
 //
 //	rates = [1.0]*floor(AL-1) + [frac(AL-1)] + [0.0]*rest, truncated to K
 //
-// It is how vLLM, and InferenceX's forced agentic runs, realise a published AL, so a
+// It is how the engine, and InferenceX's forced agentic runs, realise a published AL, so a
 // simulator using it reproduces those runs. Natural acceptance spreads more than this
 // schedule, so per-request tails derived from it are optimistic.
 //
-// It refuses a K below 1 and an AL outside [1, K+1], as vLLM's
+// It refuses a K below 1 and an AL outside [1, K+1], as the engine's
 // _resolve_synthetic_acceptance_rates does.
 func MinimumVarianceRates(al float64, k int) ([]float64, error) {
 	if err := CheckLength(al, k); err != nil {
@@ -56,7 +56,7 @@ func CheckLength(al float64, k int) error {
 }
 
 // CheckRates reports whether rates are valid per-position rates for k: k entries, each
-// finite and in [0, 1], non-increasing. vLLM's _resolve_synthetic_acceptance_rates makes
+// finite and in [0, 1], non-increasing. The engine's _resolve_synthetic_acceptance_rates makes
 // the same checks.
 func CheckRates(rates []float64, k int) error {
 	if len(rates) != k {

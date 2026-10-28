@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/inference-sim/blis-schemas/rules"
 	"github.com/inference-sim/blis-schemas/spec/deployment"
 	"github.com/inference-sim/blis-schemas/spec/model"
 	"github.com/inference-sim/blis-schemas/spec/scenario"
@@ -128,7 +129,7 @@ func corpus(name string, nodes, gpusPerNode int, fabric string,
 	s := &scenario.Scenario{
 		Kind: "Scenario", Name: name, Model: "granite-5-230b",
 		Coefficients:  []string{"cost-model-primitives-h200"},
-		EngineVersion: "0.29.0",
+		EngineVersion: "1.0.0",
 		Cluster: scenario.Cluster{Hardware: "h200", Fabric: fabric,
 			Nodes: nodes, GPUsPerNode: gpusPerNode},
 	}
@@ -136,11 +137,11 @@ func corpus(name string, nodes, gpusPerNode int, fabric string,
 	if mutate != nil {
 		mutate(s, d)
 	}
-	return Bundle{Scenario: s, Deployment: d}
+	return Bundle{Scenario: s, Deployment: d, Rules: openAnyEngine}
 }
 
 func pool(role deployment.Role, nodes int, pl deployment.Parallelism,
-	e deployment.Engine) deployment.Pool {
+	e deployment.EngineBlock) deployment.Pool {
 	return deployment.Pool{Role: role, Nodes: nodes, Parallel: pl, Engine: e}
 }
 
@@ -156,17 +157,13 @@ func TestCorpusDeploymentsAreExpressible(t *testing.T) {
 		{
 			what: "single node, tp8, fp8 KV cache, large batched-token bound",
 			b: corpus("granite-h100-tp8", 1, 8, "", []deployment.Pool{
-				pool(deployment.RoleColocated, 1, tp8, deployment.Engine{
-					CacheDType: "fp8", BlockSize: 16, MaxNumBatchedTokens: 32768,
-					MaxNumSeqs: 1024, GPUMemoryUtilization: 0.9,
-					CUDAGraphMode: "FULL_AND_PIECEWISE"}),
+				pool(deployment.RoleColocated, 1, tp8, engineBlock("{cache_dtype: fp8, block_size: 16, max_num_batched_tokens: 32768, max_num_seqs: 1024, gpu_memory_utilization: 0.9, cudagraph_mode: FULL_AND_PIECEWISE}")),
 			}, nil),
 		},
 		{
 			what: "CPU offload with a 1 TiB tier and a lazy connector",
 			b: corpus("granite-h200-offload", 1, 8, "", []deployment.Pool{
-				pool(deployment.RoleColocated, 1, tp8, deployment.Engine{
-					CacheDType: "fp8", BlockSize: 16, GPUMemoryUtilization: 0.9}),
+				pool(deployment.RoleColocated, 1, tp8, engineBlock("{cache_dtype: fp8, block_size: 16, gpu_memory_utilization: 0.9}")),
 			}, func(s *scenario.Scenario, d *deployment.Deployment) {
 				d.Offload = &deployment.Offload{
 					Connector: "OffloadingConnector", Spec: "CPUOffloadingSpec",
@@ -177,8 +174,7 @@ func TestCorpusDeploymentsAreExpressible(t *testing.T) {
 		{
 			what: "multi-tier offload: CPU above NVMe",
 			b: corpus("granite-h200-tiered", 1, 8, "", []deployment.Pool{
-				pool(deployment.RoleColocated, 1, tp8, deployment.Engine{
-					CacheDType: "fp8", BlockSize: 16, GPUMemoryUtilization: 0.9}),
+				pool(deployment.RoleColocated, 1, tp8, engineBlock("{cache_dtype: fp8, block_size: 16, gpu_memory_utilization: 0.9}")),
 			}, func(s *scenario.Scenario, d *deployment.Deployment) {
 				d.Offload = &deployment.Offload{Spec: "TieringOffloadingSpec",
 					EvictionPolicy: "arc", PrefetchDepth: 3,
@@ -192,21 +188,10 @@ func TestCorpusDeploymentsAreExpressible(t *testing.T) {
 			b: corpus("glm-5.3-60node-pd", 60, 8, "ib-400g", []deployment.Pool{
 				pool(deployment.RolePrefill, 36, deployment.Parallelism{TP: 1, PP: 1,
 					DP: 8, DPLocal: 8, EnableExpertParallel: true},
-					deployment.Engine{All2AllBackend: "deepep_high_throughput",
-						CUDAGraphMode: "PIECEWISE", CacheDType: "fp8",
-						BlockSize: 64, GPUMemoryUtilization: 0.9,
-						Speculative: &deployment.Speculative{Method: "glm4_moe_mtp",
-							NumSpecTokens: 1}}),
+					engineBlock("{all2all_backend: deepep_high_throughput, cudagraph_mode: PIECEWISE, cache_dtype: fp8, block_size: 64, gpu_memory_utilization: 0.9, speculative: {method: glm4_moe_mtp, num_spec_tokens: 1}}")),
 				pool(deployment.RoleDecode, 24, deployment.Parallelism{TP: 1, PP: 1,
 					DP: 16, DPLocal: 8, EnableExpertParallel: true},
-					deployment.Engine{All2AllBackend: "deepep_low_latency",
-						CUDAGraphMode: "FULL_AND_PIECEWISE", CacheDType: "fp8",
-						BlockSize: 64, GPUMemoryUtilization: 0.9,
-						DBO: &deployment.DBO{Enabled: true,
-							DecodeTokenThreshold: intp(32), PrefillTokenThreshold: intp(512)},
-						EPLB: &deployment.EPLB{Enabled: true,
-							NumRedundantExperts: 32, WindowSize: 1000,
-							StepInterval: 3000}}),
+					engineBlock("{all2all_backend: deepep_low_latency, cudagraph_mode: FULL_AND_PIECEWISE, cache_dtype: fp8, block_size: 64, gpu_memory_utilization: 0.9, dbo: {enable_dbo: true, dbo_decode_token_threshold: 32, dbo_prefill_token_threshold: 512}, eplb: {enable_eplb: true, num_redundant_experts: 32, window_size: 1000, step_interval: 3000}}")),
 			}, func(s *scenario.Scenario, d *deployment.Deployment) {
 				d.PDTransfer = &deployment.PDTransfer{Connector: "nixl"}
 			}),
@@ -216,9 +201,7 @@ func TestCorpusDeploymentsAreExpressible(t *testing.T) {
 			b: corpus("glm-5.3-flash-32gpu", 4, 8, "ib-400g", []deployment.Pool{
 				pool(deployment.RoleColocated, 4, deployment.Parallelism{TP: 1, PP: 1,
 					DP: 32, DPLocal: 8, EnableExpertParallel: true},
-					deployment.Engine{All2AllBackend: "deepep_low_latency",
-						CacheDType: "fp8", BlockSize: 64,
-						GPUMemoryUtilization: 0.9}),
+					engineBlock("{all2all_backend: deepep_low_latency, cache_dtype: fp8, block_size: 64, gpu_memory_utilization: 0.9}")),
 			}, nil),
 		},
 		{
@@ -226,27 +209,19 @@ func TestCorpusDeploymentsAreExpressible(t *testing.T) {
 			b: corpus("nemotron-h100-eager", 2, 8, "roce-200g", []deployment.Pool{
 				pool(deployment.RoleColocated, 2, deployment.Parallelism{TP: 8, PP: 1,
 					DP: 2, DPLocal: 1, EnableExpertParallel: true},
-					deployment.Engine{CUDAGraphMode: "NONE",
-						AllReduceBackend: "nccl", CacheDType: "auto",
-						All2AllBackend:       "deepep_high_throughput",
-						GPUMemoryUtilization: 0.9}),
+					engineBlock("{cudagraph_mode: NONE, allreduce_backend: nccl, cache_dtype: auto, all2all_backend: deepep_high_throughput, gpu_memory_utilization: 0.9}")),
 			}, nil),
 		},
 		{
 			what: "hybrid stack: mamba cache mode and both state dtypes",
 			b: corpus("granite-hybrid-h200", 1, 8, "", []deployment.Pool{
-				pool(deployment.RoleColocated, 1, tp8, deployment.Engine{
-					CacheDType: "fp8", MambaCacheDType: "auto",
-					MambaSSMCacheDType: "auto", MambaCacheMode: "align",
-					MaxModelLen: 131072, GPUMemoryUtilization: 0.9}),
+				pool(deployment.RoleColocated, 1, tp8, engineBlock("{cache_dtype: fp8, mamba_cache_dtype: auto, mamba_ssm_cache_dtype: auto, mamba_cache_mode: align, max_model_len: 131072, gpu_memory_utilization: 0.9}")),
 			}, nil),
 		},
 		{
 			what: "priority scheduling with async scheduling declined",
 			b: corpus("granite-priority", 1, 8, "", []deployment.Pool{
-				pool(deployment.RoleColocated, 1, tp8, deployment.Engine{
-					SchedulingPolicy: "priority", AsyncScheduling: boolPtr(false),
-					CacheDType: "fp8", GPUMemoryUtilization: 0.9}),
+				pool(deployment.RoleColocated, 1, tp8, engineBlock("{scheduling_policy: priority, async_scheduling: false, cache_dtype: fp8, gpu_memory_utilization: 0.9}")),
 			}, nil),
 		},
 		{
@@ -260,15 +235,10 @@ func TestCorpusDeploymentsAreExpressible(t *testing.T) {
 			b: corpus("glm-5.3-pcp-canary", 8, 8, "ib-400g", []deployment.Pool{
 				pool(deployment.RolePrefill, 4, deployment.Parallelism{TP: 1, PP: 1,
 					DP: 4, DPLocal: 1, PCP: 8, DCP: 8, EnableExpertParallel: true},
-					deployment.Engine{All2AllBackend: "deepep_high_throughput",
-						CacheDType: "fp8", BlockSize: 64, GPUMemoryUtilization: 0.9,
-						// The manifest passes --dcp-comm-backend ag_rs and leaves the
-						// other two knobs to the engine.
-						DCPCommBackend: "ag_rs"}),
+					engineBlock("{all2all_backend: deepep_high_throughput, cache_dtype: fp8, block_size: 64, gpu_memory_utilization: 0.9, dcp_comm_backend: ag_rs}")),
 				pool(deployment.RoleDecode, 4, deployment.Parallelism{TP: 2, PP: 1,
 					DP: 16, DPLocal: 4, EnableExpertParallel: true},
-					deployment.Engine{All2AllBackend: "deepep_low_latency",
-						CacheDType: "fp8", BlockSize: 64, GPUMemoryUtilization: 0.9}),
+					engineBlock("{all2all_backend: deepep_low_latency, cache_dtype: fp8, block_size: 64, gpu_memory_utilization: 0.9}")),
 			}, func(s *scenario.Scenario, d *deployment.Deployment) {
 				d.PDTransfer = &deployment.PDTransfer{Connector: "nixl"}
 			}),
@@ -278,10 +248,7 @@ func TestCorpusDeploymentsAreExpressible(t *testing.T) {
 			b: corpus("dsr1-gb200", 18, 4, "ib-400g", []deployment.Pool{
 				pool(deployment.RoleColocated, 18, deployment.Parallelism{TP: 1, PP: 1,
 					DP: 72, DPLocal: 4, EnableExpertParallel: true},
-					deployment.Engine{All2AllBackend: "deepep_low_latency",
-						CacheDType: "fp8", GPUMemoryUtilization: 0.9,
-						EPLB: &deployment.EPLB{Enabled: true,
-							NumRedundantExperts: 32}}),
+					engineBlock("{all2all_backend: deepep_low_latency, cache_dtype: fp8, gpu_memory_utilization: 0.9, eplb: {enable_eplb: true, num_redundant_experts: 32}}")),
 			}, func(s *scenario.Scenario, d *deployment.Deployment) {
 				s.Cluster.GPUsPerRack = 72
 			}),
@@ -296,30 +263,11 @@ func TestCorpusDeploymentsAreExpressible(t *testing.T) {
 	}
 }
 
-func boolPtr(b bool) *bool { return &b }
+// anyEngine is an engine's rules that open any engine block: what the corpus cases need, whose
+// engine blocks are written for a release this schema does not know. Field expressibility is
+// the schema's to check; whether a release accepts the block is the release's rules'.
+type anyEngine struct{ fakeRules }
 
-// TestGraniteAtEP72NeedsRedundantExperts is the cross-document rule the corpus
-// motivates: 224 experts do not divide a width of 72, so a load-balanced layout is
-// infeasible until enough redundant experts are added.
-func TestGraniteAtEP72NeedsRedundantExperts(t *testing.T) {
-	build := func(redundant int) Bundle {
-		b := corpus("granite-ep72", 9, 8, "ib-400g", []deployment.Pool{
-			pool(deployment.RoleColocated, 9, deployment.Parallelism{TP: 1, PP: 1,
-				DP: 72, DPLocal: 8, EnableExpertParallel: true},
-				deployment.Engine{All2AllBackend: "deepep_low_latency",
-					CacheDType: "fp8", GPUMemoryUtilization: 0.9,
-					EPLB: &deployment.EPLB{Enabled: true,
-						NumRedundantExperts: redundant}}),
-		}, nil)
-		b.Model = graniteMoE()
-		return b
-	}
-	if rep := Validate(build(32)); rep.OK() {
-		t.Fatal("224 + 32 does not divide 72; expected a rule failure")
-	}
-	if rep := Validate(build(64)); !rep.OK() {
-		t.Fatalf("224 + 64 = 288 = 4 x 72 should pass:\n%s", renderAll(rep))
-	}
-}
+func openAnyEngine(v string) rules.EngineRules { return anyEngine{fakeRules{version: v}} }
 
-func intp(v int) *int { return &v }
+func (anyEngine) Check(rules.Input) *rules.Problems { return nil }

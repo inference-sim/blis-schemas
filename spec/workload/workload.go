@@ -333,7 +333,7 @@ func enumerate[T ~string](set map[T]bool) []string {
 // for any of them — a tensor-parallel width, block size, sequence cap or context length
 // of 0 describes no server — so an omitted field decoding to 0 reads unambiguously as
 // "unset", and validation only rejects a negative. This is the same convention, and the
-// same zero-is-unset sentinel, that deployment.Engine uses for the same quantities; the
+// same zero-is-unset sentinel, that a pool's engine block uses for the same quantities; the
 // pointer treatment (see WorkloadSeed) is reserved for fields where a recorded 0 differs from an
 // absent one.
 type TraceServer struct {
@@ -344,7 +344,7 @@ type TraceServer struct {
 	BlockSize            int     `yaml:"block_size,omitempty"`
 	GPUMemoryUtilization float64 `yaml:"gpu_memory_utilization,omitempty"`
 	// MaxModelLen is the context length the traced server ran with. It is a plain int,
-	// not deployment.MaxModelLen, because a trace records a server that has started: the
+	// not the engine block's three-state setting, because a trace records a server that has started: the
 	// engine has resolved any `auto` request to a count by then, so the third state that
 	// type exists for cannot occur here.
 	MaxModelLen int `yaml:"max_model_len,omitempty"`

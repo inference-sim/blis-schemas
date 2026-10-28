@@ -13,6 +13,9 @@
 package blisschemas
 
 import (
+	"fmt"
+	"reflect"
+
 	"github.com/inference-sim/blis-schemas/internal/validate"
 	"github.com/inference-sim/blis-schemas/rules"
 	"github.com/inference-sim/blis-schemas/spec/acceptance"
@@ -26,11 +29,11 @@ import (
 	"github.com/inference-sim/blis-schemas/spec/workload"
 )
 
-// Bundle is a complete set of documents describing one run. Optional members are nil
-// when a caller is validating a subset: a catalog contributor checks a chip alone,
-// where a CI job checking a run supplies everything. The Scenario fixes the immutable
-// problem and the Deployment the mutable configuration against it; validating both
-// together is what checks that a deployment fits its cluster.
+// Bundle is a complete set of documents describing one run, and optionally the engine rules
+// to check it with. Optional members are nil when a caller is validating a subset: a catalog
+// contributor checks a chip alone, where a CI job checking a run supplies everything. The
+// Scenario fixes the immutable problem and the Deployment the mutable configuration against
+// it; validating both together is what checks that a deployment fits its cluster.
 type Bundle struct {
 	Scenario     *scenario.Scenario
 	Deployment   *deployment.Deployment
@@ -47,6 +50,17 @@ type Bundle struct {
 	// ReplayWorkload is a catalog replay workload, validated field by field.
 	ReplayWorkload *workload.CatalogReplay
 	Evaluation     *evaluation.Run
+
+	// Rules looks up the engine rules for the scenario's engine_version: the caller's, from the
+	// engine model that owns the release, for this schema registers none (GOAL.md phase 2b). It
+	// is required whenever the bundle carries a scenario: a pool's engine block is opaque here,
+	// so its checks and every version-scoped rule are the rules', and a bundle validated with
+	// none would pass unchecked. Rules that answer for another release are refused
+	// (engine-version-matches), never applied.
+	Rules func(version string) rules.EngineRules
+	// RulesVersions lists the versions Rules answers, for the finding when it answers none.
+	// nil with Rules set: the finding says only that the version is unknown, listing none.
+	RulesVersions func() []string
 }
 
 // Report is the outcome of validating a bundle, with the two layers kept apart.
@@ -103,8 +117,30 @@ func Validate(b Bundle) Report {
 				Storage:     b.Scenario.Cluster.Storage,
 			}))
 	}
+	// The engine rules the scenario's release selects, nil when the caller gave none or they
+	// know no such release. A pool's engine block is opaque to this schema, so its field checks
+	// are the release's (EngineRules.CheckEngineBlock) and run in the field layer, under the
+	// same deployment paths a field check of the deployment reports at.
+	var er rules.EngineRules
+	if b.Scenario != nil && b.Rules != nil {
+		if er = b.Rules(b.Scenario.EngineVersion); isNilRules(er) {
+			er = nil
+		}
+	}
+	if b.Deployment != nil && er != nil && er.EngineVersion() == b.Scenario.EngineVersion {
+		for i, pool := range b.Deployment.Pools {
+			if pp := er.CheckEngineBlock(fmt.Sprintf("pools[%d]", i), pool.Engine); pp != nil {
+				field.Merge("deployment", pp)
+			}
+		}
+		if o := b.Deployment.Offload; o != nil && !o.ConnectorOptions.IsZero() {
+			if pp := er.CheckConnectorOptions("offload", o.ConnectorOptions); pp != nil {
+				field.Merge("deployment", pp)
+			}
+		}
+	}
 	if b.Deployment != nil {
-		checkAcceptanceK(field, b)
+		checkAcceptanceK(field, b, er)
 	}
 	if b.Model != nil {
 		field.Merge("model", b.Model.Validate())
@@ -153,13 +189,64 @@ func Validate(b Bundle) Report {
 		return rep
 	}
 	if b.Scenario != nil {
-		rep.Rule = rules.Apply(rules.Input{
-			Scenario: b.Scenario, Deployment: b.Deployment, Model: b.Model})
-		if rules.Lookup(b.Scenario.EngineVersion) != nil {
-			rep.RulesApplied = b.Scenario.EngineVersion
+		in := rules.Input{Scenario: b.Scenario, Deployment: b.Deployment, Model: b.Model}
+		if b.Rules == nil {
+			// A scenario names an engine release, and its engine blocks and version-scoped rules
+			// are that release's to check. With no rules given nothing would check them, and a
+			// bundle that only looks valid because its checks were skipped must not pass.
+			rep.Rule.RuleErrorf("engine-rules-given",
+				"no engine rules were given for engine version %q: pass the release's rules "+
+					"(Bundle.Rules) from the engine model that owns it; nothing was rule-checked",
+				b.Scenario.EngineVersion)
+			return rep
 		}
+		if er == nil {
+			// The same finding as a version with no rules: it has not been rule-checked, and
+			// saying nothing would read as a pass.
+			p := &validate.Problems{}
+			if b.RulesVersions != nil {
+				p.RuleWarnf("engine-version-known",
+					"no rules pack for engine version %q; field validation passed but no version-specific rule was applied. Registered versions: %v",
+					b.Scenario.EngineVersion, b.RulesVersions())
+			} else {
+				p.RuleWarnf("engine-version-known",
+					"no rules pack for engine version %q; field validation passed but no version-specific rule was applied",
+					b.Scenario.EngineVersion)
+			}
+			rep.Rule = p
+			return rep
+		}
+		// Rules for another release are never applied to this one: a lookup that falls back to
+		// a nearby release would pass a scenario its own release refuses (rules.go's package
+		// comment).
+		if v := er.EngineVersion(); v != b.Scenario.EngineVersion {
+			rep.Rule.RuleErrorf("engine-version-matches",
+				"the engine rules looked up for engine version %q are for %q; no rule was applied",
+				b.Scenario.EngineVersion, v)
+			return rep
+		}
+		// A Check that finds nothing may say so with a nil Problems; the report keeps its empty
+		// layer, so OK and Problems never meet a nil.
+		if p := er.Check(in); p != nil {
+			rep.Rule = p
+		}
+		rep.RulesApplied = b.Scenario.EngineVersion
 	}
 	return rep
+}
+
+// isNilRules reports whether er is nil or holds a nil pointer, map, slice, func or channel of
+// any rules type: what a lookup returns, typed, for a version it does not know. A forwarding
+// value around a nil is not nil here, and fails when it is asked.
+func isNilRules(er rules.EngineRules) bool {
+	if er == nil {
+		return true
+	}
+	switch v := reflect.ValueOf(er); v.Kind() {
+	case reflect.Pointer, reflect.Map, reflect.Slice, reflect.Func, reflect.Chan, reflect.Interface:
+		return v.IsNil()
+	}
+	return false
 }
 
 // checkAcceptanceK refuses an inline acceptance stated for a K other than one the
@@ -168,7 +255,7 @@ func Validate(b Bundle) Report {
 // workload shape's or catalog replay's. Acceptance at one K says nothing exact about another, so a value is never
 // rescaled. A value with no speculating pool to apply to is a warning, since it is inert
 // rather than wrong.
-func checkAcceptanceK(p *validate.Problems, b Bundle) {
+func checkAcceptanceK(p *validate.Problems, b Bundle, er rules.EngineRules) {
 	type stated struct {
 		path string
 		v    *acceptance.Value
@@ -204,15 +291,20 @@ func checkAcceptanceK(p *validate.Problems, b Bundle) {
 	if len(values) == 0 {
 		return
 	}
+	if er == nil {
+		// Which pools speculate is in their engine blocks, which only the release's rules read;
+		// without them the check cannot run, and the rule layer reports why.
+		return
+	}
 	speculates := false
 	for i, pool := range b.Deployment.Pools {
-		spec := pool.Engine.Speculative
-		if spec == nil || spec.NumSpecTokens < 1 {
+		k := er.DraftTokens(pool.Engine)
+		if k < 1 {
 			continue
 		}
 		speculates = true
 		for _, s := range values {
-			if err := acceptance.CheckK(s.v, spec.NumSpecTokens); err != nil {
+			if err := acceptance.CheckK(s.v, k); err != nil {
 				p.Field(s.path, "deployment pools[%d]: %v", i, err)
 			}
 		}

@@ -4,7 +4,7 @@ package model
 //
 // A consumer without it has to guess, and the guess is wrong exactly where it matters.
 // blis-latency-kernel infers a GEMM's split from whether k equals the hidden size and
-// divides every other node by tp. DeepSeek-V4.1-Flash on vLLM v0.31.0 runs a large share
+// divides every other node by tp. DeepSeek-V4.1-Flash on the engine runs a large share
 // of each layer replicated on every rank: the fused q/kv A-projection
 // (MergedColumnParallelLinear with disable_tp=True, "fused ReplicatedLinear"), the
 // compressor, the indexer's projections ("no tensor parallel, just replicated"), the
@@ -57,14 +57,14 @@ func (l TPLayout) ValidFor(o Op) bool {
 // model's own sequence parallelism is on (see EmitSequenceParallel).
 //
 // TP alone cannot say it. Under DeepSeek-V4.1's sequence parallelism the residual stream
-// is sharded by token (sp_shard, v0.31.0 vllm/models/common/ops/sequence_parallel.py),
+// is sharded by token (sp_shard, the engine's models/common/ops/sequence_parallel.py),
 // and only attention runs on the gathered stream, between its all-gather and its
-// reduce-scatter (vllm/models/deepseek_v41/nvidia/model.py). mHC, before the gather, and
+// reduce-scatter (models/deepseek_v41/nvidia/model.py). mHC, before the gather, and
 // the fused q/kv A-projection, after it, are both replicated, yet under the mode the first
 // sees 1/tp of the step's tokens and the second all of them. A node whose split the mode
 // changes is still one node: Engram's wkv is column-split without the mode and replicated
 // with it (ColumnParallelLinear(..., disable_tp=use_sequence_parallel),
-// vllm/models/deepseek_v41/common/engram.py), and it also runs at tp 1, where the mode is
+// models/deepseek_v41/common/engram.py), and it also runs at tp 1, where the mode is
 // off and there is nothing to split.
 type SequenceParallelSplit string
 

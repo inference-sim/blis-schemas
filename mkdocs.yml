@@ -134,9 +134,11 @@ nav:
       - Coefficient set: reference/coefficients.md
       - Acceptance profiles: reference/acceptance.md
       - Routing profiles: reference/routing.md
+      - Connector registry: reference/connectors.md
       - Evaluation run: reference/evaluation.md
       - Measured run: reference/measurement.md
       - Kernel interface: reference/kernel.md
+      - Engine interface: reference/engine.md
       - Router contract: reference/embed.md
       - Vocabularies: reference/vocabularies.md
       - Rules packs: reference/rules.md

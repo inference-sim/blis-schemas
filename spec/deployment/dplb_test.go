@@ -1,6 +1,7 @@
 package deployment
 
 import (
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -51,4 +52,14 @@ func TestDataParallelLoadBalancingRoundTrips(t *testing.T) {
 			t.Fatalf("the default was written: %s", out)
 		}
 	}
+}
+
+// containsKey reports whether a YAML document has a top-level key.
+func containsKey(doc, key string) bool {
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.HasPrefix(line, key+":") {
+			return true
+		}
+	}
+	return false
 }

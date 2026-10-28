@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/inference-sim/blis-schemas/internal/validate"
 )
 
@@ -13,28 +15,33 @@ import (
 // documents work through: two pools, different backends, expert parallelism. Its pool
 // node counts sum to 60, which is the cluster ValidateAgainstCluster is tested against.
 func pdDeployment() *Deployment {
-	asyncNil := (*bool)(nil)
 	return &Deployment{
 		Kind: "Deployment", Name: "glm-5.3-60node-pd-h200",
 		Pools: []Pool{
 			{Role: RolePrefill, Nodes: 36,
 				Parallel: Parallelism{TP: 1, PP: 1, DP: 8, DPLocal: 8,
 					EnableExpertParallel: true},
-				Engine: Engine{All2AllBackend: "deepep_high_throughput",
-					AllReduceBackend: "nccl", CUDAGraphMode: "PIECEWISE",
-					AsyncScheduling: asyncNil, BlockSize: 64,
-					MaxNumBatchedTokens: 8192, MaxNumSeqs: 256,
-					CacheDType: "fp8", GPUMemoryUtilization: 0.9}},
+				Engine: engineYAML("{all2all_backend: deepep_high_throughput, allreduce_backend: nccl, " +
+					"cudagraph_mode: PIECEWISE, block_size: 64, max_num_batched_tokens: 8192, " +
+					"max_num_seqs: 256, cache_dtype: fp8, gpu_memory_utilization: 0.9}")},
 			{Role: RoleDecode, Nodes: 24,
 				Parallel: Parallelism{TP: 1, PP: 1, DP: 16, DPLocal: 8,
 					EnableExpertParallel: true},
-				Engine: Engine{All2AllBackend: "deepep_low_latency",
-					AllReduceBackend: "nccl", CUDAGraphMode: "FULL_AND_PIECEWISE",
-					BlockSize: 64, CacheDType: "fp8", GPUMemoryUtilization: 0.9,
-					EPLB: &EPLB{Enabled: true, NumRedundantExperts: 32}}},
+				Engine: engineYAML("{all2all_backend: deepep_low_latency, allreduce_backend: nccl, " +
+					"cudagraph_mode: FULL_AND_PIECEWISE, block_size: 64, cache_dtype: fp8, " +
+					"gpu_memory_utilization: 0.9, eplb: {enable_eplb: true, num_redundant_experts: 32}}")},
 		},
 		PDTransfer: &PDTransfer{Connector: "nixl"},
 	}
+}
+
+// engineYAML is a pool's engine block as a document states it, held unopened.
+func engineYAML(doc string) EngineBlock {
+	var n yaml.Node
+	if err := yaml.Unmarshal([]byte(doc), &n); err != nil {
+		panic(err)
+	}
+	return NewEngineBlock(n.Content[0])
 }
 
 // singleNode is the colocated shape the published Granite runs use: eight GPUs,
@@ -44,8 +51,8 @@ func singleNodeDeployment() *Deployment {
 		Kind: "Deployment", Name: "granite-230b-h100-tp8",
 		Pools: []Pool{{Role: RoleColocated, Nodes: 1,
 			Parallel: Parallelism{TP: 8, PP: 1, DP: 1},
-			Engine: Engine{CacheDType: "fp8", MaxNumBatchedTokens: 32768,
-				GPUMemoryUtilization: 0.9, BlockSize: 16}}},
+			Engine: engineYAML("{cache_dtype: fp8, max_num_batched_tokens: 32768, " +
+				"gpu_memory_utilization: 0.9, block_size: 16}")}},
 	}
 }
 
@@ -99,26 +106,6 @@ func TestRejects(t *testing.T) {
 		{"dp_local exceeds dp", func(d *Deployment) {
 			d.Pools[0].Parallel.DPLocal = 99
 		}},
-		{"utilization above one", func(d *Deployment) {
-			d.Pools[0].Engine.GPUMemoryUtilization = 1.5
-		}},
-		{"non-finite utilization", func(d *Deployment) {
-			d.Pools[0].Engine.GPUMemoryUtilization = math.NaN()
-		}},
-		{"negative block size", func(d *Deployment) { d.Pools[0].Engine.BlockSize = -1 }},
-		// The engine types both DBO thresholds ge=0 whether or not overlap is on.
-		{"negative DBO threshold with DBO off", func(d *Deployment) {
-			v := -1
-			d.Pools[0].Engine.DBO = &DBO{Enabled: false, DecodeTokenThreshold: &v}
-		}},
-		{"negative DBO prefill threshold with DBO on", func(d *Deployment) {
-			v := -1
-			d.Pools[0].Engine.DBO = &DBO{Enabled: true, PrefillTokenThreshold: &v}
-		}},
-		{"max_model_len below auto", func(d *Deployment) { d.Pools[0].Engine.MaxModelLen = -2 }},
-		{"negative interleave size", func(d *Deployment) {
-			d.Pools[0].Engine.CPKVCacheInterleaveSize = -1
-		}},
 		{"prefill without decode", func(d *Deployment) {
 			d.Pools = d.Pools[:1]
 		}},
@@ -126,9 +113,6 @@ func TestRejects(t *testing.T) {
 			d.Pools = d.Pools[1:]
 		}},
 		{"disaggregated without pd_transfer", func(d *Deployment) { d.PDTransfer = nil }},
-		{"speculative with zero drafts", func(d *Deployment) {
-			d.Pools[0].Engine.Speculative = &Speculative{Method: "mtp", NumSpecTokens: 0}
-		}},
 		{"offload with no tiers", func(d *Deployment) { d.Offload = &Offload{} }},
 		{"offload tier with zero bytes", func(d *Deployment) {
 			d.Offload = &Offload{Tiers: []Tier{{Device: "cpu_dram", Bytes: 0}}}
@@ -160,40 +144,6 @@ func TestColocatedAlongsideDisaggregated(t *testing.T) {
 	}
 }
 
-// TestAllReduceRequestConflict covers the two ways a deployment can state the
-// all-reduce choice inconsistently. The engine has a boolean; a resolved name is an
-// override, and the pair must not contradict.
-func TestAllReduceRequestConflict(t *testing.T) {
-	yes, no := true, false
-	d := singleNodeDeployment()
-	d.Pools[0].Engine.DisableCustomAllReduce = &yes
-	d.Pools[0].Engine.AllReduceBackend = "custom"
-	if p := d.Validate(); p.OK() {
-		t.Error("requesting the custom kernel while disabling it should fail")
-	}
-	// The reverse is a warning: the engine would use the kernel where reachable, so
-	// naming nccl is a statement the layout may override rather than a contradiction.
-	d2 := singleNodeDeployment()
-	d2.Pools[0].Engine.DisableCustomAllReduce = &no
-	d2.Pools[0].Engine.AllReduceBackend = "nccl"
-	p2 := d2.Validate()
-	if !p2.OK() {
-		t.Errorf("naming nccl with the kernel enabled should warn, not fail:\n%s", p2.Error())
-	}
-	if len(p2.All()) == 0 {
-		t.Error("expected a warning about the overridden request")
-	}
-	// Stating only the boolean is the ordinary case.
-	d3 := singleNodeDeployment()
-	d3.Pools[0].Engine.DisableCustomAllReduce = &yes
-	if p := d3.Validate(); !p.OK() {
-		t.Errorf("the boolean alone should be accepted:\n%s", p.Error())
-	}
-}
-
-// TestValidateAgainstCluster covers the checks that couple a deployment to the
-// available-hardware inventory it is placed on: these need the cluster, so they are
-// separate from Validate and are exercised with the node and GPU counts a Scenario
 // would supply.
 func TestValidateAgainstCluster(t *testing.T) {
 	// The pdDeployment pools sum to 60 nodes of 8 GPUs, which the matching cluster

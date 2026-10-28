@@ -26,8 +26,8 @@ type Graph struct {
 	// hidden_size table at global.weight_dtype, the meaning every graph had before the
 	// field existed -- which is wrong for a checkpoint whose embedding is wider than the
 	// rest: DeepSeek-V4.1's is BF16 beside FP8 weights, because the FP8 quant config
-	// returns no method for an embedding and vLLM falls back to an unquantized one
-	// (v0.31.0 vocab_parallel_embedding.py).
+	// returns no method for an embedding and the engine falls back to an unquantized one
+	// (the engine's vocab_parallel_embedding.py).
 	Embedding  []Node      `yaml:"embedding,omitempty"`
 	Stack      Stack       `yaml:"stack"`
 	Head       []Node      `yaml:"head,omitempty"`
@@ -41,7 +41,7 @@ type Graph struct {
 	// graph that distinguishes architectures must also say which ones its base is, so a
 	// family it describes neither way is refused rather than given the base's facts.
 	// DeepSeek-V4.1's base is SM90; SM120 runs a plain-row KV cache under FlashInfer
-	// (vllm/models/deepseek_v41/nvidia/model.py _select_dsv4_attn_cls), so the SM90
+	// (models/deepseek_v41/nvidia/model.py _select_dsv4_attn_cls), so the SM90
 	// records do not describe it.
 	BaseCapabilityFamilies []int `yaml:"base_capability_families,omitempty"`
 
@@ -119,15 +119,15 @@ type GlobalShape struct {
 	WeightScale *WeightScale `yaml:"weight_scale,omitempty"`
 
 	// ContextWindow is the longest context the engine admits for this model when the
-	// deployment does not raise the limit: the derived max_model_len of vLLM v0.31.0's
+	// deployment does not raise the limit: the derived max_model_len of the engine's
 	// ModelConfig, the smallest of the configuration's length keys
 	// (max_position_embeddings and its aliases), scaled by a RoPE factor for scaling
 	// types other than su, longrope, llama3, yarn, deepseek_yarn and
 	// deepseek_llama_scaling, for a pooling model with absolute positions capped by the
 	// tokenizer's model_max_length, and capped by the sliding window when the deployment
-	// disables sliding-window attention (vllm/config/model.py _get_and_verify_max_len). A
+	// disables sliding-window attention (config/model.py _get_and_verify_max_len). A
 	// deployment that states a longer max_model_len is refused at startup unless the
-	// configuration's model_max_length admits it or VLLM_ALLOW_LONG_MAX_MODEL_LEN is
+	// configuration's model_max_length admits it or the engine's long-context override is
 	// set. Zero means not stated.
 	//
 	// It is what an unstated or auto max_model_len starts from, and the graph carries it
@@ -143,7 +143,7 @@ type GlobalShape struct {
 	// Architecture is the model class the engine serves the checkpoint with, the
 	// configuration's architectures[0], such as "DeepseekV41ForCausalLM". It is the one
 	// vendor name a graph carries, because the engine keys model-specific behaviour on
-	// it and nothing else in the graph identifies the model code: v0.31.0 refuses
+	// it and nothing else in the graph identifies the model code: the engine refuses
 	// dual-batch overlap only for a DeepseekV41ForCausalLM with Engram layers, and
 	// DeepSeek-V4.1 decides its own sequence parallelism. Which architectures a release
 	// treats specially is its rules pack's to say. Empty means not stated.
@@ -270,7 +270,7 @@ type Speculator struct {
 	// NumSpec is the tokens drafted per request per step. It is not the draft layer
 	// count: DeepSeek-V4.1's DSpark drafts dspark_block_size = 5 tokens through
 	// num_nextn_predict_layers = 3 layers (both from the checkpoint's configuration;
-	// v0.31.0 vllm/config/speculative.py defaults num_speculative_tokens to the draft
+	// the engine's config/speculative.py defaults num_speculative_tokens to the draft
 	// config's block_size, or dspark_block_size where it has none).
 	NumSpec int `yaml:"num_spec_tokens"`
 	// Drafting is how Stack runs. See Drafting.
@@ -278,7 +278,7 @@ type Speculator struct {
 	// Embedding is the nodes that run before each pass of Stack, over the same rows: the
 	// draft's own token lookup and the reduction that completes it. DSpark's drafter
 	// holds its own VocabParallelEmbedding, with the target's weights ("Shared with the
-	// target", v0.31.0 vllm/models/deepseek_v41/nvidia/dspark.py), so its Gather aliases
+	// target", the engine's models/deepseek_v41/nvidia/dspark.py), so its Gather aliases
 	// embedding.<role>. Like every vocab-parallel lookup it ends in a tensor-parallel
 	// all-reduce (vocab_parallel_embedding.py), and the draft embeds before it shards its
 	// stream for sequence parallelism (dspark.py forward), so that reduction runs in both
@@ -294,7 +294,7 @@ type Speculator struct {
 	// tokens, prefill tokens included, rather than over draft positions. DSpark projects
 	// three target layers' hidden states through main_proj, and each draft layer
 	// derives its context KV from that projection, over every target token the step
-	// schedules (vllm/v1/worker/gpu/spec_decode/dflash/speculator.py
+	// schedules (v1/worker/gpu/spec_decode/dflash/speculator.py
 	// _precompute_context_kv over [0, num_target_tokens)).
 	// Absent means the speculator has no such work.
 	ContextStack *Stack `yaml:"context_stack,omitempty"`
@@ -304,7 +304,7 @@ type Speculator struct {
 	// SequentialHead is the nodes that run once per draft position, in order, over one
 	// row per request, after Head: DSpark's Markov head, which gathers a rank-256 row
 	// for the previous token and projects it to the vocabulary to bias the next
-	// position's logits, one position at a time (vllm/model_executor/models/
+	// position's logits, one position at a time (model_executor/models/
 	// qwen3_dspark.py, "the head runs sequentially for every draft position"). Only a
 	// parallel_block drafter has one; an autoregressive drafter is sequential already.
 	SequentialHead []Node `yaml:"sequential_head,omitempty"`
@@ -321,7 +321,7 @@ const (
 	// positions per request -- the anchor and num_spec_tokens - 1 noise tokens -- and
 	// every position predicts one draft token. DSpark drafts this way: "each request
 	// emits exactly N = num_speculative_tokens query tokens (anchor + N-1 noise), NOT
-	// 1 + N" (vllm/v1/worker/gpu/spec_decode/dspark/speculator.py).
+	// 1 + N" (v1/worker/gpu/spec_decode/dspark/speculator.py).
 	DraftingParallelBlock Drafting = "parallel_block"
 )
 
@@ -353,7 +353,7 @@ const (
 	// EmitSequenceParallel: present when the model's own sequence parallelism is on, as a
 	// rules pack decides it for the architecture global.architecture names. DeepSeek-V4.1
 	// then shards the residual stream by token across the tensor-parallel ranks,
-	// all-gathers each attention input and reduce-scatters its output (v0.31.0 vllm/models/deepseek_v41/nvidia/model.py:
+	// all-gathers each attention input and reduce-scatters its output (the engine's models/deepseek_v41/nvidia/model.py:
 	// "x = sp_all_gather(x)" ... "x = sp_reduce_scatter(x)").
 	EmitSequenceParallel EmitCondition = "sequence_parallel"
 	// EmitTensorParallelUnlessSequenceParallel: present when the tensor-parallel width

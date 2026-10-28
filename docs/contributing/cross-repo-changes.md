@@ -1,12 +1,12 @@
 # Changes across the BLIS repositories
 
-<p class="lede">Most improvements to BLIS touch more than one of its five repositories. A schema
+<p class="lede">Most improvements to BLIS touch more than one of its six repositories. A schema
 field, a catalog fact, a fitted coefficient, the kernel that reads them and the simulator that
 calls the kernel have to land together, and every number published from them has to be
 reproducible from what is public. This page is the one description of how such a change is
-made. Each of the other four repositories links here and adds only its own steps.</p>
+made. Each of the other five repositories links here and adds only its own steps.</p>
 
-The rules below were worked out over several rounds of changes made across all five repositories
+The rules below were worked out over several rounds of changes made across all the repositories
 at once. They exist because each one, when skipped, produced a published number that nobody
 could reproduce, a pull request that could not merge, or a fix that made the overall estimate
 worse.
@@ -18,10 +18,12 @@ worse.
 | **blis-schemas** | nothing in BLIS | — |
 | [blis-catalog](https://github.com/inference-sim/blis-catalog) | blis-schemas | CI runs `go run github.com/inference-sim/blis-schemas/cmd/validate-catalog@<version> .` in `.github/workflows/ci.yml`; the README quotes the same version |
 | [blis-registry](https://github.com/inference-sim/blis-registry) | blis-schemas, blis-catalog | `.github/workflows/validate.yml` checks out blis-schemas at a tag or a full commit; `.github/workflows/rederive.yml` pins the catalog (`CATALOG_SHA`) and the fitting data (`AISIMULATE_SHA`) by commit |
-| [blis-latency-kernel](https://github.com/inference-sim/blis-latency-kernel) | blis-schemas; catalog and registry as test inputs | `go.mod` requires blis-schemas; `testdata/upstream.lock` names a catalog and a registry commit, which `scripts/fetch-testdata.sh` fetches and verifies |
-| [inference-sim](https://github.com/inference-sim/inference-sim) | blis-latency-kernel, blis-schemas; catalog and registry as vendored test data | `go.mod` requires the kernel and blis-schemas; `testdata/catalog` and `testdata/registry` are vendored copies with `.upstream-commit` stamps; `testdata/upstream-prerelease.lock` overlays the kernel's lock while the inputs are unreleased |
+| [blis-vllm](https://github.com/inference-sim/blis-vllm) | blis-schemas | `go.mod` (and `rules/go.mod`, its rules-pack module) requires blis-schemas |
+| [blis-latency-kernel](https://github.com/inference-sim/blis-latency-kernel) | blis-schemas; blis-vllm's rules packs in its commands and tests only; catalog and registry as test inputs | `go.mod` requires blis-schemas and blis-vllm/rules; `testdata/upstream.lock` names a catalog and a registry commit, which `scripts/fetch-testdata.sh` fetches and verifies |
+| [inference-sim](https://github.com/inference-sim/inference-sim) | blis-latency-kernel, blis-vllm, blis-schemas; catalog and registry as vendored test data | `go.mod` requires the kernel, blis-vllm and blis-schemas; `testdata/catalog` and `testdata/registry` are vendored copies with `.upstream-commit` stamps; `testdata/upstream-prerelease.lock` overlays the kernel's lock while the inputs are unreleased |
 
-Changes flow one way: schemas, then catalog, registry and kernel, then inference-sim. Nothing
+Changes flow one way: schemas, then catalog, registry and blis-vllm, then the kernel, then
+inference-sim. Nothing
 imports in the other direction. blis-schemas' own CI reads a registry checkout at `main` to
 check that committed data still parses; that job does not test an open registry pull request.
 
@@ -59,13 +61,15 @@ the `replace` and pins the dependency's pushed head instead.
 Every pull request in a cross-repository change stays a draft until all of them are ready. Then:
 
 1. **Push blis-schemas.** Its head is the pin every other repository uses.
-2. **Repin and push the middle three**, in any order:
+2. **Repin and push the middle four**, in any order except that blis-vllm comes before the
+   kernel, whose tests use its rules packs:
     - blis-catalog: the `validate-catalog@<version>` pin in `ci.yml` and the README;
+    - blis-vllm: `go.mod` and `rules/go.mod`;
     - blis-registry: the schema ref in `validate.yml`, and `CATALOG_SHA` in `rederive.yml` if
       the change needs a newer catalog;
-    - blis-latency-kernel: `go.mod`, and `testdata/upstream.lock` if the tests need the new
+    - blis-latency-kernel: `go.mod` (blis-schemas and blis-vllm/rules), and `testdata/upstream.lock` if the tests need the new
       catalog or registry; regenerate `docs/generated/` (its `sources.md` lists the pin).
-3. **Repin, re-vendor and push inference-sim**: `go.mod` to the kernel and schemas heads;
+3. **Repin, re-vendor and push inference-sim**: `go.mod` to the kernel, blis-vllm and schemas heads;
    `testdata/catalog` and `testdata/registry` from the catalog and registry heads, with their
    `.upstream-commit` stamps; `testdata/upstream-prerelease.lock` to those heads.
 4. **Run every repository's suite against the others' pushed heads**, not against local
@@ -73,7 +77,7 @@ Every pull request in a cross-repository change stays a draft until all of them 
 5. **Regenerate every pull request body** from the pushed heads (see [Parity](#parity)).
 
 If any head changes after a downstream repository pinned it, repeat the steps below it. A
-change to the schemas head means repinning all four.
+change to the schemas head means repinning all five.
 
 Merging follows the same order, with a release between each step: merge blis-schemas and tag
 it; move the catalog's and registry's CI pins to that tag and merge each, then tag them; move
@@ -219,15 +223,15 @@ Commits, code, comments, documentation, issue and pull request text are public.
 ## Review before each push
 
 1. **An expert self-audit.** Before an integration point and before every push, write down the
-   ten correctness questions each of three experts would ask of the five pull requests together:
+   ten correctness questions each of three experts would ask of all the pull requests together:
    an engineer of the modelled engine, a benchmark engineer who produced the measurements, and a
    distributed-inference simulation researcher. Answer each from code and data, with file and
    line evidence, and grade it sound, weak or wrong. Fix every wrong answer that affects
    correctness before pushing; file the rest. This extends inference-sim's
    [pre-commit self-audit](https://github.com/inference-sim/inference-sim/blob/main/docs/contributing/pr-workflow.md#step-475-pre-commit-self-audit)
    and its [review perspectives](https://github.com/inference-sim/inference-sim/blob/main/docs/contributing/perspectives.md)
-   to all five repositories.
-2. **A holistic review across all five pull requests**, as one change, not five, with the
+   to every repository.
+2. **A holistic review across all the pull requests**, as one change, not one per repository, with the
    findings that affect correctness fixed before the push.
 
 ## Recording decisions and deviations

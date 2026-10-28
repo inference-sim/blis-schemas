@@ -498,27 +498,27 @@ pools:
 	if err != nil {
 		t.Fatalf("LoadDeployment: %v", err)
 	}
-	e := d.Pools[0].Engine
-	if e.DCPCommBackend != "a2a" {
-		t.Errorf("dcp_comm_backend = %q, want a2a", e.DCPCommBackend)
+	// The engine block is held as written, keys and values the engine reads, for the release's
+	// rules to open.
+	var e map[string]any
+	if err := d.Pools[0].Engine.Decode(&e); err != nil {
+		t.Fatal(err)
 	}
-	if e.DCPQReplicate == nil || !*e.DCPQReplicate {
-		t.Errorf("dcp_q_replicate = %v, want true", e.DCPQReplicate)
+	if e["dcp_comm_backend"] != "a2a" || e["dcp_q_replicate"] != true || e["cp_kv_cache_interleave_size"] != 16 {
+		t.Errorf("the engine block did not load as written: %v", e)
 	}
-	if e.CPKVCacheInterleaveSize != 16 {
-		t.Errorf("cp_kv_cache_interleave_size = %d, want 16", e.CPKVCacheInterleaveSize)
+	var e2 map[string]any
+	if err := d.Pools[1].Engine.Decode(&e2); err != nil {
+		t.Fatal(err)
 	}
-	// Tri-state: false is a stated request, distinct from unstated.
-	e2 := d.Pools[1].Engine
-	if e2.DCPQReplicate == nil || *e2.DCPQReplicate {
-		t.Errorf("dcp_q_replicate = %v, want a stated false", e2.DCPQReplicate)
+	if v, ok := e2["dcp_q_replicate"]; !ok || v != false {
+		t.Errorf("a stated false must stay stated: %v", e2)
 	}
-	if e2.DCPCommBackend != "" || e2.CPKVCacheInterleaveSize != 0 {
-		t.Errorf("omitted knobs must stay unstated, got backend %q, interleave %d",
-			e2.DCPCommBackend, e2.CPKVCacheInterleaveSize)
+	if _, ok := e2["dcp_comm_backend"]; ok {
+		t.Errorf("an omitted knob must stay unstated: %v", e2)
 	}
 	if p := d.Validate(); !p.OK() {
-		t.Fatalf("the knobs are well formed and should validate:\n%s", p.Error())
+		t.Fatalf("the deployment is well formed and should validate:\n%s", p.Error())
 	}
 }
 
@@ -556,23 +556,16 @@ pools:
 	if len(d.Pools) != 1 || d.Pools[0].Parallel.TP != 8 {
 		t.Fatalf("pools did not parse: %+v", d.Pools)
 	}
-	e := d.Pools[0].Engine
-	if e.CacheDType != "fp8" {
-		t.Errorf("cache_dtype = %q, want fp8", e.CacheDType)
+	var e map[string]any
+	if err := d.Pools[0].Engine.Decode(&e); err != nil {
+		t.Fatal(err)
 	}
-	if e.SchedulingPolicy != "priority" {
-		t.Errorf("scheduling_policy = %q; the tag must match the engine's flag name",
-			e.SchedulingPolicy)
+	// The engine's own names, held as written, nested blocks included.
+	if e["cache_dtype"] != "fp8" || e["scheduling_policy"] != "priority" || e["gpu_memory_utilization"] != 0.9 {
+		t.Errorf("the engine block did not load as written: %v", e)
 	}
-	if e.GPUMemoryUtilization != 0.9 {
-		t.Errorf("gpu_memory_utilization = %v, want 0.9", e.GPUMemoryUtilization)
-	}
-	// The nested blocks use the engine's flag names rather than shortened ones.
-	if e.EPLB == nil || !e.EPLB.Enabled || e.EPLB.NumRedundantExperts != 32 {
-		t.Errorf("eplb did not parse: %+v", e.EPLB)
-	}
-	if e.DBO == nil || !e.DBO.Enabled || e.DBO.DecodeTokenThreshold == nil || *e.DBO.DecodeTokenThreshold != 32 {
-		t.Errorf("dbo did not parse: %+v", e.DBO)
+	if eplb, ok := e["eplb"].(map[string]any); !ok || eplb["enable_eplb"] != true || eplb["num_redundant_experts"] != 32 {
+		t.Errorf("eplb did not load as written: %v", e["eplb"])
 	}
 	// Validate the loaded deployment on its own terms; the composition layer requires a
 	// scenario alongside a deployment (TestDeploymentWithoutScenarioIsRejected covers that).
@@ -592,16 +585,42 @@ pools:
   - role: colocated
     nodes: 1
     parallel: {tp: 8, pp: 1, dp: 1}
-    engine:
-      cache_dytpe: fp8
+    engin:
+      cache_dtype: fp8
 `)
 	_, err := LoadDeployment(path)
 	if err == nil {
 		t.Fatal("a misspelled field was accepted; the deployment would validate while " +
 			"silently omitting the setting its author intended")
 	}
-	if !strings.Contains(err.Error(), "cache_dytpe") {
+	if !strings.Contains(err.Error(), "engin") {
 		t.Errorf("the error should name the offending field, got: %v", err)
+	}
+}
+
+// A misspelled key inside a pool's engine block loads, because the block is the engine's,
+// held unopened; the release's rules refuse it when the bundle is validated, naming the key at
+// its line in the file.
+func TestAnEngineKeyIsTheReleasesToRefuse(t *testing.T) {
+	path := write(t, "d.yaml", `
+kind: Deployment
+name: typo
+pools:
+  - role: colocated
+    nodes: 1
+    parallel: {tp: 8, pp: 1, dp: 1}
+    engine:
+      blok_size: 16
+`)
+	d, err := LoadDeployment(path)
+	if err != nil {
+		t.Fatalf("the engine block is the engine's to check, but loading refused it: %v", err)
+	}
+	b := bundle()
+	b.Deployment = d
+	rep := Validate(b)
+	if rep.Field.OK() || !strings.Contains(rep.Field.Error(), "line 9: field blok_size not found") {
+		t.Errorf("the release's rules did not refuse the misspelled key at its line:\n%s", renderAll(rep))
 	}
 }
 
@@ -1188,5 +1207,26 @@ nvme_gen4: {read_bandwidth: 7.0e3, write_bandwidth: 5.0e3, base_latency: 80.0}
 		t.Fatal("the old unit-less keys were accepted; a stale file would load as zeros")
 	} else if !strings.Contains(err.Error(), "read_bandwidth") {
 		t.Errorf("the error should name an offending old key, got: %v", err)
+	}
+}
+
+// The connector registry fixture loads strictly and validates; a misspelled key fails to load.
+func TestLoadConnectorRegistry(t *testing.T) {
+	r, err := LoadConnectorRegistry("testdata/connectors/builtin-fixture.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := r.Validate(); !p.OK() {
+		t.Fatalf("the fixture does not validate:\n%s", p.Error())
+	}
+	if !r.Serves("MultiConnector", "pd_transfer") || !r.Serves("SimpleCPUOffloadConnector", "offload") {
+		t.Errorf("the fixture's roles did not load: %+v", r.Connectors)
+	}
+	bad := filepath.Join(t.TempDir(), "bad.yaml")
+	if err := os.WriteFile(bad, []byte("kind: ConnectorRegistry\nname: x\nconnectors: {}\nentries: {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadConnectorRegistry(bad); err == nil {
+		t.Error("a document with an unknown key loaded")
 	}
 }

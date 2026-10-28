@@ -6,21 +6,21 @@
 // The canonical quantity is the mean acceptance length AL: the tokens a request gains per
 // verification step, counting the target's bonus token, so AL lies in [1, K+1] for K
 // speculative tokens. It is what the authoritative sources publish (InferenceX's golden
-// SPEED-Bench curves) and what the engines take (vLLM synthetic_acceptance_length, SGLang
+// SPEED-Bench curves) and what the engines take (a synthetic acceptance length, SGLang
 // SGLANG_SIMULATE_ACC_LEN).
 //
 // Two derived quantities have one meaning each here:
 //
-//   - The acceptance rate is the accepted fraction of drafts, (AL-1)/K. It matches vLLM's
+//   - The acceptance rate is the accepted fraction of drafts, (AL-1)/K. It matches the engine's
 //     logged "Avg Draft acceptance rate" and inference-sim's --speculative-acceptance-rate.
 //     The two agree only when every step drafts all K: with a drafter that verifies
-//     fewer on some steps, such as DSpark under enable_adaptive_verification, vLLM's
-//     logged rate, accepted over drafted tokens (vllm/v1/spec_decode/metrics.py:107-110),
+//     fewer on some steps, such as DSpark under enable_adaptive_verification, the engine's
+//     logged rate, accepted over drafted tokens (v1/spec_decode/metrics.py:107-110),
 //     divides by the drafts actually proposed and diverges from (AL-1)/K.
 //     The per-token acceptance probability p of the speculative-decoding papers is a
 //     different quantity and is never called a rate in this schema.
-//   - Per-position rates p_1..p_K follow vLLM's synthetic_acceptance_rates
-//     (vllm/config/speculative.py:538-544 at v0.31.0): p_i is the unconditional probability
+//   - Per-position rates p_1..p_K follow the engine's synthetic_acceptance_rates
+//     (config/speculative.py:538-544 in the engine): p_i is the unconditional probability
 //     that the first i drafts are all accepted, so the list is non-increasing, each entry
 //     lies in [0, 1], and it sums to AL-1.
 //
@@ -170,7 +170,7 @@ type Provenance struct {
 type Sampling struct {
 	Temperature *float64 `yaml:"temperature"`
 	TopP        *float64 `yaml:"top_p,omitempty"`
-	// TopK follows vLLM: -1 or 0 disables it.
+	// TopK follows the engine: -1 or 0 disables it.
 	TopK      *int `yaml:"top_k,omitempty"`
 	MaxTokens int  `yaml:"max_tokens,omitempty"`
 }

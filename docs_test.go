@@ -18,6 +18,7 @@ import (
 
 	"github.com/inference-sim/blis-schemas/spec/acceptance"
 	"github.com/inference-sim/blis-schemas/spec/coefficient"
+	"github.com/inference-sim/blis-schemas/spec/connector"
 	"github.com/inference-sim/blis-schemas/spec/deployment"
 	"github.com/inference-sim/blis-schemas/spec/evaluation"
 	"github.com/inference-sim/blis-schemas/spec/hardware"
@@ -49,7 +50,7 @@ func TestDocExamplesValidate(t *testing.T) {
 	ex := func(name string) string { return filepath.Join("docs", "examples", name) }
 
 	t.Run("colocated", func(t *testing.T) {
-		requireSilent(t, "colocated", Validate(Bundle{
+		requireSilent(t, "colocated", Validate(Bundle{Rules: openAnyEngine,
 			Scenario:   fixture(LoadScenario(ex("scenario.yaml"))),
 			Deployment: fixture(LoadDeployment(ex("deployment.yaml"))),
 			Model:      fixture(LoadModelGraph("testdata/models/llama-3.1-8b-instruct/graph.yaml")),
@@ -57,7 +58,7 @@ func TestDocExamplesValidate(t *testing.T) {
 		}))
 	})
 	t.Run("disaggregated", func(t *testing.T) {
-		requireSilent(t, "disaggregated", Validate(Bundle{
+		requireSilent(t, "disaggregated", Validate(Bundle{Rules: openAnyEngine,
 			Scenario:   fixture(LoadScenario(ex("scenario-disaggregated.yaml"))),
 			Deployment: fixture(LoadDeployment(ex("deployment-disaggregated.yaml"))),
 			Model:      fixture(LoadModelGraph("testdata/models/deepseek-v3/graph.yaml")),
@@ -77,7 +78,7 @@ func TestDocExamplesValidate(t *testing.T) {
 		}))
 	})
 	t.Run("replay", func(t *testing.T) {
-		requireSilent(t, "replay", Validate(Bundle{
+		requireSilent(t, "replay", Validate(Bundle{Rules: openAnyEngine,
 			Scenario: fixture(LoadScenario(ex("replay-binding.yaml"))),
 		}))
 	})
@@ -85,7 +86,7 @@ func TestDocExamplesValidate(t *testing.T) {
 		w := fixture(LoadCatalogWorkload(ex("workload-replay.yaml")))
 		requireSilent(t, "catalog replay", Validate(Bundle{ReplayWorkload: w.Replay}))
 		s := fixture(LoadScenario(ex("replay-reference.yaml")))
-		requireSilent(t, "replay reference", Validate(Bundle{Scenario: s}))
+		requireSilent(t, "replay reference", Validate(Bundle{Scenario: s, Rules: openAnyEngine}))
 		root := t.TempDir()
 		if err := os.MkdirAll(filepath.Join(root, "workloads"), 0o755); err != nil {
 			t.Fatal(err)
@@ -102,7 +103,7 @@ func TestDocExamplesValidate(t *testing.T) {
 		}
 	})
 	t.Run("acceptance pin", func(t *testing.T) {
-		requireSilent(t, "acceptance pin", Validate(Bundle{
+		requireSilent(t, "acceptance pin", Validate(Bundle{Rules: openAnyEngine,
 			Scenario: fixture(LoadScenario(ex("scenario-acceptance.yaml"))),
 		}))
 	})
@@ -126,8 +127,14 @@ func TestDocExamplesValidate(t *testing.T) {
 			Model: fixture(LoadModelGraph(ex("model-graph-deepseek-v4.1.yaml"))),
 		}))
 	})
+	t.Run("connector registry", func(t *testing.T) {
+		r := fixture(LoadConnectorRegistry(ex("connector-registry.yaml")))
+		for _, p := range r.Validate().All() {
+			t.Errorf("connector-registry.yaml: %s", p)
+		}
+	})
 	t.Run("trace", func(t *testing.T) {
-		requireSilent(t, "trace", Validate(Bundle{
+		requireSilent(t, "trace", Validate(Bundle{Rules: openAnyEngine,
 			Scenario: fixture(LoadScenario(ex("trace-binding.yaml"))),
 		}))
 	})
@@ -141,6 +148,7 @@ func TestDocExamplesValidate(t *testing.T) {
 		"acceptance-profile-set.yaml":    true, "scenario-acceptance.yaml": true,
 		"replay-binding.yaml": true, "workload-replay.yaml": true, "replay-reference.yaml": true,
 		"measured-run.yaml": true, "measurement-sources.yaml": true,
+		"connector-registry.yaml": true,
 	}
 	all, err := filepath.Glob(ex("*"))
 	if err != nil {
@@ -194,11 +202,6 @@ var documented = map[string]struct {
 	"deployment.Deployment":     {typ: reflect.TypeOf(deployment.Deployment{})},
 	"deployment.Pool":           {typ: reflect.TypeOf(deployment.Pool{})},
 	"deployment.Parallelism":    {typ: reflect.TypeOf(deployment.Parallelism{})},
-	"deployment.Engine":         {typ: reflect.TypeOf(deployment.Engine{})},
-	"deployment.DBO":            {typ: reflect.TypeOf(deployment.DBO{})},
-	"deployment.EPLB":           {typ: reflect.TypeOf(deployment.EPLB{})},
-	"deployment.Speculative":    {typ: reflect.TypeOf(deployment.Speculative{})},
-	"deployment.EngramConfig":   {typ: reflect.TypeOf(deployment.EngramConfig{})},
 	"deployment.Offload":        {typ: reflect.TypeOf(deployment.Offload{})},
 	"deployment.Tier":           {typ: reflect.TypeOf(deployment.Tier{})},
 	"deployment.PDTransfer":     {typ: reflect.TypeOf(deployment.PDTransfer{})},
@@ -260,6 +263,8 @@ var documented = map[string]struct {
 	"measurement.License":       {typ: reflect.TypeOf(measurement.License{})},
 	"measurement.Evidence":      {typ: reflect.TypeOf(measurement.Evidence{})},
 	"router.Router":             {typ: reflect.TypeOf(router.Router{})},
+	"connector.Registry":        {typ: reflect.TypeOf(connector.Registry{})},
+	"connector.Entry":           {typ: reflect.TypeOf(connector.Entry{})},
 	"router.EPP":                {typ: reflect.TypeOf(router.EPP{})},
 	"router.ConfigRef":          {typ: reflect.TypeOf(router.ConfigRef{})},
 }
@@ -388,9 +393,12 @@ func TestDocEveryDocumentTypeHasATable(t *testing.T) {
 		reflect.TypeOf(routing.ProfileSet{}),
 		reflect.TypeOf(workload.Shape{}), reflect.TypeOf(evaluation.Run{}),
 		reflect.TypeOf(measurement.MeasuredRun{}), reflect.TypeOf(measurement.Registry{}),
+		reflect.TypeOf(connector.Registry{}),
 	}
-	// Types whose wire form is not a mapping, so they have no key table.
-	notMappings := map[reflect.Type]bool{reflect.TypeOf(coefficient.Interval{}): true}
+	// Types whose wire form is not a mapping of this schema's keys, so they have no key table:
+	// an interval, and a pool's engine block, which is the engine model's and held unopened.
+	notMappings := map[reflect.Type]bool{reflect.TypeOf(coefficient.Interval{}): true,
+		reflect.TypeOf(deployment.EngineBlock{}): true}
 
 	have := map[reflect.Type]bool{}
 	for _, d := range documented {

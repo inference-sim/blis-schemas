@@ -4,19 +4,19 @@ package model
 // context rather than to the tokens scheduled this step.
 //
 // One scalar cannot state it, because context-proportional work comes in two scalings
-// that differ by orders of magnitude, and DeepSeek-V4.1-Flash on vLLM v0.31.0 runs both:
+// that differ by orders of magnitude, and DeepSeek-V4.1-Flash on the engine runs both:
 //
 //   - Per query token. Layer 20's candidate-block scoring and the candidate mask of
 //     layers 24, 28, 32 and 36 launch one row per query token over the whole logits
-//     width (vllm/model_executor/kernels/attention/dsa/candidate_blocks.py), so a
+//     width (model_executor/kernels/attention/dsa/candidate_blocks.py), so a
 //     prefill chunk of 8,192 tokens over a 128K context touches 8,192 x 128K positions.
 //   - Per request. The prefill path dequantizes a request's whole compressed stream
 //     into a BF16 workspace once per step, however many of its tokens the step
-//     schedules (vllm/models/deepseek_v41/nvidia/flashmla.py, dequantize_and_gather_k_cache
+//     schedules (models/deepseek_v41/nvidia/flashmla.py, dequantize_and_gather_k_cache
 //     over seq_lens // compress_ratio).
 //
 // The extent can also differ by phase. In decode the logits width is padded to the
-// indexer's max_model_len // compress_ratio (vllm/utils/deep_gemm.py, "[B * next_n,
+// indexer's max_model_len // compress_ratio (utils/deep_gemm.py, "[B * next_n,
 // max_model_len]"), and the mask kernel writes every column of it, so decode-time mask
 // traffic follows max_model_len, not the context.
 type ContextWork struct {

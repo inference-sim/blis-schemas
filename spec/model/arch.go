@@ -6,12 +6,12 @@ import "fmt"
 // the width a weight is resident at, and the size of a cache record. A graph is
 // otherwise architecture-independent, and these are the exceptions the engine forces.
 //
-// DeepSeek-V4.1-Flash on vLLM v0.31.0 is the case that needs them. Its attention output
+// DeepSeek-V4.1-Flash on the engine is the case that needs them. Its attention output
 // projection wo_a is an MXFP8 batched matmul, and DeepGEMM's MXFP8 BMM "requires
 // Blackwell", so on SM90 the emulation path dequantizes it to BF16 at load and it is
-// resident at twice its checkpoint width (vllm/model_executor/kernels/linear/mxfp8/
+// resident at twice its checkpoint width (model_executor/kernels/linear/mxfp8/
 // deep_gemm.py, emulation.py). Its KV record is 584 B with 576 B page alignment on SM90
-// and 528 B with 512 B alignment on SM100 (vllm/models/deepseek_v41/attention.py,
+// and 528 B with 512 B alignment on SM100 (models/deepseek_v41/attention.py,
 // _use_v41_mxfp8_kv_record). Both are properties of what is resident, which is why they
 // live with the graph rather than with an engine rule.
 //
@@ -26,7 +26,7 @@ import "fmt"
 type ArchOverride struct {
 	// CapabilityFamily is the CUDA compute-capability major version the override applies
 	// to: 10 for SM100 and SM103 (B200, GB200, B300, GB300), 9 for SM90 (H100, H200).
-	// It matches vLLM's is_device_capability_family(100), which compares major versions
+	// It matches the engine's is_device_capability_family(100), which compares major versions
 	// and so excludes SM120.
 	CapabilityFamily int `yaml:"capability_family"`
 	// Nodes restates per-node weight facts, by role.

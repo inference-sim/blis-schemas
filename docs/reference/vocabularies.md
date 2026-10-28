@@ -295,16 +295,6 @@ A speculator's `drafting`. An omitted `drafting` means autoregressive.
 
 --8<-- "docs/generated/enum/deployment.Role.md"
 
-### Frontends
-
-A pool's `engine.frontend`, the API server that renders the chat template and tokenizes the
-prompt before the request reaches the engine core. `python`, the default, is the Python
-OpenAI server. `rust` is the vllm-rs frontend, which vLLM launches only when
-`VLLM_USE_RUST_FRONTEND=1` (vllm/envs.py and vllm/entrypoints/cli/serve.py; the default is
-0 in v0.29.0 and v0.31.0). It tokenizes through fastokens.
-
---8<-- "docs/generated/enum/deployment.Frontend.md"
-
 ### Data-parallel load balancing
 
 A pool's `parallel.data_parallel_load_balancing`. `internal`, the default, serves one

@@ -13,6 +13,7 @@ import (
 	"github.com/inference-sim/blis-schemas/internal/validate"
 	"github.com/inference-sim/blis-schemas/spec/acceptance"
 	"github.com/inference-sim/blis-schemas/spec/coefficient"
+	"github.com/inference-sim/blis-schemas/spec/connector"
 	"github.com/inference-sim/blis-schemas/spec/deployment"
 	"github.com/inference-sim/blis-schemas/spec/evaluation"
 	"github.com/inference-sim/blis-schemas/spec/hardware"
@@ -107,6 +108,16 @@ func LoadCoefficientSet(path string) (*coefficient.Set, error) {
 		return nil, err
 	}
 	return &s, nil
+}
+
+// LoadConnectorRegistry reads a KV-connector registry. It does not validate; call
+// Validate on the result.
+func LoadConnectorRegistry(path string) (*connector.Registry, error) {
+	var r connector.Registry
+	if err := decodeStrict(path, &r); err != nil {
+		return nil, err
+	}
+	return &r, nil
 }
 
 // LoadAcceptanceProfileSet reads an acceptance-profile set from blis-registry's

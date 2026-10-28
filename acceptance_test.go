@@ -1,6 +1,7 @@
 package blisschemas
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,7 +9,6 @@ import (
 
 	"github.com/inference-sim/blis-schemas/internal/registry"
 	"github.com/inference-sim/blis-schemas/spec/acceptance"
-	"github.com/inference-sim/blis-schemas/spec/deployment"
 	"github.com/inference-sim/blis-schemas/spec/workload"
 )
 
@@ -19,7 +19,7 @@ func alValue(k int, al float64) *acceptance.Value {
 // speculating returns the shared valid bundle with its pool drafting K tokens.
 func speculating(k int) Bundle {
 	b := bundle()
-	b.Deployment.Pools[0].Engine.Speculative = &deployment.Speculative{Method: "mtp", NumSpecTokens: k}
+	b.Deployment.Pools[0].Engine = engineBlock(fmt.Sprintf("{backend: fast, draft_tokens: %d}", k))
 	return b
 }
 
