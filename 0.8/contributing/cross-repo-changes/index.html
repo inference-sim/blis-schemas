@@ -1,0 +1,2560 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Go schemas and validators for the BLIS cost model: the shapes of the documents that describe a model, its hardware, its coefficients, a deployment, and a measured run; and the two runtime contracts between BLIS repositories, the interface a cost model implements (kernel) and the contract between a simulator and the request router it hosts (embed).">
+      
+      
+      
+        <link rel="canonical" href="https://inference-sim.github.io/blis-schemas/latest/contributing/cross-repo-changes/">
+      
+      
+        <link rel="prev" href="../documentation/">
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.3">
+    
+    
+      
+        <title>Changes across the repositories - blis-schemas</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=IBM+Plex+Sans:300,300i,400,400i,700,700i%7CIBM+Plex+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"IBM Plex Sans";--md-code-font:"IBM Plex Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="white" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#changes-across-the-blis-repositories" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="blis-schemas" class="md-header__button md-logo" aria-label="blis-schemas" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            blis-schemas
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Changes across the repositories
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="white" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/inference-sim/blis-schemas" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    inference-sim/blis-schemas
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../concepts/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Concepts
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../guides/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Guides
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../reference/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../design/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Design notes
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Contributing
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="blis-schemas" class="md-nav__button md-logo" aria-label="blis-schemas" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    blis-schemas
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/inference-sim/blis-schemas" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    inference-sim/blis-schemas
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../concepts/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concepts
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_2" id="__nav_2_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Concepts
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/repositories/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The BLIS repositories
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/documents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Documents
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/validation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Validation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/contracts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contracts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../guides/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/checkouts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Validate a catalog or registry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/authoring/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Write a scenario and a deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/go/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Validate documents from Go
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../reference/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/scenario/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Scenario
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/workload/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Workload
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model graph
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/hardware/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hardware
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/coefficients/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Coefficient set
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/acceptance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Acceptance profiles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/routing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Routing profiles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/connectors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connector registry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Evaluation run
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/measurement/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Measured run
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/kernel/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Kernel interface
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/engine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Engine interface
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/embed/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Router contract
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/vocabularies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Vocabularies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/rules/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rules packs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Command line
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../design/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Design notes
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Design notes
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/model-graph/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Why a model is a graph
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/kernel-boundary/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Where the kernel stops
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../design/layouts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parallel layouts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_6" id="__nav_6_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Contributing
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../engine-release/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    A new engine release
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../documentation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Documentation and releases
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changes across the repositories
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changes across the repositories
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-dependency-order" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The dependency order
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The dependency order">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#go-pseudo-versions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Go pseudo-versions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#no-replace-in-anything-pushed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        No replace in anything pushed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#order-of-pushes-and-merges" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Order of pushes and merges
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#keeping-every-pull-request-mergeable" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Keeping every pull request mergeable
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#parity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parity
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#integration-and-gates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Integration and gates
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Integration and gates">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#one-binary-from-the-integrated-heads" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One binary from the integrated heads
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pinned-immutable-snapshots" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pinned, immutable snapshots
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gates
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#version-discipline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Version discipline
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tests
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#public-artifacts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Public artifacts
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#review-before-each-push" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Review before each push
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recording-decisions-and-deviations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recording decisions and deviations
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#before-a-push-the-checklist" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Before a push: the checklist
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-dependency-order" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The dependency order
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The dependency order">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#go-pseudo-versions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Go pseudo-versions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#no-replace-in-anything-pushed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        No replace in anything pushed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#order-of-pushes-and-merges" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Order of pushes and merges
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#keeping-every-pull-request-mergeable" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Keeping every pull request mergeable
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#parity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Parity
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#integration-and-gates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Integration and gates
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Integration and gates">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#one-binary-from-the-integrated-heads" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One binary from the integrated heads
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pinned-immutable-snapshots" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pinned, immutable snapshots
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gates
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#version-discipline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Version discipline
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tests
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#public-artifacts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Public artifacts
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#review-before-each-push" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Review before each push
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recording-decisions-and-deviations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recording decisions and deviations
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#before-a-push-the-checklist" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Before a push: the checklist
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/inference-sim/blis-schemas/edit/main/docs/contributing/cross-repo-changes.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="changes-across-the-blis-repositories">Changes across the BLIS repositories<a class="headerlink" href="#changes-across-the-blis-repositories" title="Permanent link">&para;</a></h1>
+<p class="lede">Most improvements to BLIS touch more than one of its six repositories. A schema
+field, a catalog fact, a fitted coefficient, the kernel that reads them and the simulator that
+calls the kernel have to land together, and every number published from them has to be
+reproducible from what is public. This page is the one description of how such a change is
+made. Each of the other five repositories links here and adds only its own steps.</p>
+
+<p>The rules below were worked out over several rounds of changes made across all the repositories
+at once. They exist because each one, when skipped, produced a published number that nobody
+could reproduce, a pull request that could not merge, or a fix that made the overall estimate
+worse.</p>
+<h2 id="the-dependency-order">The dependency order<a class="headerlink" href="#the-dependency-order" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Repository</th>
+<th>Depends on</th>
+<th>How it pins what it depends on</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>blis-schemas</strong></td>
+<td>nothing in BLIS</td>
+<td>—</td>
+</tr>
+<tr>
+<td><a href="https://github.com/inference-sim/blis-catalog">blis-catalog</a></td>
+<td>blis-schemas</td>
+<td>CI runs <code>go run github.com/inference-sim/blis-schemas/cmd/validate-catalog@&lt;version&gt; .</code> in <code>.github/workflows/ci.yml</code>; the README quotes the same version</td>
+</tr>
+<tr>
+<td><a href="https://github.com/inference-sim/blis-registry">blis-registry</a></td>
+<td>blis-schemas, blis-catalog</td>
+<td><code>.github/workflows/validate.yml</code> checks out blis-schemas at a tag or a full commit; <code>.github/workflows/rederive.yml</code> pins the catalog (<code>CATALOG_SHA</code>) and the fitting data (<code>AISIMULATE_SHA</code>) by commit</td>
+</tr>
+<tr>
+<td><a href="https://github.com/inference-sim/blis-vllm">blis-vllm</a></td>
+<td>blis-schemas</td>
+<td><code>go.mod</code> (and <code>rules/go.mod</code>, its rules-pack module) requires blis-schemas</td>
+</tr>
+<tr>
+<td><a href="https://github.com/inference-sim/blis-latency-kernel">blis-latency-kernel</a></td>
+<td>blis-schemas; blis-vllm's rules packs in its commands and tests only; catalog and registry as test inputs</td>
+<td><code>go.mod</code> requires blis-schemas and blis-vllm/rules; <code>testdata/upstream.lock</code> names a catalog and a registry commit, which <code>scripts/fetch-testdata.sh</code> fetches and verifies</td>
+</tr>
+<tr>
+<td><a href="https://github.com/inference-sim/inference-sim">inference-sim</a></td>
+<td>blis-latency-kernel, blis-vllm, blis-schemas; catalog and registry as vendored test data</td>
+<td><code>go.mod</code> requires the kernel, blis-vllm and blis-schemas; <code>testdata/catalog</code> and <code>testdata/registry</code> are vendored copies with <code>.upstream-commit</code> stamps; <code>testdata/upstream-prerelease.lock</code> overlays the kernel's lock while the inputs are unreleased</td>
+</tr>
+</tbody>
+</table>
+<p>Changes flow one way: schemas, then catalog, registry and blis-vllm, then the kernel, then
+inference-sim. Nothing
+imports in the other direction. blis-schemas' own CI reads a registry checkout at <code>main</code> to
+check that committed data still parses; that job does not test an open registry pull request.</p>
+<h3 id="go-pseudo-versions">Go pseudo-versions<a class="headerlink" href="#go-pseudo-versions" title="Permanent link">&para;</a></h3>
+<p>A Go consumer pins an unreleased commit by its pseudo-version,
+<code>v&lt;next patch&gt;-0.&lt;UTC commit time&gt;-&lt;first 12 hex digits of the SHA&gt;</code>, for example
+<code>v0.3.1-0.20261017092034-afd839aa6053</code>. Once the commit is pushed,
+<code>GOPROXY=direct go list -m github.com/inference-sim/blis-schemas@&lt;sha&gt;</code> prints it. The <code>go.sum</code>
+hash is computed from the module's content, so it is the same before and after the push.</p>
+<p>A pseudo-version pin is a pre-release state. Before a consumer merges, the pin moves to a
+release tag of the dependency. A comment beside every pin of an unreleased commit says
+<code>TEMPORARY</code> and names the pull request whose head it is, so a reviewer cannot mistake it for
+a release.</p>
+<h3 id="no-replace-in-anything-pushed">No <code>replace</code> in anything pushed<a class="headerlink" href="#no-replace-in-anything-pushed" title="Permanent link">&para;</a></h3>
+<p>A <code>replace</code> directive in <code>go.mod</code> points a module at a local path. It builds on one machine and
+nowhere else, and a published number computed with it cannot be reproduced. To develop
+against an unpushed dependency, use an uncommitted <code>go.work</code> file, or the <code>insteadOf</code> mapping
+of the dependency's URL to a local clone, and keep both out of the commit. Before every commit
+that touches <code>go.mod</code>:</p>
+<div class="language-sh highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>grep<span class="w"> </span>-n<span class="w"> </span><span class="s1">'^replace'</span><span class="w"> </span>go.mod<span class="w">   </span><span class="c1"># must print nothing</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>go<span class="w"> </span>mod<span class="w"> </span>tidy<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>git<span class="w"> </span>diff<span class="w"> </span>--exit-code<span class="w"> </span>go.mod<span class="w"> </span>go.sum
+</code></pre></div>
+<p>When a branch is merged into an integration branch and it carries a <code>replace</code>, the merge drops
+the <code>replace</code> and pins the dependency's pushed head instead.</p>
+<h2 id="order-of-pushes-and-merges">Order of pushes and merges<a class="headerlink" href="#order-of-pushes-and-merges" title="Permanent link">&para;</a></h2>
+<p>Every pull request in a cross-repository change stays a draft until all of them are ready. Then:</p>
+<ol>
+<li><strong>Push blis-schemas.</strong> Its head is the pin every other repository uses.</li>
+<li><strong>Repin and push the middle four</strong>, in any order except that blis-vllm comes before the
+   kernel, whose tests use its rules packs:<ul>
+<li>blis-catalog: the <code>validate-catalog@&lt;version&gt;</code> pin in <code>ci.yml</code> and the README;</li>
+<li>blis-vllm: <code>go.mod</code> and <code>rules/go.mod</code>;</li>
+<li>blis-registry: the schema ref in <code>validate.yml</code>, and <code>CATALOG_SHA</code> in <code>rederive.yml</code> if
+  the change needs a newer catalog;</li>
+<li>blis-latency-kernel: <code>go.mod</code> (blis-schemas and blis-vllm/rules), and <code>testdata/upstream.lock</code> if the tests need the new
+  catalog or registry; regenerate <code>docs/generated/</code> (its <code>sources.md</code> lists the pin).</li>
+</ul>
+</li>
+<li><strong>Repin, re-vendor and push inference-sim</strong>: <code>go.mod</code> to the kernel, blis-vllm and schemas heads;
+   <code>testdata/catalog</code> and <code>testdata/registry</code> from the catalog and registry heads, with their
+   <code>.upstream-commit</code> stamps; <code>testdata/upstream-prerelease.lock</code> to those heads.</li>
+<li><strong>Run every repository's suite against the others' pushed heads</strong>, not against local
+   checkouts.</li>
+<li><strong>Regenerate every pull request body</strong> from the pushed heads (see <a href="#parity">Parity</a>).</li>
+</ol>
+<p>If any head changes after a downstream repository pinned it, repeat the steps below it. A
+change to the schemas head means repinning all five.</p>
+<p>Merging follows the same order, with a release between each step: merge blis-schemas and tag
+it; move the catalog's and registry's CI pins to that tag and merge each, then tag them; move
+the kernel's <code>go.mod</code> and <code>upstream.lock</code> to the tags, merge and tag it; move inference-sim's
+<code>go.mod</code> to the kernel and schemas tags, re-vendor the catalog and registry from their tags,
+empty <code>upstream-prerelease.lock</code>, and merge. inference-sim's
+<code>TestTheVendoredCatalogAndRegistryAreTheLockedReleases</code> fails while the prerelease lock
+restates the kernel's lock, and <code>TestDocExamplesPinTheCatalogVersion</code> fails while its
+documentation names an older catalog release.</p>
+<h2 id="keeping-every-pull-request-mergeable">Keeping every pull request mergeable<a class="headerlink" href="#keeping-every-pull-request-mergeable" title="Permanent link">&para;</a></h2>
+<p>Before every push, in each of the five branches:</p>
+<div class="language-sh highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>git<span class="w"> </span>fetch<span class="w"> </span>origin
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>git<span class="w"> </span>merge<span class="w"> </span>origin/main<span class="w">                               </span><span class="c1"># resolve, then re-run the suite</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>git<span class="w"> </span>merge-tree<span class="w"> </span>--write-tree<span class="w"> </span>origin/main<span class="w"> </span>HEAD<span class="w">        </span><span class="c1"># must exit 0 and print one tree line</span>
+</code></pre></div>
+<p>A non-zero exit, or conflict lines after the tree, means GitHub will report a conflict. A merge
+that conflicts is resolved in a commit whose message lists each file, both sides, and what was
+kept. An integration merge that breaks a test neither branch broke on its own ("integration
+breakage") is fixed in its own commit, named as such.</p>
+<h2 id="parity">Parity<a class="headerlink" href="#parity" title="Permanent link">&para;</a></h2>
+<p><strong>Every published number must be reproducible from the public pull request heads alone.</strong> That
+means:</p>
+<ul>
+<li>no coefficient that exists only in a local snapshot or an uncommitted file;</li>
+<li>no <code>replace</code> (above);</li>
+<li>the registry and catalog vendored into inference-sim equal the registry and catalog pull
+  request heads, file for file;</li>
+<li>every CI pin and every <code>go.mod</code> pin equals the head of the pull request it names;</li>
+<li>every pull request body names the exact head SHA of its own branch and of each dependency
+  it pins, and those SHAs are the branch heads at the moment of the push.</li>
+</ul>
+<p>A push gate checks the last point mechanically: every commit SHA quoted in a body must equal
+the current head of the branch it names. A body written before the final merges goes stale, so
+bodies are regenerated from the heads as the last step before a push, never edited by hand.</p>
+<p>A published run names the five commits it was built from. A reader reproduces it by checking
+out those commits and building, without anything from the author's machine. Tools and
+harnesses that produce a published number belong in a pull request; external data they read
+is named by URL and revision or sha256, not committed.</p>
+<h2 id="integration-and-gates">Integration and gates<a class="headerlink" href="#integration-and-gates" title="Permanent link">&para;</a></h2>
+<h3 id="one-binary-from-the-integrated-heads">One binary from the integrated heads<a class="headerlink" href="#one-binary-from-the-integrated-heads" title="Permanent link">&para;</a></h3>
+<p>All five branches are merged and pinned to each other first. The simulator is then built once,
+from a detached checkout of the integrated inference-sim head, with its revision injected:</p>
+<div class="language-sh highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>go<span class="w"> </span>build<span class="w"> </span>-ldflags<span class="w"> </span><span class="s2">"-X github.com/inference-sim/inference-sim/cmd.buildRevision=</span><span class="k">$(</span>git<span class="w"> </span>rev-parse<span class="w"> </span>HEAD<span class="k">)</span><span class="s2">"</span><span class="w"> </span>-o<span class="w"> </span>blis<span class="w"> </span>main.go
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>shasum<span class="w"> </span>-a<span class="w"> </span><span class="m">256</span><span class="w"> </span>blis
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>go<span class="w"> </span>version<span class="w"> </span>-m<span class="w"> </span>blis<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>inference-sim/blis-<span class="w">   </span><span class="c1"># the kernel and schemas versions it contains</span>
+</code></pre></div>
+<p>Every gate runs on that binary. Its sha256, its revision and the module versions it contains
+are recorded with the results.</p>
+<h3 id="pinned-immutable-snapshots">Pinned, immutable snapshots<a class="headerlink" href="#pinned-immutable-snapshots" title="Permanent link">&para;</a></h3>
+<p>The registry and catalog a run reads are snapshots, not working trees. A snapshot is
+<code>git archive &lt;sha&gt;</code> of the pinned commit, extracted to a directory named <code>&lt;repo&gt;@&lt;sha12&gt;</code> and
+made read-only. Before a run, a pin check refuses a root that is inside a git working tree,
+whose name does not match the pinned commit, that has a writable file, or whose per-file sha256
+manifest differs from the commit's. A working tree with an uncommitted edit once fed
+unpinned coefficients to validation runs; the snapshot rule exists because of it.</p>
+<h3 id="gates">Gates<a class="headerlink" href="#gates" title="Permanent link">&para;</a></h3>
+<p>A gate is written down, with its threshold and its baseline build, <strong>before</strong> the data it judges
+exists, and is never relaxed after the data is seen. The kinds used so far:</p>
+<table>
+<thead>
+<tr>
+<th>Kind</th>
+<th>Asks</th>
+<th>Example</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Transfer</td>
+<td>Is the aggregate error on a fixed set of measured configurations, not used for fitting, no worse than the baseline's?</td>
+<td>output-throughput and interactivity MAPE on another part's measured runs, under fixed limits</td>
+</tr>
+<tr>
+<td>Ordering</td>
+<td>Where more than one configuration was measured, does BLIS order them the same way?</td>
+<td>per-level order agreement, ties broken by magnitude</td>
+</tr>
+<tr>
+<td>Anchor</td>
+<td>On request-level measured runs, are solo and load-matched ITL error, TTFT error and the KV-pool ratio no worse than on the baseline build?</td>
+<td>per-anchor rows, each with a no-worse verdict</td>
+</tr>
+<tr>
+<td>Startup and levers</td>
+<td>Does the build refuse what the engine refuses, and does each knob still move the quantity it governs?</td>
+<td>an engine whose KV cannot hold one request is refused; each lever test is mutation-checked</td>
+</tr>
+</tbody>
+</table>
+<p><strong>The landing rule.</strong> A fix lands only if it improves, or does not worsen, its held-out anchors.
+Before and after figures come from a script whose output path is quoted, never typed by hand.
+A fix that fails its gate does not land. The exception is a recorded deviation (below), decided
+by a maintainer and stated openly in the pull request body with its evidence.</p>
+<p><strong>Seeds.</strong> A latency comparison between two builds uses the mean over the same seeds (for
+example 42 to 45) on both. "No worse" means
+<code>mean(new) - mean(old) &lt;= sqrt(var(old)/n(old) + var(new)/n(new))</code>, with sample variances over
+seeds. A single seed is not evidence for or against a change.</p>
+<p><strong>The same points.</strong> A held-out comparison scores both builds on the same points: the same
+point identifiers, the same request set, the same metric window. A subsample is drawn by a
+seeded, stratified rule, and its file and sha256 are recorded before either side is scored. A
+hit rate is compared on the requests both builds complete, not over a window whose request mix
+shifts with latency.</p>
+<p><strong>Apples to apples.</strong> Each measured run is replayed as that run was configured: the engine
+behaviour of the release it actually ran, its client settings, its metric definitions. A
+setting BLIS cannot yet express is a named mismatch, listed, and the affected metric is not
+scored. A comparison between two different quantities is not made at all.</p>
+<p><strong>Coefficient and pricing changes</strong> follow blis-registry's
+<a href="https://github.com/inference-sim/blis-registry/blob/main/docs/fitting-principles.md">fitting principles</a>:
+a declared fit / held-out split written before the held-out numbers are read, distributions
+rather than point errors, agreement across latency, KV, queueing and throughput together, the
+version rule, and the landing gate there.</p>
+<h2 id="version-discipline">Version discipline<a class="headerlink" href="#version-discipline" title="Permanent link">&para;</a></h2>
+<p>BLIS models one engine release at a time. A statement about what the engine does cites the
+release's source as <code>&lt;path&gt;:&lt;lines&gt;@&lt;tag&gt;</code>. Data measured on another engine version is used only
+for a term whose code path is unchanged between that version and the modelled release, shown by
+a per-function diff that is recorded with the fit; otherwise the term is fitted only from data
+on the modelled release, or parked. A schema change that extends a frozen client or engine lock
+is recorded as a deliberate version extension.</p>
+<h2 id="tests">Tests<a class="headerlink" href="#tests" title="Permanent link">&para;</a></h2>
+<p>Every behaviour change has a test that fails without it. Check that by mutation: revert the fix
+(or break the law) on purpose, see the test fail, restore it, and say in the commit message what
+was broken and which test caught it. Tests assert behaviour through public interfaces, one
+behaviour each, with the smallest setup that triggers it. A test that skips because its data is
+absent prints why; an unexpected skip is a test that did not run.</p>
+<h2 id="public-artifacts">Public artifacts<a class="headerlink" href="#public-artifacts" title="Permanent link">&para;</a></h2>
+<p>Commits, code, comments, documentation, issue and pull request text are public.</p>
+<ul>
+<li><strong>Never write internal project, customer or colleague names in a public artifact.</strong> Refer to
+  private measurements by what they are ("internal deployment measurements"), not by where they
+  came from. A name scan of the diff, the commit messages and every tracked file runs before
+  each push. A private-names check (<code>.github/workflows/private-names.yml</code>) reads its pattern
+  from a repository secret and fails a pull request whose files, paths, commit messages, title
+  or body match it.</li>
+<li><strong>Never redistribute third-party data.</strong> Measurements, traces and benchmark dumps stay where
+  their owner publishes them. A repository commits derived values only, each with its
+  provenance: the source URL and its commit or sha256.</li>
+</ul>
+<h2 id="review-before-each-push">Review before each push<a class="headerlink" href="#review-before-each-push" title="Permanent link">&para;</a></h2>
+<ol>
+<li><strong>An expert self-audit.</strong> Before an integration point and before every push, write down the
+   ten correctness questions each of three experts would ask of all the pull requests together:
+   an engineer of the modelled engine, a benchmark engineer who produced the measurements, and a
+   distributed-inference simulation researcher. Answer each from code and data, with file and
+   line evidence, and grade it sound, weak or wrong. Fix every wrong answer that affects
+   correctness before pushing; file the rest. This extends inference-sim's
+   <a href="https://github.com/inference-sim/inference-sim/blob/main/docs/contributing/pr-workflow.md#step-475-pre-commit-self-audit">pre-commit self-audit</a>
+   and its <a href="https://github.com/inference-sim/inference-sim/blob/main/docs/contributing/perspectives.md">review perspectives</a>
+   to every repository.</li>
+<li><strong>A holistic review across all the pull requests</strong>, as one change, not one per repository, with the
+   findings that affect correctness fixed before the push.</li>
+</ol>
+<h2 id="recording-decisions-and-deviations">Recording decisions and deviations<a class="headerlink" href="#recording-decisions-and-deviations" title="Permanent link">&para;</a></h2>
+<p>So that the next round does not re-derive them, every decision that is not obvious from the code
+is written down when it is made:</p>
+<ul>
+<li><strong>pre-registrations</strong>, with their time, before the data they govern: partitions and their
+  hashes, gates and thresholds, subsample rules, the baseline build;</li>
+<li><strong>landing decisions</strong>: what landed, what did not, and the gate result that decided it;</li>
+<li><strong>deviations</strong>: a gate that failed but whose change landed anyway, with who decided, why,
+  and the evidence (seed spread, per-row figures);</li>
+<li><strong>remaining gaps</strong>, each as a drafted issue with a title and body.</li>
+</ul>
+<p>The decisions that bind a pull request appear in its body, under its evidence. A pull request
+body says plainly when a gate did not improve.</p>
+<h2 id="before-a-push-the-checklist">Before a push: the checklist<a class="headerlink" href="#before-a-push-the-checklist" title="Permanent link">&para;</a></h2>
+<ul>
+<li>[ ] Every branch has merged <code>origin/main</code>; <code>git merge-tree --write-tree origin/main HEAD</code> is clean.</li>
+<li>[ ] No <code>replace</code> in any <code>go.mod</code>; every pin equals the head it names.</li>
+<li>[ ] The vendored catalog and registry in inference-sim equal those heads.</li>
+<li>[ ] Every repository's suite passes against the others' pushed heads.</li>
+<li>[ ] Gates were run on one binary built from the integrated heads, with pinned snapshots.</li>
+<li>[ ] Behaviour changes have mutation-checked tests, and held-out evidence from a script.</li>
+<li>[ ] The self-audit and the cross-repository review are done; correctness findings are fixed.</li>
+<li>[ ] The name scan is clean; no third-party data is committed.</li>
+<li>[ ] Pull request bodies are regenerated from the heads, and every SHA in them is a branch head.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../documentation/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Documentation and releases">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Documentation and releases
+              </div>
+            </div>
+          </a>
+        
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Apache 2.0 · part of <a href="https://github.com/inference-sim">BLIS</a>
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/inference-sim/blis-schemas" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.indexes", "navigation.top", "navigation.footer", "search.highlight", "search.suggest", "content.code.copy", "content.action.edit", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"alias": true, "default": "latest", "provider": "mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>
