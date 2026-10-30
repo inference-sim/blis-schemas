@@ -45,6 +45,10 @@ type FIFOConfig struct {
 	// StepBaseUs and StepPerTokenUs price a step as base + per-token x tokens.
 	StepBaseUs     int64 `yaml:"step_base_us"`
 	StepPerTokenUs int64 `yaml:"step_per_token_us"`
+	// Stages, above one, splits each step evenly into that many pipeline stages
+	// (engine.Pipelined): what a simulator overlaps when it runs more than one batch in
+	// flight on a pipeline. Zero or one is a single stage.
+	Stages int `yaml:"stages,omitempty"`
 }
 
 type fifoReq struct {
@@ -101,7 +105,7 @@ func (FIFOFactory) New(s engine.Spec) (engine.Engine, error) {
 // NewFIFO builds a FIFO engine.
 func NewFIFO(cfg FIFOConfig) (*FIFO, error) {
 	if cfg.MaxRunning < 1 || cfg.TokenBudget < 1 || cfg.InFlight < 0 || cfg.Drafts < 0 ||
-		cfg.StepBaseUs < 0 || cfg.StepPerTokenUs < 0 {
+		cfg.StepBaseUs < 0 || cfg.StepPerTokenUs < 0 || cfg.Stages < 0 {
 		return nil, fmt.Errorf("fifo: invalid config %+v", cfg)
 	}
 	if cfg.TokenBudget < 1+cfg.Drafts {
@@ -204,9 +208,23 @@ func (f *FIFO) share(q *fifoReq, budget int) (engine.Scheduled, bool) {
 	return s, true
 }
 
-// StepTime implements engine.Engine.
+// StepTime implements engine.Engine. A pipelined FIFO's step is at least one microsecond a
+// stage, so StageTimes always sums to it.
 func (f *FIFO) StepTime(b engine.Batch) engine.Duration {
-	return max(1, f.cfg.StepBaseUs+f.cfg.StepPerTokenUs*int64(b.Tokens()))
+	return max(1, engine.Duration(max(f.cfg.Stages, 1)), f.cfg.StepBaseUs+f.cfg.StepPerTokenUs*int64(b.Tokens()))
+}
+
+// StageTimes implements engine.Pipelined: the step split as evenly as microseconds allow,
+// the remainder on the last stage, each stage at least one microsecond.
+func (f *FIFO) StageTimes(b engine.Batch) []engine.Duration {
+	n := max(f.cfg.Stages, 1)
+	total := max(f.StepTime(b), engine.Duration(n))
+	out := make([]engine.Duration, n)
+	for i := range out {
+		out[i] = total / engine.Duration(n)
+	}
+	out[n-1] += total % engine.Duration(n)
+	return out
 }
 
 // Complete implements engine.Engine.

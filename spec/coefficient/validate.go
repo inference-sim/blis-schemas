@@ -2,6 +2,7 @@ package coefficient
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/inference-sim/blis-schemas/internal/validate"
 	"github.com/inference-sim/blis-schemas/vocab"
@@ -84,6 +85,23 @@ func (e Entry) validate(p *validate.Problems, at string) {
 	if e.Scope.Empty() {
 		p.Field(at+".scope",
 			"at least one dimension is required; an empty scope states no applicability rather than universal applicability")
+	}
+	// A fabric names a catalog networks/ identity, a bare file stem. A blank entry names
+	// nothing; a path or a .yaml suffix is a reference to a file rather than its identity
+	// and would never match a deployment's fabric; and a repeated name is a copy-paste
+	// that changes nothing but reads as two links.
+	seenFabric := map[string]bool{}
+	for j, f := range e.Scope.Fabric {
+		fat := fmt.Sprintf("%s.scope.fabric[%d]", at, j)
+		switch {
+		case strings.TrimSpace(f) == "":
+			p.Field(fat, "names a catalog networks/ fabric and must not be empty")
+		case strings.ContainsAny(f, `/\`) || strings.HasSuffix(strings.ToLower(f), ".yaml"):
+			p.Field(fat, "%q is a path; a fabric is named by its catalog identity, the stem of networks/<name>.yaml", f)
+		case seenFabric[strings.ToLower(f)]:
+			p.Field(fat, "duplicate fabric %q", f)
+		}
+		seenFabric[strings.ToLower(f)] = true
 	}
 	// value 0 is reserved for a deliberately not-charged term. A zero under any other
 	// method reads as "free" when it almost always means "unfilled", so require the method

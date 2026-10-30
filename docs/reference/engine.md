@@ -34,6 +34,21 @@ interface in its own repository with no change here or in the simulator.
 Calls are sequential: a simulator never calls an engine from two goroutines, and an engine
 starts none.
 
+### Pipeline stages
+
+An engine whose batches run through more than one pipeline stage, each on its own devices,
+also implements `engine.Pipelined`:
+
+| Method | Does |
+|---|---|
+| `StageTimes(b Batch) []Duration` | `StepTime(b)` split by stage, in pipeline order: one entry per stage, each at least one microsecond, summing exactly to `StepTime(b)`. |
+
+A simulator that honours it starts stage *s* of a batch once stage *s*-1 of that batch has
+ended and stage *s* has finished the batch ahead of it, and completes the batch when its last
+stage ends. The interface is optional: a simulator that does not look for it times each batch
+as one `StepTime` on one device, which serializes the stages. `enginetest.Drive` honours it and
+checks its law, including that every batch has the same number of stages.
+
 ## Batches
 
 A batch that runs requests gets a `BatchID` greater than every earlier one of the same engine

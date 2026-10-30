@@ -208,6 +208,10 @@ type Scope struct {
 	TP           []int    `yaml:"tp,omitempty"`
 	EP           []int    `yaml:"ep,omitempty"`
 	NodesSpanned []int    `yaml:"nodes_spanned,omitempty"`
+	// Fabric lists the inter-node interconnect classes the value holds over, by catalog
+	// identity (the stem of networks/<name>.yaml). Matched without regard to case, like
+	// hardware and model.
+	Fabric []string `yaml:"fabric,omitempty"`
 }
 
 // UnmarshalYAML rejects unknown scope keys before decoding. The typed fields alone would
@@ -231,7 +235,7 @@ func (s *Scope) UnmarshalYAML(node *yaml.Node) error {
 // Empty reports whether no dimension is stated.
 func (s Scope) Empty() bool {
 	return len(s.Hardware) == 0 && len(s.Model) == 0 && len(s.TP) == 0 &&
-		len(s.EP) == 0 && len(s.NodesSpanned) == 0
+		len(s.EP) == 0 && len(s.NodesSpanned) == 0 && len(s.Fabric) == 0
 }
 
 // Key returns a canonical string identifying this scope, for use as a map key.
@@ -274,6 +278,7 @@ func (s Scope) Key() string {
 	writeInts("tp", s.TP)
 	writeInts("ep", s.EP)
 	writeInts("nodes_spanned", s.NodesSpanned)
+	writeStrings("fabric", s.Fabric)
 	return b.String()
 }
 

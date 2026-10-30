@@ -206,3 +206,30 @@ func TestConformanceRefusesUnarbitrableAndShrinkingDemands(t *testing.T) {
 		t.Error("CheckLinksAgree accepted a demand naming a link twice")
 	}
 }
+
+// Each way a pipeline split can break the StepEstimate contract is caught, and a conforming
+// split and no split at all pass.
+func TestCheckStagesFailsEachWay(t *testing.T) {
+	us := time.Microsecond
+	ok := kernel.StepEstimate{Overlap: 7 * us, NoOverlap: 10 * us,
+		Stages: []kernel.StageEstimate{{Overlap: 3 * us, NoOverlap: 4 * us}, {Overlap: 4 * us, NoOverlap: 6 * us}}}
+	if err := CheckStages(ok); err != nil {
+		t.Errorf("a conforming split failed: %v", err)
+	}
+	if err := CheckStages(kernel.StepEstimate{Overlap: us, NoOverlap: us}); err != nil {
+		t.Errorf("a step with no split failed: %v", err)
+	}
+	for name, e := range map[string]kernel.StepEstimate{
+		"one stage":               {Overlap: us, NoOverlap: us, Stages: []kernel.StageEstimate{{Overlap: us, NoOverlap: us}}},
+		"overlap does not sum":    {Overlap: 8 * us, NoOverlap: 10 * us, Stages: ok.Stages},
+		"no-overlap does not sum": {Overlap: 7 * us, NoOverlap: 11 * us, Stages: ok.Stages},
+		"a negative stage": {Overlap: 0, NoOverlap: 0,
+			Stages: []kernel.StageEstimate{{Overlap: -us, NoOverlap: -us}, {Overlap: us, NoOverlap: us}}},
+		"a stage that overlaps above its sum": {Overlap: 3 * us, NoOverlap: 3 * us,
+			Stages: []kernel.StageEstimate{{Overlap: 2 * us, NoOverlap: us}, {Overlap: us, NoOverlap: 2 * us}}},
+	} {
+		if CheckStages(e) == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}

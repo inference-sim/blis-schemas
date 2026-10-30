@@ -205,6 +205,27 @@ type StepEstimate struct {
 
 	// PerResource is the per-resource sum, for a caller that needs to see why.
 	PerResource map[Resource]time.Duration
+
+	// Stages splits the step by pipeline stage, in pipeline order, where the deployment
+	// runs more than one (pp > 1); nil for a single stage.
+	//
+	// A pipeline-parallel step is not one forward pass on one set of GPUs but pp of them in
+	// sequence, each on its own ranks: stage s runs its contiguous share of the layers and
+	// hands its activations to stage s+1. Two batches in flight therefore overlap, one in
+	// each stage, and a simulator needs every stage's time to know both when a batch's output
+	// is ready (the sum) and when the next batch may enter a stage (that stage's own time).
+	// Each stage's figure includes the send of its activations to the next stage, which is
+	// where the inter-stage link is paid.
+	//
+	// The law, part of this contract: the stages' Overlap figures sum to Overlap and their
+	// NoOverlap figures sum to NoOverlap, exactly. Package kerneltest checks it.
+	Stages []StageEstimate
+}
+
+// StageEstimate is one pipeline stage's share of a step, bracketed as the step is.
+type StageEstimate struct {
+	Overlap   time.Duration
+	NoOverlap time.Duration
 }
 
 // Batch is what the simulator must supply: per-request shape plus the engine and

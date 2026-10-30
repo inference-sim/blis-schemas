@@ -61,6 +61,7 @@ Each dimension lists the values the coefficient holds for. An empty scope is not
 | `tp` | list of integers | no | Tensor-parallel widths. |
 | `ep` | list of integers | no | Expert-parallel widths. |
 | `nodes_spanned` | list of integers | no | How many nodes a collective crosses. |
+| `fabric` | list of strings | no | Inter-node interconnect classes, by catalog identity: the stem of a fabric under `networks/`, such as `roce-200g` or `ib-400g`. `nodes_spanned` says whether a collective leaves a node; `fabric` says over which link. A link inside one chip's NVLink domain, a whole NVL72 rack included, belongs to the chip and is scoped by `hardware`. Each name must be a bare identity, not empty, not a path, and listed once. |
 
 Dtype and backend are not scope dimensions. Both are part of the entry's name, as in
 `gemm_eps_max_bf16`.
@@ -87,8 +88,8 @@ scope.
 
 The schema defines what an entry says. Choosing among entries is the cost model's job, and
 blis-latency-kernel does it as follows. An entry applies to a deployment if, for every
-dimension its scope states, the list includes the deployment's value; hardware and model
-names are compared without regard to case, and a dimension the scope omits does not
+dimension its scope states, the list includes the deployment's value; hardware, model and
+fabric names are compared without regard to case, and a dimension the scope omits does not
 constrain it. The kernel reads the scenario's sets in order and, within each set, its
 entries in order, and the last applicable entry for each name is the one it uses. A later
 set can therefore override part of an earlier one. Entries that do not apply are skipped.
