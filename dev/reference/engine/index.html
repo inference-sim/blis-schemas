@@ -1333,6 +1333,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Methods">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pipeline-stages" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pipeline stages
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1881,6 +1898,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Methods">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pipeline-stages" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pipeline stages
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -2031,6 +2065,28 @@ interface in its own repository with no change here or in the simulator.</p>
 </table>
 <p>Calls are sequential: a simulator never calls an engine from two goroutines, and an engine
 starts none.</p>
+<h3 id="pipeline-stages">Pipeline stages<a class="headerlink" href="#pipeline-stages" title="Permanent link">&para;</a></h3>
+<p>An engine whose batches run through more than one pipeline stage, each on its own devices,
+also implements <code>engine.Pipelined</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>StageTimes(b Batch) []Duration</code></td>
+<td><code>StepTime(b)</code> split by stage, in pipeline order: one entry per stage, each at least one microsecond, summing exactly to <code>StepTime(b)</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>A simulator that honours it starts stage <em>s</em> of a batch once stage <em>s</em>-1 of that batch has
+ended and stage <em>s</em> has finished the batch ahead of it, and completes the batch when its last
+stage ends. The interface is optional: a simulator that does not look for it times each batch
+as one <code>StepTime</code> on one device, which serializes the stages. <code>enginetest.Drive</code> honours it and
+checks its law, including that every batch has the same number of stages.</p>
 <h2 id="batches">Batches<a class="headerlink" href="#batches" title="Permanent link">&para;</a></h2>
 <p>A batch that runs requests gets a <code>BatchID</code> greater than every earlier one of the same engine
 and stays in flight until <code>Complete</code> names it. Any number of batches may be in flight, up to

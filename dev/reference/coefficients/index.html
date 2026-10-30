@@ -2232,6 +2232,12 @@ sets, and how a cost model combines them is described under
 <td>no</td>
 <td>How many nodes a collective crosses.</td>
 </tr>
+<tr>
+<td><code>fabric</code></td>
+<td>list of strings</td>
+<td>no</td>
+<td>Inter-node interconnect classes, by catalog identity: the stem of a fabric under <code>networks/</code>, such as <code>roce-200g</code> or <code>ib-400g</code>. <code>nodes_spanned</code> says whether a collective leaves a node; <code>fabric</code> says over which link. A link inside one chip's NVLink domain, a whole NVL72 rack included, belongs to the chip and is scoped by <code>hardware</code>. Each name must be a bare identity, not empty, not a path, and listed once.</td>
+</tr>
 </tbody>
 </table>
 <p>Dtype and backend are not scope dimensions. Both are part of the entry's name, as in
@@ -2278,8 +2284,8 @@ scope.</p>
 <h2 id="selecting-an-entry">Selecting an entry<a class="headerlink" href="#selecting-an-entry" title="Permanent link">&para;</a></h2>
 <p>The schema defines what an entry says. Choosing among entries is the cost model's job, and
 blis-latency-kernel does it as follows. An entry applies to a deployment if, for every
-dimension its scope states, the list includes the deployment's value; hardware and model
-names are compared without regard to case, and a dimension the scope omits does not
+dimension its scope states, the list includes the deployment's value; hardware, model and
+fabric names are compared without regard to case, and a dimension the scope omits does not
 constrain it. The kernel reads the scenario's sets in order and, within each set, its
 entries in order, and the last applicable entry for each name is the one it uses. A later
 set can therefore override part of an earlier one. Entries that do not apply are skipped.

@@ -2077,6 +2077,14 @@ relieved". It is not the resource that set <code>Overlap</code>; since <code>Ove
 maxima, no single resource need account for it.</dd>
 <dt><code>PerResource</code></dt>
 <dd>Each resource's total, for a caller that needs to see why.</dd>
+<dt><code>Stages</code></dt>
+<dd>For a pipeline-parallel deployment (<code>pp</code> &gt; 1), the step split by stage in pipeline order,
+each bracketed the same way and including the send of its activations to the next stage.
+The stages' <code>Overlap</code> figures sum exactly to <code>Overlap</code>, and their <code>NoOverlap</code> figures to
+<code>NoOverlap</code>; a single-stage step reports none. A simulator needs the split because two
+batches in flight occupy two stages at once: a new batch can enter every slowest-stage
+time, while each batch's output takes the whole sum. <code>kerneltest.CheckStages</code> checks the
+law.</dd>
 </dl>
 <p>A configuration whose conclusion changes between the two bounds needs a measurement rather
 than a prediction.</p>

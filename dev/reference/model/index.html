@@ -1151,6 +1151,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#sharded-at-decode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sharded at decode
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#weight-scales" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2085,6 +2096,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#sharded-at-decode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sharded at decode
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#weight-scales" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2395,6 +2417,12 @@ explained in <a href="../../design/model-graph/">Why a model is a graph</a>.</p>
 <td>The longest context the engine admits for this model: the <code>max_model_len</code> vLLM derives from the configuration. An unstated or <code>auto</code> <code>max_model_len</code> starts from it.</td>
 </tr>
 <tr>
+<td><code>pipeline_boundary_bytes_per_token</code></td>
+<td>integer</td>
+<td>no</td>
+<td>Bytes one token costs to hand from one pipeline stage to the next: the intermediate tensors at a stage boundary. Omitted, vLLM's standard pair of <code>hidden_states</code> and <code>residual</code>, two hidden-width activations. A model that sends something else states it, as Muse Spark does for its one fp32 stream. A drafter's auxiliary hidden states are not counted here. Not negative.</td>
+</tr>
+<tr>
 <td><code>default_context_window</code></td>
 <td>integer</td>
 <td>no</td>
@@ -2572,6 +2600,18 @@ least one layer.</p>
 <td>no</td>
 <td>Nodes run once per draft position, in order, over one row per request. Only with <code>parallel_block</code>.</td>
 </tr>
+<tr>
+<td><code>aux_hidden_state_layers</code></td>
+<td>list of integers</td>
+<td>no</td>
+<td>The target layers whose hidden states the drafter reads, in the engine's capture convention: <code>L</code> is the state entering decoder layer <code>L</code>, <code>0</code> the embedding output and the layer count the last layer's output. EAGLE3, DFlash and dense DSpark configurations state these one lower as <code>target_layer_ids</code>. Under pipeline parallelism each stage boundary carries every state captured upstream of it to the last stage. Not negative, strictly increasing.</td>
+</tr>
+<tr>
+<td><code>aux_hidden_state_bytes_per_token</code></td>
+<td>integer</td>
+<td>no</td>
+<td>One captured state's bytes a token. Omitted, one hidden-width activation, the sum of <code>hidden_states</code> and <code>residual</code>. A target with a wider residual stream states it, as Muse Spark does for its fp32 stream. Only with <code>aux_hidden_state_layers</code>. Not negative.</td>
+</tr>
 </tbody>
 </table>
 <p>The draft module is a stack and not a token count because, for an MoE target, the draft
@@ -2640,6 +2680,12 @@ That check covers the likely mistakes, not every key.</p>
 <td>string</td>
 <td>no</td>
 <td>On a <code>GEMM</code> or <code>Gather</code>: the node whose weights this one reads, as <code>&lt;layer kind&gt;.&lt;role&gt;</code>, <code>head.&lt;role&gt;</code> or <code>embedding.&lt;role&gt;</code>. The node is priced for its compute and weight reads, at its target's format, but adds no resident bytes. It states no <code>weight_dtype</code> or <code>weight_scale</code> of its own.</td>
+</tr>
+<tr>
+<td><code>sharded_at_decode</code></td>
+<td>mapping</td>
+<td>no</td>
+<td>On a replicated <code>GEMM</code> (<code>tp: replicated</code>): the engine splits its output columns over the tensor-parallel ranks for a small step and all-gathers them back, keeping the whole weight on every rank. When, <a href="#sharded-at-decode">below</a>. Muse Spark's MoE pooler and unpooler on Blackwell. Whether the model's own conditions hold (no data parallelism, no mega-MoE) is the architecture's, read by the consumer.</td>
 </tr>
 </tbody>
 </table>
@@ -2799,6 +2845,12 @@ That check covers the likely mistakes, not every key.</p>
 <td>list</td>
 <td>no</td>
 <td>The per-request caches the node reads and which its layer owns, <a href="#caches">below</a>. Omitted means one cache inferred from the read shape.</td>
+</tr>
+<tr>
+<td><code>kv_heads_not_replicated</code></td>
+<td>boolean</td>
+<td>no</td>
+<td>On an <code>Attention</code> node: its projection cannot replicate a KV head across tensor-parallel ranks, so the tensor-parallel width must divide <code>n_kv</code>. A fused projection that slices by head group is one, as Muse Spark's fused QKV and output-gate projection is. Omitted means the standard projection, which replicates a head where <code>tp</code> exceeds <code>n_kv</code>. Not on a latent attention.</td>
 </tr>
 </tbody>
 </table>
@@ -3123,6 +3175,39 @@ rows, so K = 7 needs 16 rows where the graph states 8.</p>
 <td>string</td>
 <td>no</td>
 <td><code>max_model_len</code> when a decode step's work covers the engine's <code>max_model_len</code> rather than the context.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="sharded-at-decode">Sharded at decode<a class="headerlink" href="#sharded-at-decode" title="Permanent link">&para;</a></h3>
+<!-- fields: model.ShardedAtDecode -->
+
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Type</th>
+<th>Required</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>capability_family</code></td>
+<td>integer</td>
+<td>yes</td>
+<td>The CUDA compute-capability major version from which the engine shards the GEMM: 10 for SM100 and later. Positive.</td>
+</tr>
+<tr>
+<td><code>max_tokens</code></td>
+<td>integer</td>
+<td>yes</td>
+<td>The largest step, in scheduled tokens, that shards. Positive.</td>
+</tr>
+<tr>
+<td><code>min_tokens_across_nodes</code></td>
+<td>integer</td>
+<td>no</td>
+<td>The smallest step that shards when the tensor-parallel group spans nodes, where the gather crosses the fabric. Omitted, from one token. In <code>[0, max_tokens]</code>.</td>
 </tr>
 </tbody>
 </table>
@@ -3710,13 +3795,16 @@ storage-class and workload-shape files.</p>
 <li>the stack expands to no layers, <code>repeat</code> is negative, a pattern has no repeat or a repeat
   no pattern, or the stack names a layer kind that is not declared;</li>
 <li>a <code>speculator</code> lacks a <code>method</code>, a <code>pattern</code>, at least one draft token or a repeat of at
-  least 1, has an unrecognized <code>drafting</code>, a <code>sequential_head</code> without <code>parallel_block</code>, or
-  a <code>stack</code> or <code>context_stack</code> naming a layer kind that is not declared;</li>
+  least 1, has an unrecognized <code>drafting</code>, a <code>sequential_head</code> without <code>parallel_block</code>,
+  a <code>stack</code> or <code>context_stack</code> naming a layer kind that is not declared, or an
+  <code>aux_hidden_state_layers</code> id that is negative or does not exceed the one before it, or an
+  <code>aux_hidden_state_bytes_per_token</code> that is negative or stated without those layers;</li>
 <li>a cache a layer reads but does not own has no owner earlier in its stack, or differs from
   its owner in kind, entry size under any cache dtype, tokens per entry, window or entries;</li>
 <li>an <code>aliases</code> reference does not resolve to exactly one weight-holding node of the same
   shape, names a layer kind the stacks run more than once, or names a node that is itself
   an alias;</li>
+<li><code>pipeline_boundary_bytes_per_token</code> is negative;</li>
 <li><code>context_window</code> or <code>default_context_window</code> is negative, or the second exceeds the
   first or is stated without it;</li>
 <li><code>arch_overrides</code> is stated without <code>base_capability_families</code>; a family in either is not
@@ -3759,6 +3847,11 @@ storage-class and workload-shape files.</p>
   reads at; on an embedding or head node, any of <code>caches</code>, <code>writes_cache</code>, <code>reads_cache</code>
   or a <code>per_tokens</code> above 1 is set;</li>
 <li>an <code>aliases</code> node states its own <code>weight_dtype</code> or <code>weight_scale</code>;</li>
+<li><code>kv_heads_not_replicated</code> is set on anything other than an <code>Attention</code> node, or on an
+  <code>mla</code> or <code>sparse_mla</code> one;</li>
+<li><code>sharded_at_decode</code> is set on anything other than a replicated <code>GEMM</code>, its
+  <code>capability_family</code> or <code>max_tokens</code> is not positive, or its <code>min_tokens_across_nodes</code> is
+  outside <code>[0, max_tokens]</code>;</li>
 <li><code>bytes_per_token</code> is set on a primitive other than <code>Elementwise</code>, <code>AllReduce</code>,
   <code>AllGather</code> or <code>ReduceScatter</code>;</li>
 <li><code>index_topk</code> or <code>compress_ratio</code> is set on anything other than a <code>sparse_mla</code> attention
