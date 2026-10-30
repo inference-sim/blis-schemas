@@ -133,6 +133,10 @@ type Clock string
 const (
 	ClockClient Clock = "client"
 	ClockServer Clock = "server"
+	// ClockSimulated is a simulator's single event timeline: send, first token and
+	// completion are events on one clock, with no client or server offset. A Result
+	// uses it; a measured run cannot.
+	ClockSimulated Clock = "simulated"
 )
 
 // StartEvent is when a latency's clock starts.
@@ -265,7 +269,7 @@ var (
 	populations  = set(PopulationPerRequest, PopulationPooledChunks, PopulationPooledTokens)
 	denominators = set(DenominatorMainPhaseWall, DenominatorProfilingWindow,
 		DenominatorPerGPU, DenominatorPerReplica)
-	clocks      = set(ClockClient, ClockServer)
+	clocks      = set(ClockClient, ClockServer, ClockSimulated)
 	starts      = set(StartSendAfterSemaphore, StartArrival)
 	stops       = set(StopFirstContentChunk, StopLastChunk)
 	outputLens  = set(OutputLenUsage, OutputLenTokenizer, OutputLenTarget)

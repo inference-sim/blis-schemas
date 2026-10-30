@@ -1230,3 +1230,38 @@ func TestLoadConnectorRegistry(t *testing.T) {
 		t.Error("a document with an unknown key loaded")
 	}
 }
+
+// TestLoadResultReadsJSONAndYAMLStrictly: the simulator writes a Result as JSON by default
+// and YAML on request, so the one loader reads both, and refuses an unknown key in either.
+func TestLoadResultReadsJSONAndYAMLStrictly(t *testing.T) {
+	j := filepath.Join("docs", "examples", "result.json")
+	r, err := LoadResult(j)
+	if err != nil {
+		t.Fatalf("LoadResult(%s): %v", j, err)
+	}
+	if r.Kind != "Result" || r.Input.Run.Load.Concurrency != 64 || r.Metrics["ttft_p99_ms"] != 431.5 {
+		t.Errorf("the JSON example did not load field for field: %+v", r)
+	}
+
+	dir := t.TempDir()
+	y := filepath.Join(dir, "r.yaml")
+	if err := os.WriteFile(y, []byte("kind: Result\nschema_version: 1\nname: x\nmetrics: {ttft_p99_ms: 1}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if r, err := LoadResult(y); err != nil || r.Metrics["ttft_p99_ms"] != 1 {
+		t.Errorf("LoadResult did not read YAML: %v %+v", err, r)
+	}
+
+	for name, body := range map[string]string{
+		"json": `{"kind": "Result", "metricz": {}}`,
+		"yaml": "kind: Result\nmetricz: {}\n",
+	} {
+		p := filepath.Join(dir, "unknown."+name)
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LoadResult(p); err == nil || !strings.Contains(err.Error(), "metricz") {
+			t.Errorf("%s: an unknown key must be refused by name, got %v", name, err)
+		}
+	}
+}

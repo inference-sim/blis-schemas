@@ -24,6 +24,7 @@ import (
 	"github.com/inference-sim/blis-schemas/spec/hardware"
 	"github.com/inference-sim/blis-schemas/spec/measurement"
 	"github.com/inference-sim/blis-schemas/spec/model"
+	"github.com/inference-sim/blis-schemas/spec/result"
 	"github.com/inference-sim/blis-schemas/spec/router"
 	"github.com/inference-sim/blis-schemas/spec/routing"
 	"github.com/inference-sim/blis-schemas/spec/scenario"
@@ -133,6 +134,11 @@ func TestDocExamplesValidate(t *testing.T) {
 			t.Errorf("connector-registry.yaml: %s", p)
 		}
 	})
+	t.Run("result", func(t *testing.T) {
+		requireSilent(t, "result", Validate(Bundle{
+			Result: fixture(LoadResult(ex("result.json"))),
+		}))
+	})
 	t.Run("trace", func(t *testing.T) {
 		requireSilent(t, "trace", Validate(Bundle{Rules: openAnyEngine,
 			Scenario: fixture(LoadScenario(ex("trace-binding.yaml"))),
@@ -149,6 +155,7 @@ func TestDocExamplesValidate(t *testing.T) {
 		"replay-binding.yaml": true, "workload-replay.yaml": true, "replay-reference.yaml": true,
 		"measured-run.yaml": true, "measurement-sources.yaml": true,
 		"connector-registry.yaml": true,
+		"result.json":             true,
 	}
 	all, err := filepath.Glob(ex("*"))
 	if err != nil {
@@ -267,6 +274,23 @@ var documented = map[string]struct {
 	"connector.Entry":           {typ: reflect.TypeOf(connector.Entry{})},
 	"router.EPP":                {typ: reflect.TypeOf(router.EPP{})},
 	"router.ConfigRef":          {typ: reflect.TypeOf(router.ConfigRef{})},
+	"result.Result":             {typ: reflect.TypeOf(result.Result{})},
+	"result.Input":              {typ: reflect.TypeOf(result.Input{})},
+	"result.Run":                {typ: reflect.TypeOf(result.Run{})},
+	"result.Warmup":             {typ: reflect.TypeOf(result.Warmup{})},
+	"result.Revisions":          {typ: reflect.TypeOf(result.Revisions{})},
+	"result.Engine":             {typ: reflect.TypeOf(result.Engine{})},
+	"result.DataRepo":           {typ: reflect.TypeOf(result.DataRepo{})},
+	"result.Reference":          {typ: reflect.TypeOf(result.Reference{})},
+	"result.RevisionChange":     {typ: reflect.TypeOf(result.RevisionChange{})},
+	"result.Window":             {typ: reflect.TypeOf(result.Window{})},
+	"result.Requests":           {typ: reflect.TypeOf(result.Requests{})},
+	"result.Goodput":            {typ: reflect.TypeOf(result.Goodput{})},
+	"result.ClassGoodput":       {typ: reflect.TypeOf(result.ClassGoodput{})},
+	"result.Breakdowns":         {typ: reflect.TypeOf(result.Breakdowns{})},
+	"result.Override":           {typ: reflect.TypeOf(result.Override{})},
+	"result.Artifact":           {typ: reflect.TypeOf(result.Artifact{})},
+	"result.Runtime":            {typ: reflect.TypeOf(result.Runtime{})},
 }
 
 var (
@@ -394,6 +418,7 @@ func TestDocEveryDocumentTypeHasATable(t *testing.T) {
 		reflect.TypeOf(workload.Shape{}), reflect.TypeOf(evaluation.Run{}),
 		reflect.TypeOf(measurement.MeasuredRun{}), reflect.TypeOf(measurement.Registry{}),
 		reflect.TypeOf(connector.Registry{}),
+		reflect.TypeOf(result.Result{}),
 	}
 	// Types whose wire form is not a mapping of this schema's keys, so they have no key table:
 	// an interval, and a pool's engine block, which is the engine model's and held unopened.

@@ -164,6 +164,22 @@ func (p *Problems) Errors() []Problem {
 	return out
 }
 
+// Rebase returns the problems with prefix removed from the front of every path, so a
+// check written against a placeholder location can be merged under another one.
+func (p *Problems) Rebase(prefix string) *Problems {
+	out := &Problems{prefix: append([]string{}, p.prefix...)}
+	for _, it := range p.items {
+		switch {
+		case it.Path == prefix:
+			it.Path = ""
+		case strings.HasPrefix(it.Path, prefix+"."):
+			it.Path = strings.TrimPrefix(it.Path, prefix+".")
+		}
+		out.items = append(out.items, it)
+	}
+	return out
+}
+
 // OK reports whether nothing failed. Warnings do not make a document invalid.
 func (p *Problems) OK() bool { return len(p.Errors()) == 0 }
 

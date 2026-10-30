@@ -113,7 +113,11 @@ func (r *MeasuredRun) validateFields(p *validate.Problems) {
 		if !slug.MatchString(name) {
 			p.Field(at, "a metric name is a lowercase slug")
 		}
-		r.MetricDefs[name].validate(p, at)
+		d := r.MetricDefs[name]
+		d.validate(p, at)
+		if d.Clock == ClockSimulated {
+			p.Field(at+".clock", "a measured run's timestamps are a client's or a server's, not simulated")
+		}
 	}
 	r.validatePoints(p)
 	r.validateProvenance(p)
@@ -228,6 +232,18 @@ func (c ClientSpec) validate(p *validate.Problems) {
 		}
 	}
 }
+
+// ValidateMetricDef performs field-level validation of one metric definition, for a
+// document outside this package that defines its metrics in this vocabulary. Paths are
+// relative to the definition, as Merge expects.
+func ValidateMetricDef(d MetricDef) *validate.Problems {
+	p := &validate.Problems{}
+	d.validate(p, defRoot)
+	return p.Rebase(defRoot)
+}
+
+// defRoot is the placeholder location ValidateMetricDef validates a definition under.
+const defRoot = "def"
 
 func (d MetricDef) validate(p *validate.Problems, at string) {
 	if d.Formula != "" && !d.Formula.Valid() {

@@ -136,7 +136,7 @@ same quantity.
 | `statistic` | string | no | `mean`, `median`, `std`, `max`, or a percentile `pNN`. Not for a throughput. |
 | `population` | string | no | What the statistic is over: `per_request`, `pooled_chunks` or `pooled_tokens`. |
 | `denominator` | string | no | What a throughput divides by. Only for a throughput. |
-| `clock` | string | no | `client` or `server` timestamps. |
+| `clock` | string | no | `client` or `server` timestamps; `simulated` only in a [Result](result.md). |
 | `start_event` | string | no | When a latency starts. |
 | `stop_event` | string | no | When a latency stops. |
 | `output_len_source` | string | no | Where output token counts come from. |
