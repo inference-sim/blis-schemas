@@ -90,6 +90,11 @@ type Speculative struct {
 	// DSpark drafter and an EAGLE3 head are. Empty means the target graph's own
 	// speculator.
 	DraftModel string
+	// EnableAdaptiveVerification is vLLM's speculative_config.enable_adaptive_verification: the
+	// verifier runs a confidence-chosen draft budget rather than every scheduled draft
+	// (vllm/config/speculative.py:551-553@5df63a72). DSpark only. A plain bool, so a copy of
+	// the struct is a deep copy (Clone).
+	EnableAdaptiveVerification bool
 }
 
 // EngramConfig is where an Engram table lives. Each nil field is the engine's default.
