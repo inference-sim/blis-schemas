@@ -467,3 +467,51 @@ func TestTheDriverCatchesBrokenPipelines(t *testing.T) {
 		})
 	}
 }
+
+// finishesUnrun is a FIFO that finishes the first request it is given at its first schedule,
+// without running it, and reports it in Batch.Finished.
+type finishesUnrun struct {
+	*FIFO
+	gone string
+	done bool
+}
+
+func (f *finishesUnrun) Add(r engine.Request, now engine.Time) error {
+	if f.gone == "" {
+		f.gone = r.ID
+		return nil
+	}
+	return f.FIFO.Add(r, now)
+}
+
+func (f *finishesUnrun) Schedule(now engine.Time) (engine.Batch, error) {
+	b, err := f.FIFO.Schedule(now)
+	if err == nil && !f.done && f.gone != "" {
+		f.done = true
+		b.Finished = append(b.Finished, engine.Finished{ID: f.gone, Reason: engine.FinishError})
+	}
+	return b, err
+}
+
+// A request an engine finishes in Batch.Finished, never having run it, counts as finished: it is
+// in the trace with its reason, and the run is not held up waiting for it.
+func TestARequestFinishedInABatchIsFinished(t *testing.T) {
+	fifo, err := NewFIFO(FIFOConfig{MaxRunning: 2, TokenBudget: 64})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eng := &finishesUnrun{FIFO: fifo}
+	tr, err := Drive(func() (engine.Engine, error) { return eng, nil }, []Arrival{
+		{At: 0, Req: engine.Request{ID: "a", Prompt: make([]int32, 4), Output: make([]int32, 2)}},
+		{At: 0, Req: engine.Request{ID: "b", Prompt: make([]int32, 4), Output: make([]int32, 2)}},
+	}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f, ok := tr.Finished["a"]; !ok || f.Reason != engine.FinishError {
+		t.Fatalf("a finished %+v, want an error finish from Batch.Finished", f)
+	}
+	if _, ok := tr.Finished["b"]; !ok {
+		t.Fatal("b did not finish")
+	}
+}

@@ -185,6 +185,11 @@ func (d *driver) step() error {
 		if err := d.checkMembers(b); err != nil {
 			return err
 		}
+		for _, f := range b.Finished {
+			if err := d.finished(f); err != nil {
+				return err
+			}
+		}
 		if b.Empty() {
 			return nil
 		}
@@ -262,6 +267,11 @@ func (d *driver) checkMembers(b engine.Batch) error {
 			return fmt.Errorf("at %d: batch %d runs %s twice in batch", d.now, b.ID, s.ID)
 		}
 		inBatch[s.ID] = true
+	}
+	for _, f := range b.Finished {
+		if inBatch[f.ID] {
+			return fmt.Errorf("at %d: batch %d both runs and finishes %s", d.now, b.ID, f.ID)
+		}
 	}
 	evicted := map[string]bool{}
 	for _, id := range b.Preempted {

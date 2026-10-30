@@ -199,6 +199,10 @@ type Batch struct {
 	// TransfersStarted are the asynchronous KV transfers this decision started. The
 	// simulator prices each and reports its end with TransferDone.
 	TransfersStarted []Transfer
+	// Finished are requests this decision ended without running them, with why: a request
+	// whose asynchronous KV load failed under a fail-the-request policy, which the engine
+	// finishes at its next schedule. A request finished here never appears in a Result.
+	Finished []Finished
 }
 
 // Empty reports whether the batch runs nothing.
