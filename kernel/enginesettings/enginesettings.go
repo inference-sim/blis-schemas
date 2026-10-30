@@ -79,6 +79,11 @@ type EPLB struct {
 type Speculative struct {
 	Method        string
 	NumSpecTokens int
+	// DraftModel names the catalog model whose graph is the drafter, where the drafter is
+	// a checkpoint of its own (the engine's speculative_config.model), as Muse Spark's
+	// DSpark drafter and an EAGLE3 head are. Empty means the target graph's own
+	// speculator.
+	DraftModel string
 }
 
 // EngramConfig is where an Engram table lives. Each nil field is the engine's default.
