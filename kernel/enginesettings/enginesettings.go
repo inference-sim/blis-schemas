@@ -27,6 +27,12 @@ type Settings struct {
 	BlockSize           int
 	MaxNumSeqs          int
 	MaxNumBatchedTokens int
+	// GPUMemoryUtilization is the fraction of each GPU's memory the engine may take, as the
+	// block states it; zero when unstated (the engine's default). Under pipeline parallelism
+	// every worker sizes its KV pool from its own share of it and the engine keeps the
+	// smallest pool (vLLM's get_kv_cache_configs, vllm/v1/core/kv_cache_utils.py:2531-2680 at
+	// v0.32.0), so which stage binds depends on it.
+	GPUMemoryUtilization float64
 	// MaxModelLen is the context bound as stated: a count, auto, or unstated (MaxModelLen).
 	MaxModelLen MaxModelLen
 	// EnablePrefixCaching is nil when unstated (the engine's default, on).
