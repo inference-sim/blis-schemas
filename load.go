@@ -2,7 +2,9 @@ package blisschemas
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -42,6 +44,53 @@ func LoadScenario(path string) (*scenario.Scenario, error) {
 		return nil, err
 	}
 	return &s, nil
+}
+
+// LoadBundle reads a scenario and the deployment applied to it from one file, as two YAML
+// documents separated by `---`, with the same strict decoding as LoadScenario and
+// LoadDeployment. A measurement row names a deployment by a single filename, which is why
+// the pair shares a file.
+//
+// It does not run Validate; call that for the documents' rules. It does refuse, naming the
+// file, a shape no caller can use: an empty file, a file with no deployment document, and a
+// deployment with no pools. Every caller reads at least one pool,
+// several as Pools[0] without a length check of their own, so refusing a pool-less
+// deployment here turns what would be an index panic far from the file into an error that
+// names it.
+func LoadBundle(path string) (*scenario.Scenario, *deployment.Deployment, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, nil, fmt.Errorf("opening %s: %w", path, err)
+	}
+	defer f.Close()
+
+	dec := yaml.NewDecoder(f)
+	dec.KnownFields(true)
+
+	var sc scenario.Scenario
+	if err := dec.Decode(&sc); err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil, nil, fmt.Errorf("%s is empty: a kernel needs a scenario and the "+
+				"deployment applied to it", path)
+		}
+		return nil, nil, fmt.Errorf("decoding the scenario in %s: %w", path, err)
+	}
+
+	var dep deployment.Deployment
+	if err := dec.Decode(&dep); err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil, nil, fmt.Errorf("%s holds a scenario but no deployment: the pools "+
+				"a kernel prices live in a second YAML document, separated by `---`", path)
+		}
+		return nil, nil, fmt.Errorf("decoding the deployment in %s: %w", path, err)
+	}
+
+	if len(dep.Pools) == 0 {
+		return nil, nil, fmt.Errorf(
+			"the deployment in %s declares no pools: there is nothing to price", path)
+	}
+
+	return &sc, &dep, nil
 }
 
 // LoadDeployment reads a deployment document — the tunable configuration applied to a
