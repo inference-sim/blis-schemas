@@ -389,3 +389,129 @@ func TestTheDriverCatchesBrokenEngines(t *testing.T) {
 		})
 	}
 }
+
+// A pipelined engine's batches overlap one per stage: the second batch enters the first stage
+// as the first batch leaves it, not when the first batch's whole step ends.
+func TestPipelinedBatchesOverlapByStage(t *testing.T) {
+	cfg := fifoCfg()
+	cfg.InFlight, cfg.MaxRunning, cfg.TokenBudget, cfg.Stages = 2, 2, 4, 2
+	tr := TestEngine(t, newFIFO(cfg), []Arrival{at(0, req("A", 4, 1)), at(0, req("B", 4, 1))}, Options{})
+	if len(tr.Steps) < 2 {
+		t.Fatalf("steps %+v: want two batches", tr.Steps)
+	}
+	f, err := NewFIFO(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, second := tr.Steps[0], tr.Steps[1]
+	s1, s2 := f.StageTimes(first.Batch), f.StageTimes(second.Batch)
+	if second.Start != first.Start+s1[0] {
+		t.Errorf("the second batch started at %d; the first left stage 0 at %d", second.Start, first.Start+s1[0])
+	}
+	// Stage 1 takes the second batch once it leaves stage 0 and the first batch leaves stage 1.
+	if want := max(second.Start+s2[0], first.End) + s2[1]; second.End != want {
+		t.Errorf("the second batch ended at %d, want %d", second.End, want)
+	}
+	if second.End >= first.End+s2[0]+s2[1] {
+		t.Errorf("the second batch ended at %d, no earlier than serially after the first (%d)", second.End, first.End)
+	}
+}
+
+// splitsWrong breaks the Pipelined law: its stages do not sum to its step.
+type splitsWrong struct{ *FIFO }
+
+func (s splitsWrong) StageTimes(b engine.Batch) []engine.Duration {
+	st := s.FIFO.StageTimes(b)
+	st[0]++
+	return st
+}
+
+// restages breaks it another way: its stage count changes between batches.
+type restages struct {
+	*FIFO
+	n *int
+}
+
+func (s restages) StageTimes(b engine.Batch) []engine.Duration {
+	*s.n++
+	d := s.FIFO.StepTime(b)
+	if *s.n%2 == 0 {
+		return []engine.Duration{d}
+	}
+	return []engine.Duration{d - 1, 1}
+}
+
+func TestTheDriverCatchesBrokenPipelines(t *testing.T) {
+	two := []Arrival{at(0, req("A", 4, 2)), at(0, req("B", 4, 2))}
+	for name, c := range map[string]struct {
+		wrap func(*FIFO) engine.Engine
+		want string
+	}{
+		"stages that do not sum to the step": {func(f *FIFO) engine.Engine { return splitsWrong{f} }, "sums to"},
+		"a stage count that changes":         {func(f *FIFO) engine.Engine { return restages{f, new(int)} }, "an earlier batch had"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := fifoCfg()
+			cfg.Stages, cfg.InFlight = 2, 2
+			build := func() (engine.Engine, error) {
+				f, err := NewFIFO(cfg)
+				if err != nil {
+					return nil, err
+				}
+				return c.wrap(f), nil
+			}
+			_, err := Drive(build, two, Options{MaxSteps: 1000})
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("Drive returned %v, want an error containing %q", err, c.want)
+			}
+		})
+	}
+}
+
+// finishesUnrun is a FIFO that finishes the first request it is given at its first schedule,
+// without running it, and reports it in Batch.Finished.
+type finishesUnrun struct {
+	*FIFO
+	gone string
+	done bool
+}
+
+func (f *finishesUnrun) Add(r engine.Request, now engine.Time) error {
+	if f.gone == "" {
+		f.gone = r.ID
+		return nil
+	}
+	return f.FIFO.Add(r, now)
+}
+
+func (f *finishesUnrun) Schedule(now engine.Time) (engine.Batch, error) {
+	b, err := f.FIFO.Schedule(now)
+	if err == nil && !f.done && f.gone != "" {
+		f.done = true
+		b.Finished = append(b.Finished, engine.Finished{ID: f.gone, Reason: engine.FinishError})
+	}
+	return b, err
+}
+
+// A request an engine finishes in Batch.Finished, never having run it, counts as finished: it is
+// in the trace with its reason, and the run is not held up waiting for it.
+func TestARequestFinishedInABatchIsFinished(t *testing.T) {
+	fifo, err := NewFIFO(FIFOConfig{MaxRunning: 2, TokenBudget: 64})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eng := &finishesUnrun{FIFO: fifo}
+	tr, err := Drive(func() (engine.Engine, error) { return eng, nil }, []Arrival{
+		{At: 0, Req: engine.Request{ID: "a", Prompt: make([]int32, 4), Output: make([]int32, 2)}},
+		{At: 0, Req: engine.Request{ID: "b", Prompt: make([]int32, 4), Output: make([]int32, 2)}},
+	}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f, ok := tr.Finished["a"]; !ok || f.Reason != engine.FinishError {
+		t.Fatalf("a finished %+v, want an error finish from Batch.Finished", f)
+	}
+	if _, ok := tr.Finished["b"]; !ok {
+		t.Fatal("b did not finish")
+	}
+}

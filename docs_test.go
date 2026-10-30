@@ -223,6 +223,7 @@ var documented = map[string]struct {
 	"model.Cache":               {typ: reflect.TypeOf(model.Cache{})},
 	"model.ContextWork":         {typ: reflect.TypeOf(model.ContextWork{})},
 	"model.WeightScale":         {typ: reflect.TypeOf(model.WeightScale{})},
+	"model.ShardedAtDecode":     {typ: reflect.TypeOf(model.ShardedAtDecode{})},
 	"model.ArchOverride":        {typ: reflect.TypeOf(model.ArchOverride{})},
 	"model.NodeOverride":        {typ: reflect.TypeOf(model.NodeOverride{})},
 	"model.CacheOverride":       {typ: reflect.TypeOf(model.CacheOverride{})},

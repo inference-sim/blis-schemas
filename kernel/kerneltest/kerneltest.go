@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"sort"
 	"testing"
+	"time"
 
 	"github.com/inference-sim/blis-schemas/kernel"
 	"github.com/inference-sim/blis-schemas/spec/deployment"
@@ -130,4 +131,46 @@ func CheckPayloadGrows(k kernel.Kernel, cases []PDCase) error {
 		}
 	}
 	return nil
+}
+
+// CheckStages checks a step estimate's pipeline split against the StepEstimate contract: no
+// split, or at least two stages whose Overlap and NoOverlap figures are each non-negative and
+// sum exactly to the step's own. A single-stage step reports no split rather than a one-entry
+// one, so a caller can tell a pipeline from a step by the length alone.
+func CheckStages(e kernel.StepEstimate) error {
+	if len(e.Stages) == 0 {
+		return nil
+	}
+	if len(e.Stages) == 1 {
+		return fmt.Errorf("a one-stage split %+v: a step with one stage reports none", e.Stages)
+	}
+	var overlap, noOverlap time.Duration
+	for i, s := range e.Stages {
+		if s.Overlap < 0 || s.NoOverlap < 0 {
+			return fmt.Errorf("stage %d is negative: %+v", i, s)
+		}
+		if s.Overlap > s.NoOverlap {
+			return fmt.Errorf("stage %d overlaps to more than it costs with no overlap: %+v", i, s)
+		}
+		overlap += s.Overlap
+		noOverlap += s.NoOverlap
+	}
+	if overlap != e.Overlap || noOverlap != e.NoOverlap {
+		return fmt.Errorf("stages sum to Overlap %v, NoOverlap %v; the step is %v, %v",
+			overlap, noOverlap, e.Overlap, e.NoOverlap)
+	}
+	return nil
+}
+
+// TestStages runs CheckStages over every batch's estimate. An empty list fails.
+func TestStages(t testing.TB, k kernel.Kernel, batches []kernel.Batch) {
+	t.Helper()
+	if len(batches) == 0 {
+		t.Fatal("kerneltest.TestStages: no batches, so nothing was checked")
+	}
+	for i, b := range batches {
+		if err := CheckStages(k.StepTime(b)); err != nil {
+			t.Errorf("batch %d: %v", i, err)
+		}
+	}
 }

@@ -148,6 +148,19 @@ type GlobalShape struct {
 	// DeepSeek-V4.1 decides its own sequence parallelism. Which architectures a release
 	// treats specially is its rules pack's to say. Empty means not stated.
 	Architecture string `yaml:"architecture,omitempty"`
+
+	// PipelineBoundaryBytesPerToken is what one token costs to hand from one pipeline
+	// stage to the next: the intermediate tensors the engine sends at a stage boundary.
+	// Zero means vLLM's standard pair, hidden_states and residual, each one hidden-width
+	// activation: 2 x hidden_size x 2 bytes a token
+	// (make_empty_intermediate_tensors_factory(["hidden_states", "residual"], ...),
+	// vllm/model_executor/models/llama.py:399-401 at v0.32.0). A model that sends
+	// something else states it: Muse Spark folds its residual into one fp32 stream and
+	// sends that alone, so a boundary moves 4 x hidden_size bytes a token
+	// (_make_empty_intermediate_tensors, vllm/models/muse_spark/nvidia/model.py:1639-1650
+	// at vllm-project/vllm 0f6b2619). Auxiliary hidden states a drafter reads
+	// (Speculator.AuxHiddenStateLayers) are not part of this figure.
+	PipelineBoundaryBytesPerToken int `yaml:"pipeline_boundary_bytes_per_token,omitempty"`
 }
 
 // DefaultWindow returns the window an unstated or auto max_model_len starts from, or zero
@@ -308,6 +321,44 @@ type Speculator struct {
 	// qwen3_dspark.py, "the head runs sequentially for every draft position"). Only a
 	// parallel_block drafter has one; an autoregressive drafter is sequential already.
 	SequentialHead []Node `yaml:"sequential_head,omitempty"`
+	// AuxHiddenStateLayers are the target layers whose hidden states the drafter reads,
+	// in the engine's capture convention: an id L is the state entering decoder layer L
+	// (0 the embedding output, num_hidden_layers the last layer's output), as
+	// set_aux_hidden_state_layers receives them. An EAGLE3, DFlash or dense-DSpark
+	// drafter's configuration states its target_layer_ids one lower, and the engine adds
+	// one (get_eagle3_aux_layers_from_config,
+	// vllm/v1/worker/gpu/spec_decode/eagle/eagle3_utils.py:98-135 at v0.32.0).
+	//
+	// Under pipeline parallelism a captured state travels with the intermediate tensors
+	// from the stage that captures it to the last stage, where the drafter runs: each
+	// boundary carries every state captured upstream of it (pack_local_aux_hidden_states
+	// and collect_remote_aux_hidden_states, vllm/model_executor/models/interfaces.py:
+	// 1569-1645; relay_aux_hidden_states, vllm/v1/worker/gpu/pp_utils.py:102-123).
+	// Absent means the drafter reads none. Each id is in [0, target layers], and the
+	// list is strictly increasing.
+	AuxHiddenStateLayers []int `yaml:"aux_hidden_state_layers,omitempty"`
+	// AuxHiddenStateBytesPerToken is one captured state's bytes a token. Zero means one
+	// hidden-width activation, which is what a model that carries hidden_states and
+	// residual apart captures (their sum, _maybe_add_hidden_state, interfaces.py:
+	// 1600-1611). A target whose residual stream is wider states it: Muse Spark captures
+	// its fp32 stream, 4 x hidden_size bytes (vllm/models/muse_spark/nvidia/
+	// model.py:1705-1722 at vllm-project/vllm 0f6b2619). Only with AuxHiddenStateLayers.
+	AuxHiddenStateBytesPerToken int `yaml:"aux_hidden_state_bytes_per_token,omitempty"`
+}
+
+// ShardedAtDecode is when a replicated GEMM's output columns split over the tensor-parallel
+// ranks (Node.ShardedAtDecode). Both bounds are on the step's scheduled tokens.
+type ShardedAtDecode struct {
+	// CapabilityFamily is the CUDA compute-capability major version from which the engine
+	// shards: 10 for SM100 and later (has_device_capability(100)).
+	CapabilityFamily int `yaml:"capability_family"`
+	// MaxTokens is the largest step that shards; a larger one runs the GEMM whole.
+	MaxTokens int `yaml:"max_tokens"`
+	// MinTokensAcrossNodes is the smallest step that shards when the tensor-parallel group
+	// spans nodes, where the gather crosses the fabric: Muse Spark's unpooler shards from
+	// 32 tokens then (_MULTI_NODE_SHARDED_UNPOOLER_MIN_TOKENS, model.py:154, 535-539). Zero
+	// means from one token.
+	MinTokensAcrossNodes int `yaml:"min_tokens_across_nodes,omitempty"`
 }
 
 // Drafting is how a speculator's stack produces its draft tokens.
@@ -360,12 +411,27 @@ const (
 	// exceeds one and the model's sequence parallelism is off. The all-reduces that
 	// sequence parallelism replaces carry it.
 	EmitTensorParallelUnlessSequenceParallel EmitCondition = "tensor_parallel_unless_sequence_parallel"
+	// EmitTensorParallelWithoutExpertParallel: present when the tensor-parallel width
+	// exceeds one and expert parallelism is off, so the MoE layer's experts are sharded by
+	// tensor parallelism and their partial outputs need a reduction of their own. A model
+	// whose MoE reduces a different tensor in each mode states one collective per mode:
+	// Muse Spark all-reduces its top_k per-route rows before its post-expert norm under
+	// tensor parallelism, and only the combined latent-width output under expert
+	// parallelism.
+	EmitTensorParallelWithoutExpertParallel EmitCondition = "tensor_parallel_without_expert_parallel"
+	// EmitExpertParallelWithoutDispatch: present when expert parallelism is on, the
+	// tensor-parallel width exceeds one, and the MoE layer dispatches no tokens: every rank
+	// holds every token, because the expert-parallel group is the tensor-parallel group, so
+	// the ranks' partial expert outputs combine by an all-reduce rather than an
+	// all-to-all.
+	EmitExpertParallelWithoutDispatch EmitCondition = "expert_parallel_without_dispatch"
 )
 
 var emitConditions = map[EmitCondition]bool{
 	EmitAlways: true, EmitTensorParallel: true, EmitExpertParallel: true,
 	EmitTensorParallelUnlessSequenceParallelMoE: true, EmitSequenceParallel: true,
-	EmitTensorParallelUnlessSequenceParallel: true,
+	EmitTensorParallelUnlessSequenceParallel: true, EmitTensorParallelWithoutExpertParallel: true,
+	EmitExpertParallelWithoutDispatch: true,
 }
 
 // SequenceParallelOnly reports whether c is one of the two conditions decided by the
@@ -430,6 +496,18 @@ type Node struct {
 	// target's"), so pricing the draft's own copies would count each twice.
 	Aliases string `yaml:"aliases,omitempty"`
 
+	// ShardedAtDecode, on a replicated GEMM (tp: replicated), says the engine splits its output
+	// columns over the tensor-parallel ranks for a small step and gathers them back, holding the
+	// whole weight on every rank: each rank computes n/tp columns and an all-gather over TP of
+	// the step's rows x n output at the activation width reassembles them. Absent means the
+	// GEMM runs whole on every rank at every step. Muse Spark's MoE pooler and unpooler are
+	// such ReplicatedLinears on Blackwell with tensor parallelism and no data parallelism, at
+	// 256 tokens or fewer (shard_pooler / shard_unpooler, _SHARDED_PROJECTION_MAX_TOKENS,
+	// vllm/models/muse_spark/nvidia/model.py:151, 505-523, 635-660 at vllm-project/vllm
+	// 0f6b2619). The condition is the model code's, so a consumer reads it from the
+	// architecture and the layout; this field only marks the GEMMs it applies to.
+	ShardedAtDecode *ShardedAtDecode `yaml:"sharded_at_decode,omitempty"`
+
 	// GEMM and GroupedGEMM.
 	N int `yaml:"n,omitempty"`
 	K int `yaml:"k,omitempty"`
@@ -492,6 +570,16 @@ type Node struct {
 	// layer owns. Absent means the consumer infers one cache from the read shape, the
 	// meaning every graph had before the field existed. See Cache.
 	Caches []Cache `yaml:"caches,omitempty"`
+	// KVHeadsNotReplicated, on an Attention node, says its projection cannot replicate a KV
+	// head across tensor-parallel ranks: the tensor-parallel width must divide n_kv. vLLM's
+	// standard QKV projection replicates a head over ranks when tp exceeds n_kv
+	// (QKVParallelLinear num_kv_head_replicas, vllm/model_executor/layers/linear.py:1050-1058
+	// at v0.32.0), so a deployment at tp 32 over 16 KV heads starts; a fused projection that
+	// slices by head group does not, and the engine asserts n_kv % tp == 0 at load. Muse
+	// Spark's fused [Q, K, V, O-gate] projection is one ("KV-head padding is not supported",
+	// MuseSpark1xQKVOGateParallelLinear, vllm/models/muse_spark/common/layers.py:339-371 at
+	// vllm-project/vllm 0f6b2619). Absent means the standard projection.
+	KVHeadsNotReplicated bool `yaml:"kv_heads_not_replicated,omitempty"`
 
 	// RecurrentUpdate.
 	RecurrentKind    RecurrentKind `yaml:"recurrent_kind,omitempty"`

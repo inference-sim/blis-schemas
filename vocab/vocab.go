@@ -110,11 +110,17 @@ const (
 	ScopeEP           ScopeKey = "ep"
 	ScopeNodesSpanned ScopeKey = "nodes_spanned"
 	ScopeModel        ScopeKey = "model"
+	// ScopeFabric bounds a coefficient to an inter-node interconnect class, named by its
+	// catalog identity (networks/<name>: roce-200g, ib-400g). nodes_spanned says whether a
+	// collective leaves a node; fabric says over which link, which is what separates two
+	// clusters of comparable silicon on different networks. A link inside one chip's
+	// NVLink domain, a rack included, is the chip's and is scoped by hardware.
+	ScopeFabric ScopeKey = "fabric"
 )
 
 var scopeKeys = map[ScopeKey]bool{
 	ScopeHardware: true, ScopeTP: true, ScopeEP: true,
-	ScopeNodesSpanned: true, ScopeModel: true,
+	ScopeNodesSpanned: true, ScopeModel: true, ScopeFabric: true,
 }
 
 // Valid reports whether k is a recognized scope key.

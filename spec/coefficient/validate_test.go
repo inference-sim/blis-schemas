@@ -201,6 +201,11 @@ backend: vllm
 coefficients:
   - x: {value: 1, units: dimensionless, method: measured, fitted: false, scope: {tp: [8]}}
 `,
+		"fabric as a scalar, not a list": `kind: CoefficientSet
+name: s
+coefficients:
+  - x: {value: 1, units: dimensionless, method: measured, fitted: false, scope: {fabric: roce-200g}}
+`,
 		"unknown scope key": `kind: CoefficientSet
 name: s
 coefficients:

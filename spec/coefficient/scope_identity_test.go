@@ -59,6 +59,51 @@ func TestTwoUnscopedEntriesUnderOneNameAreADuplicate(t *testing.T) {
 	}
 }
 
+// A fabric scope is its own dimension: the same name on hardware is a different scope, and
+// two fabrics are two scopes, so one entry name can carry a RoCE and an InfiniBand value.
+func TestFabricIsAScopeDimension(t *testing.T) {
+	if (Scope{Fabric: []string{"x"}}).Key() == (Scope{Hardware: []string{"x"}}).Key() {
+		t.Error("a fabric scope and a hardware scope naming the same string collide")
+	}
+	if (Scope{Fabric: []string{"roce-200g", "ib-400g"}}).Key() !=
+		(Scope{Fabric: []string{"ib-400g", "roce-200g"}}).Key() {
+		t.Error("fabric order changed the scope identity")
+	}
+	s := set(
+		Entry{Name: "fabric_bandwidth_efficiency", Value: 0.8, Units: vocab.UnitDimensionless,
+			Method: vocab.MethodMeasured, Scope: Scope{Fabric: []string{"roce-200g"}}},
+		Entry{Name: "fabric_bandwidth_efficiency", Value: 0.9, Units: vocab.UnitDimensionless,
+			Method: vocab.MethodMeasured, Scope: Scope{Fabric: []string{"ib-400g"}}})
+	if hasDuplicate(s) {
+		t.Error("one name scoped to two fabrics was rejected as a duplicate")
+	}
+	if (Scope{Fabric: []string{"ib-400g"}}).Empty() {
+		t.Error("a scope stating only a fabric reads as empty")
+	}
+}
+
+// Each malformed fabric name is its own failure: blank, a path, a file name, a repeat.
+func TestFabricScopeRejectsWhatNamesNoFabric(t *testing.T) {
+	for name, fabrics := range map[string][]string{
+		"blank":          {" "},
+		"a path":         {"networks/roce-200g"},
+		"a file name":    {"roce-200g.yaml"},
+		"a repeated one": {"ib-400g", "IB-400G"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := set(Entry{Name: "x", Value: 1, Units: vocab.UnitDimensionless,
+				Method: vocab.MethodMeasured, Scope: Scope{Fabric: fabrics}})
+			found := false
+			for _, p := range s.Validate().All() {
+				found = found || strings.Contains(p.Path, "scope.fabric")
+			}
+			if !found {
+				t.Errorf("fabric %q was accepted", fabrics)
+			}
+		})
+	}
+}
+
 func TestScopeKeyDistinguishesDimensions(t *testing.T) {
 	// A hardware scope and a model scope naming the same string are different scopes.
 	a := Scope{Hardware: []string{"x"}}

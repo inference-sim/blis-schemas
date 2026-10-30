@@ -94,6 +94,21 @@ type Engine interface {
 	Snapshot() State
 }
 
+// Pipelined is implemented by an engine whose batches run through more than one pipeline
+// stage, each stage on its own devices: vLLM with pipeline_parallel_size > 1. It is
+// optional; a simulator that does not look for it times every batch as one step of
+// StepTime on one device, which serializes the stages and so is conservative.
+//
+// StageTimes splits StepTime(b) by stage, in pipeline order: one entry per stage, each at
+// least one microsecond, summing exactly to StepTime(b). A simulator that honours it starts
+// stage s of a batch once stage s-1 of that batch has ended and stage s has finished the
+// batch before it, and ends the batch when its last stage ends: a new batch can enter the
+// pipeline every slowest-stage time, while each batch's output still takes the whole sum.
+// An engine with one stage returns a single entry equal to StepTime(b).
+type Pipelined interface {
+	StageTimes(b Batch) []Duration
+}
+
 // The wake protocol. NextWake answers one question: with no new input, when could this
 // engine's state change? The simulator owns everything that follows from the answer.
 //
@@ -184,6 +199,10 @@ type Batch struct {
 	// TransfersStarted are the asynchronous KV transfers this decision started. The
 	// simulator prices each and reports its end with TransferDone.
 	TransfersStarted []Transfer
+	// Finished are requests this decision ended without running them, with why: a request
+	// whose asynchronous KV load failed under a fail-the-request policy, which the engine
+	// finishes at its next schedule. A request finished here never appears in a Result.
+	Finished []Finished
 }
 
 // Empty reports whether the batch runs nothing.

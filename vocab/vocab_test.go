@@ -18,7 +18,7 @@ func TestVocabulariesAreClosed(t *testing.T) {
 			"assumed", "calibrated", "copied", "literature", "measured",
 			"not_charged", "vendor_spec"}},
 		{"scope keys", AllScopeKeys(), []string{
-			"ep", "hardware", "model", "nodes_spanned", "tp"}},
+			"ep", "fabric", "hardware", "model", "nodes_spanned", "tp"}},
 		{"provenances", AllProvenances(), []string{"derived", "vendor_spec"}},
 		{"source kinds", AllSourceKinds(), []string{
 			"datasheet", "discussion", "measured_case", "model", "publication",

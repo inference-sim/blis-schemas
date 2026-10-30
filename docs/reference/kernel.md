@@ -61,6 +61,15 @@ previous layer's output. Within a stage, work on different resources can overlap
 `PerResource`
 :   Each resource's total, for a caller that needs to see why.
 
+`Stages`
+:   For a pipeline-parallel deployment (`pp` > 1), the step split by stage in pipeline order,
+    each bracketed the same way and including the send of its activations to the next stage.
+    The stages' `Overlap` figures sum exactly to `Overlap`, and their `NoOverlap` figures to
+    `NoOverlap`; a single-stage step reports none. A simulator needs the split because two
+    batches in flight occupy two stages at once: a new batch can enter every slowest-stage
+    time, while each batch's output takes the whole sum. `kerneltest.CheckStages` checks the
+    law.
+
 A configuration whose conclusion changes between the two bounds needs a measurement rather
 than a prediction.
 

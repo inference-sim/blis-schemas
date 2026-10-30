@@ -109,6 +109,9 @@ func (g *Graph) validateGlobal(p *validate.Problems) {
 			}
 		})
 	}
+	if g.Global.PipelineBoundaryBytesPerToken < 0 {
+		p.Field("global.pipeline_boundary_bytes_per_token", "must not be negative")
+	}
 	if g.Global.DefaultContextWindow > 0 && g.Global.ContextWindow == 0 {
 		p.Field("global.default_context_window", "stated without context_window, which it narrows")
 	}
@@ -340,6 +343,26 @@ func (g *Graph) validateSpeculator(p *validate.Problems) {
 		n.validate(p, fmt.Sprintf("speculator.sequential_head[%d]", i))
 		validateOutsideLayers(p, fmt.Sprintf("speculator.sequential_head[%d]", i), n)
 	}
+	// A capture id names a point in the TARGET's stack: 0 before its first layer, its
+	// layer count after the last. A drafter that is a checkpoint of its own states its
+	// own draft stack as the graph's, so the upper bound is checked where the drafter
+	// meets its target, not here. The engine sorts and deduplicates the ids
+	// (_set_aux_hidden_state_layers), so a graph states them that way.
+	for i, id := range s.AuxHiddenStateLayers {
+		at := fmt.Sprintf("speculator.aux_hidden_state_layers[%d]", i)
+		if id < 0 {
+			p.Field(at, "must not be negative, got %d", id)
+		}
+		if i > 0 && id <= s.AuxHiddenStateLayers[i-1] {
+			p.Field(at, "%d does not follow %d: the ids are strictly increasing", id, s.AuxHiddenStateLayers[i-1])
+		}
+	}
+	if b := s.AuxHiddenStateBytesPerToken; b < 0 {
+		p.Field("speculator.aux_hidden_state_bytes_per_token", "must not be negative")
+	} else if b > 0 && len(s.AuxHiddenStateLayers) == 0 {
+		p.Field("speculator.aux_hidden_state_bytes_per_token",
+			"sizes a captured state, and aux_hidden_state_layers captures none")
+	}
 }
 
 // validate checks one node: that its op is known, that the parameters its op prices
@@ -390,6 +413,21 @@ func (n Node) validate(p *validate.Problems, at string) {
 		validateWeightScale(p, at+".weight_scale", n.WeightScale)
 	}
 	n.validateNodeCaches(p, at)
+	if d := n.ShardedAtDecode; d != nil {
+		at := at + ".sharded_at_decode"
+		if n.Op != OpGEMM || n.TP != TPReplicated {
+			p.Field(at, "only a replicated GEMM (tp: replicated) splits its columns at decode")
+		}
+		requirePositive(p, at, "capability_family", d.CapabilityFamily)
+		requirePositive(p, at, "max_tokens", d.MaxTokens)
+		if d.MinTokensAcrossNodes < 0 || d.MinTokensAcrossNodes > d.MaxTokens {
+			p.Field(at+".min_tokens_across_nodes", "%d is outside [0, max_tokens %d]",
+				d.MinTokensAcrossNodes, d.MaxTokens)
+		}
+	}
+	if n.KVHeadsNotReplicated && n.Op != OpAttention {
+		p.Field(at+".kv_heads_not_replicated", "only an Attention node has KV heads")
+	}
 	if n.PerTokens != 0 && n.Op != OpElementwise {
 		p.Field(at+".per_tokens", "only an Elementwise node runs once per several tokens")
 	}
@@ -507,6 +545,10 @@ func (n Node) validate(p *validate.Problems, at string) {
 		requirePositive(p, at, "d_h", n.HeadDim)
 		if n.NumKVHeads > n.NumQHeads {
 			p.Field(at+".n_kv", "n_kv %d exceeds n_q %d", n.NumKVHeads, n.NumQHeads)
+		}
+		if n.KVHeadsNotReplicated && n.AttentionKind.LatentKV() {
+			p.Field(at+".kv_heads_not_replicated",
+				"%s stores one latent vector per token, which every rank holds whole", n.AttentionKind)
 		}
 		if n.AttentionKind.LatentKV() && n.NumKVHeads != 1 {
 			// A latent cache is one vector per token: an engine pins the head count

@@ -83,6 +83,7 @@ head:
 | `weight_dtype` | string | yes | The format parameters are stored in. One of the [dtypes](vocabularies.md#dtypes). |
 | `weight_scale` | mapping | no | The resident scale layout of weights stored at `weight_dtype`, [below](#weight-scales). It does not apply to a node stored in another format. |
 | `context_window` | integer | no | The longest context the engine admits for this model: the `max_model_len` vLLM derives from the configuration. An unstated or `auto` `max_model_len` starts from it. |
+| `pipeline_boundary_bytes_per_token` | integer | no | Bytes one token costs to hand from one pipeline stage to the next: the intermediate tensors at a stage boundary. Omitted, vLLM's standard pair of `hidden_states` and `residual`, two hidden-width activations. A model that sends something else states it, as Muse Spark does for its one fp32 stream. A drafter's auxiliary hidden states are not counted here. Not negative. |
 | `default_context_window` | integer | no | The window an unstated or `auto` `max_model_len` starts from, where it is shorter than `context_window`, as for a LongRoPE model. Needs `context_window`. |
 
 ### `layer_kinds`
@@ -126,6 +127,8 @@ least one layer.
 | `context_stack` | mapping | no | Draft work that runs once per step over the target's scheduled tokens, prefill tokens included. |
 | `head` | list of nodes | no | Nodes after each pass of `stack`, over the same rows. |
 | `sequential_head` | list of nodes | no | Nodes run once per draft position, in order, over one row per request. Only with `parallel_block`. |
+| `aux_hidden_state_layers` | list of integers | no | The target layers whose hidden states the drafter reads, in the engine's capture convention: `L` is the state entering decoder layer `L`, `0` the embedding output and the layer count the last layer's output. EAGLE3, DFlash and dense DSpark configurations state these one lower as `target_layer_ids`. Under pipeline parallelism each stage boundary carries every state captured upstream of it to the last stage. Not negative, strictly increasing. |
+| `aux_hidden_state_bytes_per_token` | integer | no | One captured state's bytes a token. Omitted, one hidden-width activation, the sum of `hidden_states` and `residual`. A target with a wider residual stream states it, as Muse Spark does for its fp32 stream. Only with `aux_hidden_state_layers`. Not negative. |
 
 The draft module is a stack and not a token count because, for an MoE target, the draft
 pass is itself an MoE pass with its own cost. DeepSeek-V4.1's DSpark shows why the other
@@ -160,6 +163,7 @@ Common to every node:
 | `tp` | string | no | How the node divides across tensor-parallel ranks, on a `GEMM`, `Elementwise` or `Attention` node. One of the [layouts](vocabularies.md#tensor-parallel-layouts); omitted leaves it to the cost model's inference. |
 | `under_sequence_parallel` | string | no | How the node divides when the model's own sequence parallelism is on. One of the [splits](vocabularies.md#sequence-parallel-splits); omitted means as `tp` states, over every token the step schedules. Not on a collective. Needs `global.architecture`. |
 | `aliases` | string | no | On a `GEMM` or `Gather`: the node whose weights this one reads, as `<layer kind>.<role>`, `head.<role>` or `embedding.<role>`. The node is priced for its compute and weight reads, at its target's format, but adds no resident bytes. It states no `weight_dtype` or `weight_scale` of its own. |
+| `sharded_at_decode` | mapping | no | On a replicated `GEMM` (`tp: replicated`): the engine splits its output columns over the tensor-parallel ranks for a small step and all-gathers them back, keeping the whole weight on every rank. When, [below](#sharded-at-decode). Muse Spark's MoE pooler and unpooler on Blackwell. Whether the model's own conditions hold (no data parallelism, no mega-MoE) is the architecture's, read by the consumer. |
 
 `GEMM` and `GroupedGEMM`:
 
@@ -200,6 +204,7 @@ Common to every node:
 | `index_topk` | integer | for `sparse_mla`, unless `compress_ratio` or `window` is set | Cache entries a sparse layer selects. |
 | `compress_ratio` | integer | for `sparse_mla`, unless `index_topk` or `window` is set | Factor by which a sparse layer compresses its latent read. |
 | `caches` | list | no | The per-request caches the node reads and which its layer owns, [below](#caches). Omitted means one cache inferred from the read shape. |
+| `kv_heads_not_replicated` | boolean | no | On an `Attention` node: its projection cannot replicate a KV head across tensor-parallel ranks, so the tensor-parallel width must divide `n_kv`. A fused projection that slices by head group is one, as Muse Spark's fused QKV and output-gate projection is. Omitted means the standard projection, which replicates a head where `tp` exceeds `n_kv`. Not on a latent attention. |
 
 `RecurrentUpdate`, for linear-attention and state-space layers:
 
@@ -322,6 +327,16 @@ rows, so K = 7 needs 16 rows where the graph states 8.
 | `phase` | string | no | `prefill` restricts the work to steps that schedule the request's prompt. |
 | `decode_extent` | string | no | `max_model_len` when a decode step's work covers the engine's `max_model_len` rather than the context. |
 
+### Sharded at decode
+
+<!-- fields: model.ShardedAtDecode -->
+
+| Key | Type | Required | Meaning |
+|---|---|---|---|
+| `capability_family` | integer | yes | The CUDA compute-capability major version from which the engine shards the GEMM: 10 for SM100 and later. Positive. |
+| `max_tokens` | integer | yes | The largest step, in scheduled tokens, that shards. Positive. |
+| `min_tokens_across_nodes` | integer | no | The smallest step that shards when the tensor-parallel group spans nodes, where the gather crosses the fabric. Omitted, from one token. In `[0, max_tokens]`. |
+
 ### Weight scales
 
 <!-- fields: model.WeightScale -->
@@ -422,13 +437,16 @@ A graph is invalid if
 - the stack expands to no layers, `repeat` is negative, a pattern has no repeat or a repeat
   no pattern, or the stack names a layer kind that is not declared;
 - a `speculator` lacks a `method`, a `pattern`, at least one draft token or a repeat of at
-  least 1, has an unrecognized `drafting`, a `sequential_head` without `parallel_block`, or
-  a `stack` or `context_stack` naming a layer kind that is not declared;
+  least 1, has an unrecognized `drafting`, a `sequential_head` without `parallel_block`,
+  a `stack` or `context_stack` naming a layer kind that is not declared, or an
+  `aux_hidden_state_layers` id that is negative or does not exceed the one before it, or an
+  `aux_hidden_state_bytes_per_token` that is negative or stated without those layers;
 - a cache a layer reads but does not own has no owner earlier in its stack, or differs from
   its owner in kind, entry size under any cache dtype, tokens per entry, window or entries;
 - an `aliases` reference does not resolve to exactly one weight-holding node of the same
   shape, names a layer kind the stacks run more than once, or names a node that is itself
   an alias;
+- `pipeline_boundary_bytes_per_token` is negative;
 - `context_window` or `default_context_window` is negative, or the second exceeds the
   first or is stated without it;
 - `arch_overrides` is stated without `base_capability_families`; a family in either is not
@@ -471,6 +489,11 @@ A node is invalid if
   reads at; on an embedding or head node, any of `caches`, `writes_cache`, `reads_cache`
   or a `per_tokens` above 1 is set;
 - an `aliases` node states its own `weight_dtype` or `weight_scale`;
+- `kv_heads_not_replicated` is set on anything other than an `Attention` node, or on an
+  `mla` or `sparse_mla` one;
+- `sharded_at_decode` is set on anything other than a replicated `GEMM`, its
+  `capability_family` or `max_tokens` is not positive, or its `min_tokens_across_nodes` is
+  outside `[0, max_tokens]`;
 - `bytes_per_token` is set on a primitive other than `Elementwise`, `AllReduce`,
   `AllGather` or `ReduceScatter`;
 - `index_topk` or `compress_ratio` is set on anything other than a `sparse_mla` attention

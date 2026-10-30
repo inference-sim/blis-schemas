@@ -65,6 +65,7 @@ func TestRejects(t *testing.T) {
 		{"no derivation format", func(g *Graph) { g.DerivedFrom.Format = "" }},
 		{"zero deriver version", func(g *Graph) { g.DerivedFrom.DeriverVersion = 0 }},
 		{"zero hidden size", func(g *Graph) { g.Global.HiddenSize = 0 }},
+		{"negative pipeline boundary", func(g *Graph) { g.Global.PipelineBoundaryBytesPerToken = -1 }},
 		{"unknown weight dtype", func(g *Graph) { g.Global.WeightDType = "fp6" }},
 		{"no layer kinds", func(g *Graph) { g.LayerKinds = nil }},
 		{"duplicate layer-kind id", func(g *Graph) {
@@ -374,5 +375,136 @@ func TestPerNodeWeightDType(t *testing.T) {
 				t.Fatalf("OK() = %v, want %v: %v", got, tc.ok, p.Error())
 			}
 		})
+	}
+}
+
+// A Muse-shaped MoE states one reduction per mode: the per-route rows under tensor
+// parallelism, the combined output when expert parallelism keeps every token on every rank.
+// Both conditions are recognized, and the boundary bytes of an fp32 residual stream pass.
+func TestModeConditionedMoEReductionsValidate(t *testing.T) {
+	g := validGraph()
+	g.Global.PipelineBoundaryBytesPerToken = 4 * g.Global.HiddenSize
+	kind := &g.LayerKinds[0]
+	kind.Nodes = append(kind.Nodes,
+		Node{Op: OpAllReduce, Role: "moe_route_rows", Emit: EmitTensorParallelWithoutExpertParallel,
+			BytesPerToken: 8 * 4096 * 2},
+		Node{Op: OpAllReduce, Role: "moe_combine", Emit: EmitExpertParallelWithoutDispatch,
+			BytesPerToken: 4096 * 2})
+	kind.Edges = append(kind.Edges, [2]int{6, 7}, [2]int{7, 8})
+	if p := g.Validate(); !p.OK() {
+		t.Fatalf("expected a valid graph, got: %v", p.All())
+	}
+	for _, c := range []EmitCondition{EmitTensorParallelWithoutExpertParallel, EmitExpertParallelWithoutDispatch} {
+		if !c.Valid() {
+			t.Errorf("%q is not recognized", c)
+		}
+	}
+}
+
+// A speculator's auxiliary hidden-state layers are capture points in the target's stack: not
+// negative, and stated as the engine holds them, sorted without repeats.
+func TestSpeculatorAuxHiddenStateLayers(t *testing.T) {
+	with := func(ids ...int) *Graph {
+		g := validGraph()
+		g.Speculator = &Speculator{Method: "eagle3", NumSpec: 3,
+			Stack: Stack{Pattern: []string{"attn_moe"}, Repeat: 1}, AuxHiddenStateLayers: ids}
+		return g
+	}
+	if p := with(2, 36, 69).Validate(); !p.OK() {
+		t.Fatalf("valid aux layers rejected:\n%s", p.Error())
+	}
+	if p := with().Validate(); !p.OK() {
+		t.Fatalf("a speculator with no aux layers rejected:\n%s", p.Error())
+	}
+	for name, ids := range map[string][]int{
+		"negative": {-1, 3}, "repeated": {3, 3}, "descending": {9, 3},
+	} {
+		p := with(ids...).Validate()
+		if p.OK() || !strings.Contains(p.Error(), "speculator.aux_hidden_state_layers") {
+			t.Errorf("%s ids %v: want a speculator.aux_hidden_state_layers problem, got %v", name, ids, p)
+		}
+	}
+	wide := with(2, 9)
+	wide.Speculator.AuxHiddenStateBytesPerToken = 4 * 3072
+	if p := wide.Validate(); !p.OK() {
+		t.Errorf("a stated capture width rejected:\n%s", p.Error())
+	}
+	for name, g := range map[string]*Graph{"negative": with(2), "without layers": with()} {
+		g.Speculator.AuxHiddenStateBytesPerToken = 6144
+		if name == "negative" {
+			g.Speculator.AuxHiddenStateBytesPerToken = -1
+		}
+		p := g.Validate()
+		if p.OK() || !strings.Contains(p.Error(), "speculator.aux_hidden_state_bytes_per_token") {
+			t.Errorf("capture width %s: want a speculator.aux_hidden_state_bytes_per_token problem, got %v", name, p)
+		}
+	}
+}
+
+// ForCapability's copy owns its aux layer list, as it owns every other slice of the graph.
+func TestForCapabilityCopiesAuxHiddenStateLayers(t *testing.T) {
+	g := validGraph()
+	g.Speculator = &Speculator{Method: "eagle3", NumSpec: 3,
+		Stack: Stack{Pattern: []string{"attn_moe"}, Repeat: 1}, AuxHiddenStateLayers: []int{2, 9}}
+	out, err := g.ForCapability(9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out.Speculator.AuxHiddenStateLayers[0] = 5
+	if g.Speculator.AuxHiddenStateLayers[0] != 2 {
+		t.Error("the resolved graph shares the source graph's aux layer list")
+	}
+}
+
+// kv_heads_not_replicated belongs on a non-latent attention node only.
+func TestKVHeadsNotReplicatedPlacement(t *testing.T) {
+	g := validGraph()
+	g.LayerKinds[0].Nodes[2].KVHeadsNotReplicated = true
+	if p := g.Validate(); !p.OK() {
+		t.Fatalf("a GQA node stating it was rejected:\n%s", p.Error())
+	}
+	for name, mutate := range map[string]func(*Graph){
+		"on a GEMM": func(g *Graph) { g.LayerKinds[0].Nodes[1].KVHeadsNotReplicated = true },
+		"on MLA": func(g *Graph) {
+			n := &g.LayerKinds[0].Nodes[2]
+			n.AttentionKind, n.NumKVHeads, n.KVHeadsNotReplicated = AttentionMLA, 1, true
+		},
+	} {
+		g := validGraph()
+		mutate(g)
+		if p := g.Validate(); p.OK() || !strings.Contains(p.Error(), "kv_heads_not_replicated") {
+			t.Errorf("%s: want a kv_heads_not_replicated problem, got %v", name, p)
+		}
+	}
+}
+
+// sharded_at_decode belongs on a replicated GEMM, with positive bounds.
+func TestShardedAtDecodePlacement(t *testing.T) {
+	ok := &ShardedAtDecode{CapabilityFamily: 10, MaxTokens: 256, MinTokensAcrossNodes: 32}
+	g := validGraph()
+	g.LayerKinds[0].Nodes[1].TP, g.LayerKinds[0].Nodes[1].ShardedAtDecode = TPReplicated, ok
+	if p := g.Validate(); !p.OK() {
+		t.Fatalf("a replicated GEMM stating it was rejected:\n%s", p.Error())
+	}
+	for name, mutate := range map[string]func(*Node){
+		"column GEMM":   func(n *Node) { n.TP = TPColumn },
+		"no family":     func(n *Node) { n.ShardedAtDecode.CapabilityFamily = 0 },
+		"no max":        func(n *Node) { n.ShardedAtDecode.MaxTokens = 0 },
+		"min above max": func(n *Node) { n.ShardedAtDecode.MinTokensAcrossNodes = 300 },
+		"negative min":  func(n *Node) { n.ShardedAtDecode.MinTokensAcrossNodes = -1 },
+	} {
+		g := validGraph()
+		n := &g.LayerKinds[0].Nodes[1]
+		d := *ok
+		n.TP, n.ShardedAtDecode = TPReplicated, &d
+		mutate(n)
+		if p := g.Validate(); p.OK() || !strings.Contains(p.Error(), "sharded_at_decode") {
+			t.Errorf("%s: want a sharded_at_decode problem, got %v", name, p)
+		}
+	}
+	g = validGraph()
+	g.LayerKinds[0].Nodes[2].ShardedAtDecode = ok
+	if p := g.Validate(); p.OK() {
+		t.Error("an Attention node stating sharded_at_decode was accepted")
 	}
 }

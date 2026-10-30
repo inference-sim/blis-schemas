@@ -16,7 +16,7 @@ func TestCloneIsADeepCopy(t *testing.T) {
 		DisableCustomAllReduce: &on, DCPQReplicate: &on, MaxCUDAGraphCaptureSize: &size,
 		CUDAGraphCaptureSizes: []int{1, 2, 4}, DBO: &DBO{Enabled: true},
 		EPLB:         &EPLB{Enabled: true, NumRedundantExperts: 2},
-		Speculative:  &Speculative{Method: "mtp", NumSpecTokens: 2},
+		Speculative:  &Speculative{Method: "mtp", NumSpecTokens: 2, DraftModel: "drafter", EnableAdaptiveVerification: true},
 		EngramConfig: &EngramConfig{CPUOffload: &on, DPSharedMemory: &on, UseTHP: &on},
 	}
 	c := orig.Clone()
@@ -36,13 +36,16 @@ func TestCloneIsADeepCopy(t *testing.T) {
 	*orig.EnablePrefixCaching, *orig.MaxCUDAGraphCaptureSize = off, 8
 	orig.CUDAGraphCaptureSizes[0] = 99
 	orig.DBO.Enabled, orig.EPLB.NumRedundantExperts, orig.Speculative.NumSpecTokens = false, 0, 0
+	orig.Speculative.DraftModel = ""
+	orig.Speculative.EnableAdaptiveVerification = false
 	*orig.EngramConfig.CPUOffload = off
 	switch {
 	case !*c.EnablePrefixCaching || *c.MaxCUDAGraphCaptureSize != 512:
 		t.Error("editing the original's pointers changed its clone")
 	case !reflect.DeepEqual(c.CUDAGraphCaptureSizes, []int{1, 2, 4}):
 		t.Errorf("editing the original's capture sizes changed its clone: %v", c.CUDAGraphCaptureSizes)
-	case !c.DBO.Enabled || c.EPLB.NumRedundantExperts != 2 || c.Speculative.NumSpecTokens != 2:
+	case !c.DBO.Enabled || c.EPLB.NumRedundantExperts != 2 || c.Speculative.NumSpecTokens != 2 ||
+		c.Speculative.DraftModel != "drafter" || !c.Speculative.EnableAdaptiveVerification:
 		t.Error("editing the original's nested settings changed its clone")
 	case !*c.EngramConfig.CPUOffload:
 		t.Error("editing the original's Engram settings changed its clone")

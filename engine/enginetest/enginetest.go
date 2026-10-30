@@ -113,15 +113,18 @@ type driver struct {
 	wake     *event
 	busyTill engine.Time
 	inFlight []engine.BatchID
-	started  map[engine.BatchID]engine.Time
-	batches  map[engine.BatchID]engine.Batch
-	lastID   engine.BatchID
-	haveID   bool
-	pending  map[string]bool
-	held     map[string]bool
-	emitted  map[string]int
-	trace    Trace
-	steps    int
+	// stageFree is when each pipeline stage finishes the batch it holds, for an engine that
+	// is engine.Pipelined; nil otherwise, when busyTill is the one device's.
+	stageFree []engine.Time
+	started   map[engine.BatchID]engine.Time
+	batches   map[engine.BatchID]engine.Batch
+	lastID    engine.BatchID
+	haveID    bool
+	pending   map[string]bool
+	held      map[string]bool
+	emitted   map[string]int
+	trace     Trace
+	steps     int
 }
 
 func (d *driver) push(ev *event) {
@@ -182,6 +185,11 @@ func (d *driver) step() error {
 		if err := d.checkMembers(b); err != nil {
 			return err
 		}
+		for _, f := range b.Finished {
+			if err := d.finished(f); err != nil {
+				return err
+			}
+		}
 		if b.Empty() {
 			return nil
 		}
@@ -194,15 +202,55 @@ func (d *driver) step() error {
 			return fmt.Errorf("at %d: StepTime(%d) = %d, want at least 1", d.now, b.ID, dur)
 		}
 		start := max(d.now, d.busyTill)
-		d.busyTill = start + dur
+		end := start + dur
+		if p, ok := d.e.(engine.Pipelined); ok {
+			if start, end, err = d.pipeline(p, b, dur); err != nil {
+				return err
+			}
+		}
+		d.busyTill = end
 		d.inFlight = append(d.inFlight, b.ID)
 		d.started[b.ID] = start
 		d.batches[b.ID] = b
-		d.push(&event{at: d.busyTill, kind: kindComplete, batch: b.ID})
+		d.push(&event{at: end, kind: kindComplete, batch: b.ID})
 		if s := d.e.Snapshot(); s.InFlight != len(d.inFlight) {
 			return fmt.Errorf("at %d: Snapshot().InFlight = %d with %d batches in flight", d.now, s.InFlight, len(d.inFlight))
 		}
 	}
+}
+
+// pipeline times a batch through an engine.Pipelined engine's stages: stage s starts once
+// the batch has left stage s-1 and stage s has finished the batch ahead of it. It returns the
+// batch's first-stage start and last-stage end, and checks the Pipelined law: one entry per
+// stage, each at least one microsecond, summing to StepTime, and the same stage count every
+// batch.
+func (d *driver) pipeline(p engine.Pipelined, b engine.Batch, dur engine.Duration) (engine.Time, engine.Time, error) {
+	stages := p.StageTimes(b)
+	var sum engine.Duration
+	for i, st := range stages {
+		if st < 1 {
+			return 0, 0, fmt.Errorf("at %d: StageTimes(%d)[%d] = %d, want at least 1", d.now, b.ID, i, st)
+		}
+		sum += st
+	}
+	switch {
+	case len(stages) == 0:
+		return 0, 0, fmt.Errorf("at %d: StageTimes(%d) is empty, want at least one stage", d.now, b.ID)
+	case sum != dur:
+		return 0, 0, fmt.Errorf("at %d: StageTimes(%d) sums to %d, StepTime is %d", d.now, b.ID, sum, dur)
+	case d.stageFree == nil:
+		d.stageFree = make([]engine.Time, len(stages))
+	case len(d.stageFree) != len(stages):
+		return 0, 0, fmt.Errorf("at %d: StageTimes(%d) has %d stages, an earlier batch had %d",
+			d.now, b.ID, len(stages), len(d.stageFree))
+	}
+	start := max(d.now, d.stageFree[0])
+	at := start
+	for i, st := range stages {
+		at = max(at, d.stageFree[i]) + st
+		d.stageFree[i] = at
+	}
+	return start, at, nil
 }
 
 // checkMembers checks who a decision names. A batch runs only requests the engine holds
@@ -219,6 +267,11 @@ func (d *driver) checkMembers(b engine.Batch) error {
 			return fmt.Errorf("at %d: batch %d runs %s twice in batch", d.now, b.ID, s.ID)
 		}
 		inBatch[s.ID] = true
+	}
+	for _, f := range b.Finished {
+		if inBatch[f.ID] {
+			return fmt.Errorf("at %d: batch %d both runs and finishes %s", d.now, b.ID, f.ID)
+		}
 	}
 	evicted := map[string]bool{}
 	for _, id := range b.Preempted {
