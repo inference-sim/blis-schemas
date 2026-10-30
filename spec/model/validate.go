@@ -413,6 +413,9 @@ func (n Node) validate(p *validate.Problems, at string) {
 		validateWeightScale(p, at+".weight_scale", n.WeightScale)
 	}
 	n.validateNodeCaches(p, at)
+	if n.KVHeadsNotReplicated && n.Op != OpAttention {
+		p.Field(at+".kv_heads_not_replicated", "only an Attention node has KV heads")
+	}
 	if n.PerTokens != 0 && n.Op != OpElementwise {
 		p.Field(at+".per_tokens", "only an Elementwise node runs once per several tokens")
 	}
@@ -530,6 +533,10 @@ func (n Node) validate(p *validate.Problems, at string) {
 		requirePositive(p, at, "d_h", n.HeadDim)
 		if n.NumKVHeads > n.NumQHeads {
 			p.Field(at+".n_kv", "n_kv %d exceeds n_q %d", n.NumKVHeads, n.NumQHeads)
+		}
+		if n.KVHeadsNotReplicated && n.AttentionKind.LatentKV() {
+			p.Field(at+".kv_heads_not_replicated",
+				"%s stores one latent vector per token, which every rank holds whole", n.AttentionKind)
 		}
 		if n.AttentionKind.LatentKV() && n.NumKVHeads != 1 {
 			// A latent cache is one vector per token: an engine pins the head count

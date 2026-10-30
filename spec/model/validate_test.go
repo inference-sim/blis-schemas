@@ -455,3 +455,25 @@ func TestForCapabilityCopiesAuxHiddenStateLayers(t *testing.T) {
 		t.Error("the resolved graph shares the source graph's aux layer list")
 	}
 }
+
+// kv_heads_not_replicated belongs on a non-latent attention node only.
+func TestKVHeadsNotReplicatedPlacement(t *testing.T) {
+	g := validGraph()
+	g.LayerKinds[0].Nodes[2].KVHeadsNotReplicated = true
+	if p := g.Validate(); !p.OK() {
+		t.Fatalf("a GQA node stating it was rejected:\n%s", p.Error())
+	}
+	for name, mutate := range map[string]func(*Graph){
+		"on a GEMM": func(g *Graph) { g.LayerKinds[0].Nodes[1].KVHeadsNotReplicated = true },
+		"on MLA": func(g *Graph) {
+			n := &g.LayerKinds[0].Nodes[2]
+			n.AttentionKind, n.NumKVHeads, n.KVHeadsNotReplicated = AttentionMLA, 1, true
+		},
+	} {
+		g := validGraph()
+		mutate(g)
+		if p := g.Validate(); p.OK() || !strings.Contains(p.Error(), "kv_heads_not_replicated") {
+			t.Errorf("%s: want a kv_heads_not_replicated problem, got %v", name, p)
+		}
+	}
+}

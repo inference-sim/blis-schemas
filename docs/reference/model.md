@@ -203,6 +203,7 @@ Common to every node:
 | `index_topk` | integer | for `sparse_mla`, unless `compress_ratio` or `window` is set | Cache entries a sparse layer selects. |
 | `compress_ratio` | integer | for `sparse_mla`, unless `index_topk` or `window` is set | Factor by which a sparse layer compresses its latent read. |
 | `caches` | list | no | The per-request caches the node reads and which its layer owns, [below](#caches). Omitted means one cache inferred from the read shape. |
+| `kv_heads_not_replicated` | boolean | no | On an `Attention` node: its projection cannot replicate a KV head across tensor-parallel ranks, so the tensor-parallel width must divide `n_kv`. A fused projection that slices by head group is one, as Muse Spark's fused QKV and output-gate projection is. Omitted means the standard projection, which replicates a head where `tp` exceeds `n_kv`. Not on a latent attention. |
 
 `RecurrentUpdate`, for linear-attention and state-space layers:
 

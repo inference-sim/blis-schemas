@@ -543,6 +543,16 @@ type Node struct {
 	// layer owns. Absent means the consumer infers one cache from the read shape, the
 	// meaning every graph had before the field existed. See Cache.
 	Caches []Cache `yaml:"caches,omitempty"`
+	// KVHeadsNotReplicated, on an Attention node, says its projection cannot replicate a KV
+	// head across tensor-parallel ranks: the tensor-parallel width must divide n_kv. vLLM's
+	// standard QKV projection replicates a head over ranks when tp exceeds n_kv
+	// (QKVParallelLinear num_kv_head_replicas, vllm/model_executor/layers/linear.py:1050-1058
+	// at v0.32.0), so a deployment at tp 32 over 16 KV heads starts; a fused projection that
+	// slices by head group does not, and the engine asserts n_kv % tp == 0 at load. Muse
+	// Spark's fused [Q, K, V, O-gate] projection is one ("KV-head padding is not supported",
+	// MuseSpark1xQKVOGateParallelLinear, vllm/models/muse_spark/common/layers.py:339-371 at
+	// vllm-project/vllm 0f6b2619). Absent means the standard projection.
+	KVHeadsNotReplicated bool `yaml:"kv_heads_not_replicated,omitempty"`
 
 	// RecurrentUpdate.
 	RecurrentKind    RecurrentKind `yaml:"recurrent_kind,omitempty"`
