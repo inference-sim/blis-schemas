@@ -33,6 +33,7 @@ through different channels.
 |---|---|---|
 | `LoadScenario` | a scenario | its `name` key |
 | `LoadDeployment` | a deployment | its `name` key |
+| `LoadBundle` | a scenario and its deployment from one file, as two YAML documents separated by `---` | each document's `name` key |
 | `LoadModelGraph` | `models/<name>/graph.yaml` | its `name` key |
 | `LoadModelIdentity` | `models/<name>/model.yaml` | its `name` key |
 | `LoadChip` | `hardware/<name>.yaml` | the file name |
