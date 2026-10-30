@@ -151,9 +151,15 @@ type GlobalShape struct {
 
 	// PipelineBoundaryBytesPerToken is what one token costs to hand from one pipeline
 	// stage to the next: the intermediate tensors the engine sends at a stage boundary.
-	// Zero means one hidden-width activation. A model that carries its residual stream at
-	// a wider dtype, or several streams, states it: Muse Spark's stream is fp32, so a
-	// boundary moves 4 x hidden_size bytes a token.
+	// Zero means vLLM's standard pair, hidden_states and residual, each one hidden-width
+	// activation: 2 x hidden_size x 2 bytes a token
+	// (make_empty_intermediate_tensors_factory(["hidden_states", "residual"], ...),
+	// vllm/model_executor/models/llama.py:399-401 at v0.32.0). A model that sends
+	// something else states it: Muse Spark folds its residual into one fp32 stream and
+	// sends that alone, so a boundary moves 4 x hidden_size bytes a token
+	// (_make_empty_intermediate_tensors, vllm/models/muse_spark/nvidia/model.py:1639-1650
+	// at vllm-project/vllm 0f6b2619). Auxiliary hidden states a drafter reads
+	// (Speculator.AuxHiddenStateLayers) are not part of this figure.
 	PipelineBoundaryBytesPerToken int `yaml:"pipeline_boundary_bytes_per_token,omitempty"`
 }
 
@@ -315,6 +321,29 @@ type Speculator struct {
 	// qwen3_dspark.py, "the head runs sequentially for every draft position"). Only a
 	// parallel_block drafter has one; an autoregressive drafter is sequential already.
 	SequentialHead []Node `yaml:"sequential_head,omitempty"`
+	// AuxHiddenStateLayers are the target layers whose hidden states the drafter reads,
+	// in the engine's capture convention: an id L is the state entering decoder layer L
+	// (0 the embedding output, num_hidden_layers the last layer's output), as
+	// set_aux_hidden_state_layers receives them. An EAGLE3, DFlash or dense-DSpark
+	// drafter's configuration states its target_layer_ids one lower, and the engine adds
+	// one (get_eagle3_aux_layers_from_config,
+	// vllm/v1/worker/gpu/spec_decode/eagle/eagle3_utils.py:98-135 at v0.32.0).
+	//
+	// Under pipeline parallelism a captured state travels with the intermediate tensors
+	// from the stage that captures it to the last stage, where the drafter runs: each
+	// boundary carries every state captured upstream of it (pack_local_aux_hidden_states
+	// and collect_remote_aux_hidden_states, vllm/model_executor/models/interfaces.py:
+	// 1569-1645; relay_aux_hidden_states, vllm/v1/worker/gpu/pp_utils.py:102-123).
+	// Absent means the drafter reads none. Each id is in [0, target layers], and the
+	// list is strictly increasing.
+	AuxHiddenStateLayers []int `yaml:"aux_hidden_state_layers,omitempty"`
+	// AuxHiddenStateBytesPerToken is one captured state's bytes a token. Zero means one
+	// hidden-width activation, which is what a model that carries hidden_states and
+	// residual apart captures (their sum, _maybe_add_hidden_state, interfaces.py:
+	// 1600-1611). A target whose residual stream is wider states it: Muse Spark captures
+	// its fp32 stream, 4 x hidden_size bytes (vllm/models/muse_spark/nvidia/
+	// model.py:1705-1722 at vllm-project/vllm 0f6b2619). Only with AuxHiddenStateLayers.
+	AuxHiddenStateBytesPerToken int `yaml:"aux_hidden_state_bytes_per_token,omitempty"`
 }
 
 // Drafting is how a speculator's stack produces its draft tokens.

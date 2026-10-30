@@ -400,3 +400,58 @@ func TestModeConditionedMoEReductionsValidate(t *testing.T) {
 		}
 	}
 }
+
+// A speculator's auxiliary hidden-state layers are capture points in the target's stack: not
+// negative, and stated as the engine holds them, sorted without repeats.
+func TestSpeculatorAuxHiddenStateLayers(t *testing.T) {
+	with := func(ids ...int) *Graph {
+		g := validGraph()
+		g.Speculator = &Speculator{Method: "eagle3", NumSpec: 3,
+			Stack: Stack{Pattern: []string{"attn_moe"}, Repeat: 1}, AuxHiddenStateLayers: ids}
+		return g
+	}
+	if p := with(2, 36, 69).Validate(); !p.OK() {
+		t.Fatalf("valid aux layers rejected:\n%s", p.Error())
+	}
+	if p := with().Validate(); !p.OK() {
+		t.Fatalf("a speculator with no aux layers rejected:\n%s", p.Error())
+	}
+	for name, ids := range map[string][]int{
+		"negative": {-1, 3}, "repeated": {3, 3}, "descending": {9, 3},
+	} {
+		p := with(ids...).Validate()
+		if p.OK() || !strings.Contains(p.Error(), "speculator.aux_hidden_state_layers") {
+			t.Errorf("%s ids %v: want a speculator.aux_hidden_state_layers problem, got %v", name, ids, p)
+		}
+	}
+	wide := with(2, 9)
+	wide.Speculator.AuxHiddenStateBytesPerToken = 4 * 3072
+	if p := wide.Validate(); !p.OK() {
+		t.Errorf("a stated capture width rejected:\n%s", p.Error())
+	}
+	for name, g := range map[string]*Graph{"negative": with(2), "without layers": with()} {
+		g.Speculator.AuxHiddenStateBytesPerToken = 6144
+		if name == "negative" {
+			g.Speculator.AuxHiddenStateBytesPerToken = -1
+		}
+		p := g.Validate()
+		if p.OK() || !strings.Contains(p.Error(), "speculator.aux_hidden_state_bytes_per_token") {
+			t.Errorf("capture width %s: want a speculator.aux_hidden_state_bytes_per_token problem, got %v", name, p)
+		}
+	}
+}
+
+// ForCapability's copy owns its aux layer list, as it owns every other slice of the graph.
+func TestForCapabilityCopiesAuxHiddenStateLayers(t *testing.T) {
+	g := validGraph()
+	g.Speculator = &Speculator{Method: "eagle3", NumSpec: 3,
+		Stack: Stack{Pattern: []string{"attn_moe"}, Repeat: 1}, AuxHiddenStateLayers: []int{2, 9}}
+	out, err := g.ForCapability(9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out.Speculator.AuxHiddenStateLayers[0] = 5
+	if g.Speculator.AuxHiddenStateLayers[0] != 2 {
+		t.Error("the resolved graph shares the source graph's aux layer list")
+	}
+}

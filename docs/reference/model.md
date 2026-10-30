@@ -83,7 +83,7 @@ head:
 | `weight_dtype` | string | yes | The format parameters are stored in. One of the [dtypes](vocabularies.md#dtypes). |
 | `weight_scale` | mapping | no | The resident scale layout of weights stored at `weight_dtype`, [below](#weight-scales). It does not apply to a node stored in another format. |
 | `context_window` | integer | no | The longest context the engine admits for this model: the `max_model_len` vLLM derives from the configuration. An unstated or `auto` `max_model_len` starts from it. |
-| `pipeline_boundary_bytes_per_token` | integer | no | Bytes one token costs to hand from one pipeline stage to the next: the intermediate tensors at a stage boundary. Omitted, one hidden-width activation. A model whose residual stream is wider than the activation dtype states it. Not negative. |
+| `pipeline_boundary_bytes_per_token` | integer | no | Bytes one token costs to hand from one pipeline stage to the next: the intermediate tensors at a stage boundary. Omitted, vLLM's standard pair of `hidden_states` and `residual`, two hidden-width activations. A model that sends something else states it, as Muse Spark does for its one fp32 stream. A drafter's auxiliary hidden states are not counted here. Not negative. |
 | `default_context_window` | integer | no | The window an unstated or `auto` `max_model_len` starts from, where it is shorter than `context_window`, as for a LongRoPE model. Needs `context_window`. |
 
 ### `layer_kinds`
@@ -127,6 +127,8 @@ least one layer.
 | `context_stack` | mapping | no | Draft work that runs once per step over the target's scheduled tokens, prefill tokens included. |
 | `head` | list of nodes | no | Nodes after each pass of `stack`, over the same rows. |
 | `sequential_head` | list of nodes | no | Nodes run once per draft position, in order, over one row per request. Only with `parallel_block`. |
+| `aux_hidden_state_layers` | list of integers | no | The target layers whose hidden states the drafter reads, in the engine's capture convention: `L` is the state entering decoder layer `L`, `0` the embedding output and the layer count the last layer's output. EAGLE3, DFlash and dense DSpark configurations state these one lower as `target_layer_ids`. Under pipeline parallelism each stage boundary carries every state captured upstream of it to the last stage. Not negative, strictly increasing. |
+| `aux_hidden_state_bytes_per_token` | integer | no | One captured state's bytes a token. Omitted, one hidden-width activation, the sum of `hidden_states` and `residual`. A target with a wider residual stream states it, as Muse Spark does for its fp32 stream. Only with `aux_hidden_state_layers`. Not negative. |
 
 The draft module is a stack and not a token count because, for an MoE target, the draft
 pass is itself an MoE pass with its own cost. DeepSeek-V4.1's DSpark shows why the other
@@ -423,8 +425,10 @@ A graph is invalid if
 - the stack expands to no layers, `repeat` is negative, a pattern has no repeat or a repeat
   no pattern, or the stack names a layer kind that is not declared;
 - a `speculator` lacks a `method`, a `pattern`, at least one draft token or a repeat of at
-  least 1, has an unrecognized `drafting`, a `sequential_head` without `parallel_block`, or
-  a `stack` or `context_stack` naming a layer kind that is not declared;
+  least 1, has an unrecognized `drafting`, a `sequential_head` without `parallel_block`,
+  a `stack` or `context_stack` naming a layer kind that is not declared, or an
+  `aux_hidden_state_layers` id that is negative or does not exceed the one before it, or an
+  `aux_hidden_state_bytes_per_token` that is negative or stated without those layers;
 - a cache a layer reads but does not own has no owner earlier in its stack, or differs from
   its owner in kind, entry size under any cache dtype, tokens per entry, window or entries;
 - an `aliases` reference does not resolve to exactly one weight-holding node of the same

@@ -215,6 +215,7 @@ func (g *Graph) clone() *Graph {
 		s.Embedding = cloneNodes(s.Embedding)
 		s.Head = cloneNodes(s.Head)
 		s.SequentialHead = cloneNodes(s.SequentialHead)
+		s.AuxHiddenStateLayers = append([]int(nil), s.AuxHiddenStateLayers...)
 		out.Speculator = &s
 	}
 	if g.Global.WeightScale != nil {

@@ -343,6 +343,26 @@ func (g *Graph) validateSpeculator(p *validate.Problems) {
 		n.validate(p, fmt.Sprintf("speculator.sequential_head[%d]", i))
 		validateOutsideLayers(p, fmt.Sprintf("speculator.sequential_head[%d]", i), n)
 	}
+	// A capture id names a point in the TARGET's stack: 0 before its first layer, its
+	// layer count after the last. A drafter that is a checkpoint of its own states its
+	// own draft stack as the graph's, so the upper bound is checked where the drafter
+	// meets its target, not here. The engine sorts and deduplicates the ids
+	// (_set_aux_hidden_state_layers), so a graph states them that way.
+	for i, id := range s.AuxHiddenStateLayers {
+		at := fmt.Sprintf("speculator.aux_hidden_state_layers[%d]", i)
+		if id < 0 {
+			p.Field(at, "must not be negative, got %d", id)
+		}
+		if i > 0 && id <= s.AuxHiddenStateLayers[i-1] {
+			p.Field(at, "%d does not follow %d: the ids are strictly increasing", id, s.AuxHiddenStateLayers[i-1])
+		}
+	}
+	if b := s.AuxHiddenStateBytesPerToken; b < 0 {
+		p.Field("speculator.aux_hidden_state_bytes_per_token", "must not be negative")
+	} else if b > 0 && len(s.AuxHiddenStateLayers) == 0 {
+		p.Field("speculator.aux_hidden_state_bytes_per_token",
+			"sizes a captured state, and aux_hidden_state_layers captures none")
+	}
 }
 
 // validate checks one node: that its op is known, that the parameters its op prices
