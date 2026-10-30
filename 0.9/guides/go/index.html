@@ -2037,7 +2037,8 @@ the output shown is checked against what they print.</p>
 </code></pre></div>
 <p><code>must</code> stands for whatever error handling the caller uses. Loading and validating are
 separate calls. A load error means the file is not a document of that kind at all: it does
-not parse, or it has a key the type does not declare. A validation problem means the
+not parse, or it has a key the type does not declare (<code>LoadBundle</code> also refuses a file that
+is not a scenario plus a deployment with at least one pool). A validation problem means the
 document parsed and says something wrong. They need different fixes, so they arrive
 through different channels.</p>
 <h3 id="loaders">Loaders<a class="headerlink" href="#loaders" title="Permanent link">&para;</a></h3>
@@ -2059,6 +2060,11 @@ through different channels.</p>
 <td><code>LoadDeployment</code></td>
 <td>a deployment</td>
 <td>its <code>name</code> key</td>
+</tr>
+<tr>
+<td><code>LoadBundle</code></td>
+<td>a scenario and its deployment from one file, as two YAML documents separated by <code>---</code></td>
+<td>each document's <code>name</code> key</td>
 </tr>
 <tr>
 <td><code>LoadModelGraph</code></td>
@@ -2112,7 +2118,8 @@ through different channels.</p>
 </tr>
 </tbody>
 </table>
-<p>Each decodes one YAML document and rejects keys its type does not declare. The loaders do
+<p>Each decodes one YAML document and rejects keys its type does not declare, except
+<code>LoadBundle</code>, which decodes two (a scenario, then its deployment) with the same strictness. The loaders do
 not compare a <code>name</code> key with the directory or file it sits in; <code>validate-catalog</code> does that
 for model entries and measured runs. A measured run is validated with
 <code>ValidateWithSources(registry)</code>, which also computes its verdict; it is not part of a
