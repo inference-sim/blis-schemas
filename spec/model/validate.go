@@ -413,6 +413,18 @@ func (n Node) validate(p *validate.Problems, at string) {
 		validateWeightScale(p, at+".weight_scale", n.WeightScale)
 	}
 	n.validateNodeCaches(p, at)
+	if d := n.ShardedAtDecode; d != nil {
+		at := at + ".sharded_at_decode"
+		if n.Op != OpGEMM || n.TP != TPReplicated {
+			p.Field(at, "only a replicated GEMM (tp: replicated) splits its columns at decode")
+		}
+		requirePositive(p, at, "capability_family", d.CapabilityFamily)
+		requirePositive(p, at, "max_tokens", d.MaxTokens)
+		if d.MinTokensAcrossNodes < 0 || d.MinTokensAcrossNodes > d.MaxTokens {
+			p.Field(at+".min_tokens_across_nodes", "%d is outside [0, max_tokens %d]",
+				d.MinTokensAcrossNodes, d.MaxTokens)
+		}
+	}
 	if n.KVHeadsNotReplicated && n.Op != OpAttention {
 		p.Field(at+".kv_heads_not_replicated", "only an Attention node has KV heads")
 	}

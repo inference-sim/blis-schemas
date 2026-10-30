@@ -163,6 +163,7 @@ Common to every node:
 | `tp` | string | no | How the node divides across tensor-parallel ranks, on a `GEMM`, `Elementwise` or `Attention` node. One of the [layouts](vocabularies.md#tensor-parallel-layouts); omitted leaves it to the cost model's inference. |
 | `under_sequence_parallel` | string | no | How the node divides when the model's own sequence parallelism is on. One of the [splits](vocabularies.md#sequence-parallel-splits); omitted means as `tp` states, over every token the step schedules. Not on a collective. Needs `global.architecture`. |
 | `aliases` | string | no | On a `GEMM` or `Gather`: the node whose weights this one reads, as `<layer kind>.<role>`, `head.<role>` or `embedding.<role>`. The node is priced for its compute and weight reads, at its target's format, but adds no resident bytes. It states no `weight_dtype` or `weight_scale` of its own. |
+| `sharded_at_decode` | mapping | no | On a replicated `GEMM` (`tp: replicated`): the engine splits its output columns over the tensor-parallel ranks for a small step and all-gathers them back, keeping the whole weight on every rank. When, [below](#sharded-at-decode). Muse Spark's MoE pooler and unpooler on Blackwell. Whether the model's own conditions hold (no data parallelism, no mega-MoE) is the architecture's, read by the consumer. |
 
 `GEMM` and `GroupedGEMM`:
 
@@ -326,6 +327,16 @@ rows, so K = 7 needs 16 rows where the graph states 8.
 | `phase` | string | no | `prefill` restricts the work to steps that schedule the request's prompt. |
 | `decode_extent` | string | no | `max_model_len` when a decode step's work covers the engine's `max_model_len` rather than the context. |
 
+### Sharded at decode
+
+<!-- fields: model.ShardedAtDecode -->
+
+| Key | Type | Required | Meaning |
+|---|---|---|---|
+| `capability_family` | integer | yes | The CUDA compute-capability major version from which the engine shards the GEMM: 10 for SM100 and later. Positive. |
+| `max_tokens` | integer | yes | The largest step, in scheduled tokens, that shards. Positive. |
+| `min_tokens_across_nodes` | integer | no | The smallest step that shards when the tensor-parallel group spans nodes, where the gather crosses the fabric. Omitted, from one token. In `[0, max_tokens]`. |
+
 ### Weight scales
 
 <!-- fields: model.WeightScale -->
@@ -478,6 +489,11 @@ A node is invalid if
   reads at; on an embedding or head node, any of `caches`, `writes_cache`, `reads_cache`
   or a `per_tokens` above 1 is set;
 - an `aliases` node states its own `weight_dtype` or `weight_scale`;
+- `kv_heads_not_replicated` is set on anything other than an `Attention` node, or on an
+  `mla` or `sparse_mla` one;
+- `sharded_at_decode` is set on anything other than a replicated `GEMM`, its
+  `capability_family` or `max_tokens` is not positive, or its `min_tokens_across_nodes` is
+  outside `[0, max_tokens]`;
 - `bytes_per_token` is set on a primitive other than `Elementwise`, `AllReduce`,
   `AllGather` or `ReduceScatter`;
 - `index_topk` or `compress_ratio` is set on anything other than a `sparse_mla` attention
