@@ -1,8 +1,11 @@
 package blisschemas
 
 import (
+	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/inference-sim/blis-schemas/spec/deployment"
 )
 
 const bundleScenario = `kind: Scenario
@@ -49,8 +52,9 @@ func TestLoadBundle(t *testing.T) {
 	}
 }
 
-// The bundle loader is the scenario and deployment loaders over one stream: it must decode
-// each half to exactly what LoadScenario and LoadDeployment decode from the half alone.
+// The bundle loader is the scenario and deployment loaders over one stream: each half must
+// decode to exactly what LoadScenario and LoadDeployment decode from that half alone, over
+// every field.
 func TestLoadBundleMatchesTheSingleDocumentLoaders(t *testing.T) {
 	sc, dep, err := LoadBundle(write(t, "b.yaml", bundleScenario+"---\n"+bundleDeployment))
 	if err != nil {
@@ -64,13 +68,30 @@ func TestLoadBundleMatchesTheSingleDocumentLoaders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadDeployment: %v", err)
 	}
-	if sc.Name != wantSc.Name || sc.Model != wantSc.Model || sc.EngineVersion != wantSc.EngineVersion ||
-		sc.Cluster.Hardware != wantSc.Cluster.Hardware || sc.Cluster.GPUsPerNode != wantSc.Cluster.GPUsPerNode {
+	if !reflect.DeepEqual(sc, wantSc) {
 		t.Errorf("scenario half differs from LoadScenario:\n got %+v\nwant %+v", sc, wantSc)
 	}
-	if dep.Name != wantDep.Name || len(dep.Pools) != len(wantDep.Pools) ||
-		dep.Pools[0].Parallel != wantDep.Pools[0].Parallel || dep.Pools[0].Role != wantDep.Pools[0].Role {
-		t.Errorf("deployment half differs from LoadDeployment:\n got %+v\nwant %+v", dep, wantDep)
+	// EngineBlock holds an unexported YAML node, so compare it with its own Equal and the
+	// rest of each pool with DeepEqual.
+	if len(dep.Pools) != len(wantDep.Pools) {
+		t.Fatalf("pools: got %d, want %d", len(dep.Pools), len(wantDep.Pools))
+	}
+	for i := range dep.Pools {
+		if !dep.Pools[i].Engine.Equal(wantDep.Pools[i].Engine) {
+			t.Errorf("pool %d engine block differs from LoadDeployment", i)
+		}
+	}
+	gotRest, wantRest := *dep, *wantDep
+	gotRest.Pools, wantRest.Pools = nil, nil
+	if !reflect.DeepEqual(gotRest, wantRest) {
+		t.Errorf("deployment half differs from LoadDeployment:\n got %+v\nwant %+v", gotRest, wantRest)
+	}
+	for i := range dep.Pools {
+		g, w := dep.Pools[i], wantDep.Pools[i]
+		g.Engine, w.Engine = deployment.EngineBlock{}, deployment.EngineBlock{}
+		if !reflect.DeepEqual(g, w) {
+			t.Errorf("pool %d differs from LoadDeployment:\n got %+v\nwant %+v", i, g, w)
+		}
 	}
 }
 

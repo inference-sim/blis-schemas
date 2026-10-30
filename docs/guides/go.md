@@ -23,7 +23,8 @@ ok: true rules applied: 0.29.0
 
 `must` stands for whatever error handling the caller uses. Loading and validating are
 separate calls. A load error means the file is not a document of that kind at all: it does
-not parse, or it has a key the type does not declare. A validation problem means the
+not parse, or it has a key the type does not declare (`LoadBundle` also refuses a file that
+is not a scenario plus a deployment with at least one pool). A validation problem means the
 document parsed and says something wrong. They need different fixes, so they arrive
 through different channels.
 
@@ -45,7 +46,8 @@ through different channels.
 | `LoadMeasuredRun` | `measurements/<license_ref>/<name>.yaml` | its `name` key |
 | `LoadMeasurementSources` | `measurements/sources.yaml` | each source's `id` |
 
-Each decodes one YAML document and rejects keys its type does not declare. The loaders do
+Each decodes one YAML document and rejects keys its type does not declare, except
+`LoadBundle`, which decodes two (a scenario, then its deployment) with the same strictness. The loaders do
 not compare a `name` key with the directory or file it sits in; `validate-catalog` does that
 for model entries and measured runs. A measured run is validated with
 `ValidateWithSources(registry)`, which also computes its verdict; it is not part of a

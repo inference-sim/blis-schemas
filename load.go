@@ -49,8 +49,14 @@ func LoadScenario(path string) (*scenario.Scenario, error) {
 // LoadBundle reads a scenario and the deployment applied to it from one file, as two YAML
 // documents separated by `---`, with the same strict decoding as LoadScenario and
 // LoadDeployment. A measurement row names a deployment by a single filename, which is why
-// the pair shares a file. It does not validate; call Validate. It refuses an empty file, a
-// file with no deployment document, and a deployment with no pools, naming the file.
+// the pair shares a file.
+//
+// It does not run Validate; call that for the documents' rules. It does refuse, naming the
+// file, a shape no caller can use: an empty file, a file with no deployment document, and a
+// deployment with no pools. Every caller reads at least one pool,
+// several as Pools[0] without a length check of their own, so refusing a pool-less
+// deployment here turns what would be an index panic far from the file into an error that
+// names it.
 func LoadBundle(path string) (*scenario.Scenario, *deployment.Deployment, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -83,6 +89,7 @@ func LoadBundle(path string) (*scenario.Scenario, *deployment.Deployment, error)
 		return nil, nil, fmt.Errorf(
 			"the deployment in %s declares no pools: there is nothing to price", path)
 	}
+
 	return &sc, &dep, nil
 }
 
