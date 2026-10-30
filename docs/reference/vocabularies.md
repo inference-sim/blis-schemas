@@ -155,6 +155,21 @@ fuses into the kernel only under sequence parallelism or tensor parallelism one,
 tensor-parallel and all-reduces its own output. So the layer still reduces one
 hidden-width tensor across tensor-parallel ranks, as on the default backend.
 
+`tensor_parallel_without_expert_parallel`
+:   Present when the tensor-parallel width exceeds 1 and expert parallelism is off: a
+    reduction an MoE layer needs only while its experts are sharded by tensor parallelism.
+
+`expert_parallel_without_dispatch`
+:   Present when expert parallelism is on, the tensor-parallel width exceeds 1, and the MoE
+    layer dispatches no tokens: every rank holds every token, because the expert-parallel
+    group is the tensor-parallel group, so the ranks' partial expert outputs combine by an
+    all-reduce rather than an all-to-all.
+
+A model whose MoE reduces a different tensor in each of those two modes states one
+collective under each. Muse Spark is the case: under tensor parallelism it all-reduces its
+`top_k` per-route rows before its post-expert norm, which is not linear in a partial sum;
+under expert parallelism only the combined output, at its latent width.
+
 ### Modalities
 
 A graph's `modality`. An omitted `modality` means `text_only`.

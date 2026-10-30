@@ -109,6 +109,9 @@ func (g *Graph) validateGlobal(p *validate.Problems) {
 			}
 		})
 	}
+	if g.Global.PipelineBoundaryBytesPerToken < 0 {
+		p.Field("global.pipeline_boundary_bytes_per_token", "must not be negative")
+	}
 	if g.Global.DefaultContextWindow > 0 && g.Global.ContextWindow == 0 {
 		p.Field("global.default_context_window", "stated without context_window, which it narrows")
 	}

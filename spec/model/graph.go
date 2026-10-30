@@ -148,6 +148,13 @@ type GlobalShape struct {
 	// DeepSeek-V4.1 decides its own sequence parallelism. Which architectures a release
 	// treats specially is its rules pack's to say. Empty means not stated.
 	Architecture string `yaml:"architecture,omitempty"`
+
+	// PipelineBoundaryBytesPerToken is what one token costs to hand from one pipeline
+	// stage to the next: the intermediate tensors the engine sends at a stage boundary.
+	// Zero means one hidden-width activation. A model that carries its residual stream at
+	// a wider dtype, or several streams, states it: Muse Spark's stream is fp32, so a
+	// boundary moves 4 x hidden_size bytes a token.
+	PipelineBoundaryBytesPerToken int `yaml:"pipeline_boundary_bytes_per_token,omitempty"`
 }
 
 // DefaultWindow returns the window an unstated or auto max_model_len starts from, or zero
@@ -360,12 +367,27 @@ const (
 	// exceeds one and the model's sequence parallelism is off. The all-reduces that
 	// sequence parallelism replaces carry it.
 	EmitTensorParallelUnlessSequenceParallel EmitCondition = "tensor_parallel_unless_sequence_parallel"
+	// EmitTensorParallelWithoutExpertParallel: present when the tensor-parallel width
+	// exceeds one and expert parallelism is off, so the MoE layer's experts are sharded by
+	// tensor parallelism and their partial outputs need a reduction of their own. A model
+	// whose MoE reduces a different tensor in each mode states one collective per mode:
+	// Muse Spark all-reduces its top_k per-route rows before its post-expert norm under
+	// tensor parallelism, and only the combined latent-width output under expert
+	// parallelism.
+	EmitTensorParallelWithoutExpertParallel EmitCondition = "tensor_parallel_without_expert_parallel"
+	// EmitExpertParallelWithoutDispatch: present when expert parallelism is on, the
+	// tensor-parallel width exceeds one, and the MoE layer dispatches no tokens: every rank
+	// holds every token, because the expert-parallel group is the tensor-parallel group, so
+	// the ranks' partial expert outputs combine by an all-reduce rather than an
+	// all-to-all.
+	EmitExpertParallelWithoutDispatch EmitCondition = "expert_parallel_without_dispatch"
 )
 
 var emitConditions = map[EmitCondition]bool{
 	EmitAlways: true, EmitTensorParallel: true, EmitExpertParallel: true,
 	EmitTensorParallelUnlessSequenceParallelMoE: true, EmitSequenceParallel: true,
-	EmitTensorParallelUnlessSequenceParallel: true,
+	EmitTensorParallelUnlessSequenceParallel: true, EmitTensorParallelWithoutExpertParallel: true,
+	EmitExpertParallelWithoutDispatch: true,
 }
 
 // SequenceParallelOnly reports whether c is one of the two conditions decided by the

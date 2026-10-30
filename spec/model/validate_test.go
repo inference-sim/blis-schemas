@@ -65,6 +65,7 @@ func TestRejects(t *testing.T) {
 		{"no derivation format", func(g *Graph) { g.DerivedFrom.Format = "" }},
 		{"zero deriver version", func(g *Graph) { g.DerivedFrom.DeriverVersion = 0 }},
 		{"zero hidden size", func(g *Graph) { g.Global.HiddenSize = 0 }},
+		{"negative pipeline boundary", func(g *Graph) { g.Global.PipelineBoundaryBytesPerToken = -1 }},
 		{"unknown weight dtype", func(g *Graph) { g.Global.WeightDType = "fp6" }},
 		{"no layer kinds", func(g *Graph) { g.LayerKinds = nil }},
 		{"duplicate layer-kind id", func(g *Graph) {
@@ -374,5 +375,28 @@ func TestPerNodeWeightDType(t *testing.T) {
 				t.Fatalf("OK() = %v, want %v: %v", got, tc.ok, p.Error())
 			}
 		})
+	}
+}
+
+// A Muse-shaped MoE states one reduction per mode: the per-route rows under tensor
+// parallelism, the combined output when expert parallelism keeps every token on every rank.
+// Both conditions are recognized, and the boundary bytes of an fp32 residual stream pass.
+func TestModeConditionedMoEReductionsValidate(t *testing.T) {
+	g := validGraph()
+	g.Global.PipelineBoundaryBytesPerToken = 4 * g.Global.HiddenSize
+	kind := &g.LayerKinds[0]
+	kind.Nodes = append(kind.Nodes,
+		Node{Op: OpAllReduce, Role: "moe_route_rows", Emit: EmitTensorParallelWithoutExpertParallel,
+			BytesPerToken: 8 * 4096 * 2},
+		Node{Op: OpAllReduce, Role: "moe_combine", Emit: EmitExpertParallelWithoutDispatch,
+			BytesPerToken: 4096 * 2})
+	kind.Edges = append(kind.Edges, [2]int{6, 7}, [2]int{7, 8})
+	if p := g.Validate(); !p.OK() {
+		t.Fatalf("expected a valid graph, got: %v", p.All())
+	}
+	for _, c := range []EmitCondition{EmitTensorParallelWithoutExpertParallel, EmitExpertParallelWithoutDispatch} {
+		if !c.Valid() {
+			t.Errorf("%q is not recognized", c)
+		}
 	}
 }

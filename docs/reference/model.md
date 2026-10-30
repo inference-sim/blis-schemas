@@ -83,6 +83,7 @@ head:
 | `weight_dtype` | string | yes | The format parameters are stored in. One of the [dtypes](vocabularies.md#dtypes). |
 | `weight_scale` | mapping | no | The resident scale layout of weights stored at `weight_dtype`, [below](#weight-scales). It does not apply to a node stored in another format. |
 | `context_window` | integer | no | The longest context the engine admits for this model: the `max_model_len` vLLM derives from the configuration. An unstated or `auto` `max_model_len` starts from it. |
+| `pipeline_boundary_bytes_per_token` | integer | no | Bytes one token costs to hand from one pipeline stage to the next: the intermediate tensors at a stage boundary. Omitted, one hidden-width activation. A model whose residual stream is wider than the activation dtype states it. Not negative. |
 | `default_context_window` | integer | no | The window an unstated or `auto` `max_model_len` starts from, where it is shorter than `context_window`, as for a LongRoPE model. Needs `context_window`. |
 
 ### `layer_kinds`
@@ -429,6 +430,7 @@ A graph is invalid if
 - an `aliases` reference does not resolve to exactly one weight-holding node of the same
   shape, names a layer kind the stacks run more than once, or names a node that is itself
   an alias;
+- `pipeline_boundary_bytes_per_token` is negative;
 - `context_window` or `default_context_window` is negative, or the second exceeds the
   first or is stated without it;
 - `arch_overrides` is stated without `base_capability_families`; a family in either is not
